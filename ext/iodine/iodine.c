@@ -76,6 +76,21 @@ FIO_SFUNC void *iodine___perform_exit_outside_gvl(void *ignr_) {
   return NULL;
 }
 
+/* Workers end with the C STL's `exit(0)`, which skips Ruby's VM cleanup (the
+ * step that frees every remaining TypedData object). Without it, objects that
+ * are already unreferenced but not yet collected look like leaks. ON_STOP runs
+ * after all IO is closed and the thread pool stopped, so collect them here. */
+FIO_SFUNC void *iodine___worker_gc_in_gvl(void *ignr_) {
+  rb_gc();
+  return ignr_;
+}
+
+FIO_SFUNC void iodine___worker_gc_on_stop(void *ignr_) {
+  if (fio_io_is_master()) /* the master process exits through Ruby */
+    return;
+  iodine_c_call_with(iodine___worker_gc_in_gvl, ignr_);
+}
+
 FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {
   (void)ignr_;
   // rb_gc();
@@ -230,5 +245,6 @@ void Init_iodine(void) {
   /* support hot restarting of workers */
   fio_io_restart_on_signal(SIGUSR1);
 #endif
+  fio_state_callback_add(FIO_CALL_ON_STOP, iodine___worker_gc_on_stop, NULL);
   rb_set_end_proc(iodine___perform_exit, (VALUE)Qnil);
 }

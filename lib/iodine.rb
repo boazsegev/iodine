@@ -2,7 +2,6 @@
 
 require 'stringio' # Used internally as a default RackIO
 require 'socket'  # TCPSocket is used internally for Hijack support
-require 'logger'  # rack.logger became a required field for Rack
 
 require_relative 'iodine/version'
 

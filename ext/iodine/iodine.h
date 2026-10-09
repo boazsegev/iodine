@@ -147,6 +147,7 @@ static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
 
 static VALUE IODINE_CONNECTION_ENV_TEMPLATE = Qnil;
+static VALUE IODINE_CONNECTION_ENV_TEMPLATE_HTTPS = Qnil;
 static VALUE IODINE_RACK_PROTOCOL_STR;
 static VALUE IODINE_RACK_HIJACK_ID_SYM;
 static VALUE IODINE_RACK_HIJACK_STR;

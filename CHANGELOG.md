@@ -7,7 +7,7 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### Change log v0.8.0.rc02 (updated 2026-07-25)
+#### 0.8.0 - unreleased
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
 
@@ -49,7 +49,7 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Feature**: Extended `Iodine::Utils` with `crc32(data, initial_crc: 0)` — CRC32 checksum (ITU-T V.42 / gzip polynomial) with support for incremental computation across multiple buffers.
 
-**Feature**: Extended `Iodine::Utils` with `secure_random(bytes: 32)` — cryptographically secure random bytes using the system CSPRNG (`arc4random_buf` on BSD/macOS, `/dev/urandom` on Linux).
+**Feature**: Extended `Iodine::Utils` with `secure_random(bytes: 32)` — cryptographically secure random bytes from the system CSPRNG (`arc4random_buf` on BSD/macOS, `BCryptGenRandom` on Windows, `getrandom` or `/dev/urandom` on Linux). If the system CSPRNG fails, it falls back to the facil.io PRNG instead of raising.
 
 **Feature**: Extended `Iodine::Utils` with TOTP utilities: `totp_secret` (generate Base32 secrets) and `totp_verify` (verify codes with time window).
 
@@ -87,6 +87,24 @@ Please refer to the current gem version to review the relevant changes for your 
 **Feature**: Windows support (single-process mode). Iodine now compiles and runs on Windows (MSYS2/MinGW and MSVC). Note that cluster mode is unavailable on Windows — setting `Iodine.workers` to a positive value raises `NotImplementedError`.
 
 **Security**: HTTP/1.1 parser hardening — strict header validation and rejection of ambiguous requests (disconnection is preferred over the risk of request smuggling).
+
+**Security**: Response headers are validated before they are sent. Header names with forbidden characters (whitespace, `:`, CR, LF, NUL) and values with CR, LF or NUL are dropped, which blocks response splitting.
+
+**Fix**: Header values that contain newlines are sent as separate header lines (e.g., Rack 2 style `Set-Cookie` values joined with `"\n"`). Before this fix, such values crashed the server.
+
+**Fix**: The server now closes the connection after the response when a request sends `Connection: close`, or uses HTTP/1.0 without `Connection: keep-alive`. Streamed responses to HTTP/1.0 clients are no longer chunk-encoded; closing the connection marks the end of the body.
+
+**Security**: Requests whose `Transfer-Encoding` does not end with `chunked` (e.g., `gzip` or `chunked, gzip`) are rejected with `400 Bad Request` and the connection is closed. Before this fix, the body of such a request could be read as a second, hidden request (request smuggling). HTTP/1.1 requests without a `Host` header are rejected too.
+
+**Fix**: The HTTP client now skips interim `1xx` responses (e.g., `100 Continue`) and never waits for a body after `HEAD`, `204` or `304` responses.
+
+**Fix**: `rack.url_scheme` now reports each connection's own transport. Before this fix, one HTTPS listener made every request report `https`, including requests to plain HTTP listeners.
+
+**Feature**: `Iodine::Connection#tls?` returns `true` when the connection uses TLS.
+
+**Update**: `env['rack.logger']` is now `Iodine::Logger`. Rack log messages share iodine's log output and level (`Iodine::Logger.level`, default `INFO`, so `debug` messages are hidden by default). Iodine no longer loads the `logger` gem, which is not a default gem since Ruby 4.0.
+
+**Fix**: Worker processes no longer report false `leaks detected` errors when they exit. Workers now run Ruby's garbage collector after all connections close, so objects that are no longer in use are freed before the leak check.
 
 **Feature**: `Iodine::JSON.beautify(ruby_object)` — pretty-prints a Ruby object as a formatted JSON string.
 

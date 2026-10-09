@@ -482,13 +482,12 @@ FIO_SFUNC VALUE iodine_utils_risky512_hmac(VALUE self, VALUE key, VALUE data) {
 }
 
 /**
- * Generates cryptographically secure random bytes using system CSPRNG.
+ * Generates cryptographically secure random bytes using the system CSPRNG.
  *
- * Uses arc4random_buf on BSD/macOS or /dev/urandom on Linux.
+ * Falls back to the facil.io PRNG if the system CSPRNG fails.
  *
  * @param bytes: [Integer] Number of bytes to generate (default: 32)
  * @return [String] Binary string of random bytes
- * @raise [RuntimeError] if CSPRNG fails
  */
 FIO_SFUNC VALUE iodine_utils_secure_random(int argc, VALUE *argv, VALUE self) {
   size_t size = 32;
@@ -496,9 +495,8 @@ FIO_SFUNC VALUE iodine_utils_secure_random(int argc, VALUE *argv, VALUE self) {
   if ((size - 1) > 0x0FFFFFFF)
     rb_raise(rb_eRangeError, "`bytes` count is out of range.");
   VALUE r = rb_str_buf_new(size);
-  int result = fio_rand_bytes_secure(RSTRING_PTR(r), size);
-  if (result != 0)
-    rb_raise(rb_eRuntimeError, "CSPRNG failed to generate random bytes");
+  if (fio_rand_bytes_secure(RSTRING_PTR(r), size))
+    fio_rand_bytes(RSTRING_PTR(r), size);
   rb_str_set_len(r, size);
   return r;
   (void)self;

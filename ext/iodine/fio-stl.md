@@ -5841,6 +5841,7 @@ FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
 FIO_IFUNC void fio_http1_parser_skip_body(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p);
+FIO_IFUNC int fio_http1_version_is_legacy(fio_buf_info_s version);
 ```
 
 - `fio_http1_parser_is_empty` returns non-zero when the parser is waiting for a
@@ -5865,6 +5866,13 @@ FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p);
 - `fio_http1_parser_skips_body` returns non-zero when the current message has
   no body. It is known as soon as the first line is parsed (before any header
   callback). Test it before reserving body space. See *Messages Without a Body*.
+- `fio_http1_version_is_legacy` returns non-zero if a version string (as
+  passed to `fio_http1_on_version`) is exactly `HTTP/1.0` (case-sensitive).
+  HTTP/1.0 messages are not persistent without a `keep-alive` connection
+  option and never use chunked transfer coding (RFC 9112 §9.3, §6.1). Every
+  other version string gets HTTP/1.1 semantics. HTTP/0.9 is unsupported: its
+  version-less request line is rejected, and a `HTTP/0.9` version string is
+  treated as HTTP/1.1 (i.e., `host` is required).
 
 ### Constants
 
@@ -6009,15 +6017,39 @@ rejected.
 A `content-length: 0` value marks the message as having no body and does not
 call `fio_http1_on_header_content_length`.
 
-`transfer-encoding` is also special when its final token is `chunked`
-(case-insensitive):
+`transfer-encoding` is also special. Its field lines form a single coding list
+(RFC 9110 §5.3), and `chunked` (case-insensitive) must be the final coding,
+applied exactly once (RFC 9112 §6.3, §7). Anything else can't be framed safely,
+so it's rejected rather than reading the body as the next message (request
+smuggling):
 
-- the parser switches to chunked body decoding;
+- the parser switches to chunked body decoding when a field line ends with the
+  `chunked` token;
 - if the value is exactly `chunked`, no generic header callback is made;
 - if other transfer-coding text appears before the final `chunked` token, the
   final `chunked` token and adjacent separators are stripped before the
-  remaining value is passed to `fio_http1_on_header`;
-- malformed separators before the final `chunked` token are rejected.
+  remaining value is passed to `fio_http1_on_header` (i.e.,
+  `gzip, chunked` is framed as chunked and forwards `transfer-encoding: gzip`;
+  decoding it is up to the parser user, since a `501` response is only a
+  SHOULD under RFC 9112 §6.1);
+- a field line without a final `chunked` token (i.e., `gzip`) is forwarded
+  unchanged; a later field line may still end the list with `chunked`;
+- rejected: a list that doesn't end with `chunked` once the headers end (i.e.,
+  `gzip`, `identity`, `chunked, gzip`, an empty value, or a `chunked` line
+  followed by any other `transfer-encoding` line), a repeated `chunked`
+  coding (`chunked, chunked`), malformed separators before the final
+  `chunked` token, a `content-length` header, and requests using `GET`,
+  `HEAD`, or `OPTIONS`.
+
+Requests must carry exactly one `host` header, as required by RFC 9112 §3.2:
+
+- an HTTP/1.1 request without a `host` header is rejected once the headers
+  end;
+- a request with more than one `host` header line is rejected (for any
+  version);
+- `HTTP/1.0` requests may omit `host` (see `fio_http1_version_is_legacy`);
+- responses aren't affected. The `host` header itself is passed to
+  `fio_http1_on_header`.
 
 `expect` is special when its value is exactly `100-continue`. Any other
 `Expect` value is rejected.
@@ -10203,7 +10235,7 @@ Initializes `q` in place.
 SFUNC void fio_queue_destroy(fio_queue_s *q);
 ```
 
-Frees ring buffers, stops and joins workers, and re-initializes `q`. After destruction the queue may be reused, but on some platforms the lock may need explicit re-initialization.
+Frees ring buffers, stops and joins workers, and re-initializes `q`. Pending tasks are performed only if the queue has workers (see `fio_queue_workers_join`); otherwise they are discarded without being performed. After destruction the queue may be reused, but on some platforms the lock may need explicit re-initialization.
 
 #### `fio_queue_new`
 
@@ -10298,10 +10330,14 @@ Spawns `count` consumer threads that automatically perform tasks as they arrive.
 #### `fio_queue_workers_stop`
 
 ```c
-SFUNC void fio_queue_workers_stop(fio_queue_s *q);
+SFUNC size_t fio_queue_workers_stop(fio_queue_s *q);
 ```
 
 Signals all workers to stop. Returns immediately without waiting.
+
+Pending tasks may remain in the queue (they can be performed later using `fio_queue_perform_all` or discarded by `fio_queue_destroy`).
+
+**Returns:** the number of worker groups signaled (one per successful `fio_queue_workers_add` call still attached to the queue).
 
 #### `fio_queue_workers_join`
 
@@ -10310,6 +10346,8 @@ SFUNC void fio_queue_workers_join(fio_queue_s *q);
 ```
 
 Signals workers to stop and blocks until they terminate.
+
+If the queue had workers, any pending tasks are performed before the function returns (so `fio_queue_destroy`, which calls `fio_queue_workers_join`, drains a queue that has workers). A queue without workers is not drained: `fio_queue_destroy` on such a queue discards pending tasks without performing them.
 
 #### `fio_queue_workers_wake`
 
@@ -17537,7 +17575,9 @@ is being attached.
 was available on the non-blocking socket. Use close callbacks for final cleanup.
 
 `fio_io_close` closes after scheduled data is sent. `fio_io_close_now` closes as
-soon as possible. `fio_io_suspend` / `fio_io_unsuspend` control future
+soon as possible. `fio_io_is_open` returns 1 only while open and not marked for
+closure: it returns 0 immediately after `fio_io_close`, even while previously
+scheduled output is draining. `fio_io_suspend` / `fio_io_unsuspend` control future
 `on_data` delivery, and `fio_io_backlog` reports the approximate outgoing byte
 count.
 
@@ -20290,6 +20330,14 @@ HTTP/1.x requests and client responses are parsed into `fio_http_s` handles.
 A response line received by a server connection (or an unsolicited response
 received by a client) is logged as a `SECURITY` event and the connection is
 closed.
+Malformed requests receive a `400 Bad Request` response and the connection is
+closed. This includes request framing that could be misread as a pipelined
+(smuggled) request: a `Transfer-Encoding` without a single, final `chunked`
+coding (RFC 9112 §6.3, §7), and an HTTP/1.1 request without exactly one `Host`
+header (RFC 9112 §3.2). Other transfer codings before the final `chunked`
+(i.e., `gzip, chunked`) stay visible to the application as a request
+`transfer-encoding` header (i.e., `gzip`); the body is passed through as
+received, still encoded.
 The HTTP layer suspends the IO object while the user callback is running and
 resumes it after the response is finished or the upgrade is installed.
 
@@ -20300,6 +20348,16 @@ Plain HTTP cycles use:
 3. `on_http` for application logic;
 4. `fio_http_write` / `fio_http_finish` to send the response;
 5. `on_finish` when the non-upgraded cycle is complete.
+
+For non-upgraded server HTTP/1 cycles, a request `Connection` field containing
+the case-insensitive `close` token closes after the complete response drains;
+subsequent pipelined requests are not dispatched. HTTP/1.0 requests are not
+persistent unless a request `Connection` field contains `keep-alive` (RFC 9112
+§9.3); the server confirms persistence with a `connection: keep-alive`
+response header (unless the application set a `connection` header). Application-initiated closure
+remains explicit: schedule the complete response, then call `fio_http_close`
+while the handle is valid (i.e., from `on_finish`). Setting only a response
+`Connection: close` header does not itself schedule closure.
 
 WebSocket and SSE cycles use the authentication callbacks before upgrade, then
 `on_open`, message / event callbacks, `on_ready`, `on_shutdown`, `on_close`, and
@@ -20776,8 +20834,9 @@ void        fio_http_close(fio_http_s *h);
 ```
 
 `fio_http_s` is reference-counted. It is not designed as a thread-safe mutable
-object. `fio_http_close` closes the persistent connection associated with an
-upgraded handle.
+object. `fio_http_close` closes the associated connection, including an ordinary
+HTTP/1 connection. Schedule the complete response before calling it; previously
+scheduled output drains before closure.
 
 ### User data and controller data
 
@@ -20892,26 +20951,35 @@ fio_http_response_header_each;
 `index` for repeated values. If `name.buf == NULL`, `*_header_count` returns
 the number of unique header names.
 
+Header insertion rejects names longer than 4095 bytes and names containing the
+parser's forbidden name bytes (including whitespace, colon, NUL, CR, and LF).
+Values containing NUL, CR, or LF are rejected. Invalid insertion returns an empty
+value without replacing an existing header. With
+`FIO_HTTP_ENFORCE_LOWERCASE_HEADERS`, names are validated and copied to ASCII
+lowercase in one pass; caller-owned input is not modified.
+
 Response headers cannot be changed after the response headers are sent.
 
-### Header parsing helpers
+### Header value and property iteration
 
 ```c
-int fio_http_request_header_parse(fio_http_s *h,
-                                  fio_str_info_s *buf_parsed,
-                                  fio_str_info_s header_name);
-int fio_http_response_header_parse(fio_http_s *h,
-                                   fio_str_info_s *buf_parsed,
-                                   fio_str_info_s header_name);
-
-#define FIO_HTTP_HEADER_EACH_VALUE(http_handle, is_request, header_name, value)
-#define FIO_HTTP_HEADER_VALUE_EACH_PROPERTY(value, property)
-#define FIO_HTTP_PARSED_HEADER_EACH(buf_parsed, value)
+FIO_HTTP_HEADER_EACH_VALUE(h, 1, FIO_STR_INFO1("accept"), item) {
+  /* item.name and item.value are length-delimited fio_buf_info_s slices. */
+  FIO_HTTP_HEADER_EACH_PROPERTY(item, prop) {
+    /* prop.name and prop.value are length-delimited slices. */
+  }
+}
 ```
 
-The parse helpers copy repeated comma-separated header values into a compact
-parsed buffer. The macros iterate values and `name=value` style properties. The
-macro form uses a 2048-byte stack buffer for the parse.
+The macros iterate repeated fields, comma-separated values and semicolon-separated
+properties without copying. They trim surrounding spaces and tabs; quoted
+strings remain quoted, including escapes. Slices borrow header storage and are
+not necessarily NUL-terminated: use their `.len` rather than string functions.
+Do not change headers during iteration. `value.buf == NULL` marks the end;
+empty property values may have a non-NULL buffer and zero length. The helpers
+`fio_http_header_each_first` / `fio_http_header_each_next` and
+`fio_http_header_each_property_first` / `fio_http_header_each_property_next`
+can also be used directly.
 
 ### Body storage and reads
 
@@ -21020,7 +21088,30 @@ void fio_http_write(fio_http_s *h, fio_http_write_args_s args);
 
 `fio_http_write` sends headers on the first write and then writes body data. If
 `finish` is set, the response is complete. Without `finish`, the response is a
-stream. File writes use `fd` and `offset`; the file descriptor is always closed
+stream. A finished response without an explicit `content-length` header gets
+one automatically. The response starts with the first write that carries body
+data (a buffer or a file) or `finish`: an empty write without `finish` is a
+no-op, so headers can still be set, and a response that is finished without
+any body data is sent with `content-length: 0` rather than as an empty
+chunked stream. HTTP/1.1 streams use `transfer-encoding: chunked`; HTTP/1.0 responses
+never use a transfer coding (RFC 9112 §6.1), so an HTTP/1.0 stream is sent
+unframed and delimited by closing the connection, even if `keep-alive` was
+requested.
+
+Responses without content (`1xx`, `204`, `205`, `304`, RFC 9110 §15) never
+send body data, are never streamed or compressed, and never send
+`transfer-encoding` (an application-provided value is removed). Their
+`content-length` follows RFC 9110 §8.6:
+
+- `1xx` / `204`: removed, never added.
+- `205`: always `content-length: 0` (§15.3.6), replacing any other value.
+- `304`: an application-provided value is kept (it describes the selected
+  representation); none is added automatically.
+
+Responses to `HEAD` requests send the headers a `GET` would (a finished
+response still gets its automatic `content-length`), but never send content
+(RFC 9110 §9.3.2): body writes are discarded and the response is never
+streamed (no `transfer-encoding: chunked`). File writes use `fd` and `offset`; the file descriptor is always closed
 by the write path.
 
 On upgraded handles, `fio_http_write` routes through the WebSocket or SSE

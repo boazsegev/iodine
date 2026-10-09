@@ -224,7 +224,7 @@ Most differences below follow from that trade-off.
 
 ³ **Security:** both servers ship hand-written C components — Puma's are far more battle-tested, while Iodine's newer security features (embedded TLS, mTLS) are tested in-house but not third-party audited.
 
-⁴ **Platforms:** both servers are POSIX-first — Puma's cluster mode requires `fork`, Iodine's Windows support is unproven, and HTTP/2 is typically handled by a front proxy.
+⁴ **Platforms:** both servers are POSIX-first — Puma's cluster mode requires `fork`, Iodine runs on Windows in single-process mode only (its test suite passes in CI, but it has no production track record yet), and HTTP/2 is typically handled by a front proxy.
 
 ### Local Benchmark
 

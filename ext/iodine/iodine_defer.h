@@ -51,8 +51,9 @@ The state event Symbol can be any of the following:
 | `:idle`         | the block will be called when the IO reactor is idling. |
 | `:parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
 | `:child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
-| `:start_shutdown` | the block will be called before starting the shutdown sequence. |
-| `:finish`       | the block will be called just before finishing up (both on chlid and parent processes). |
+| `:shutdown`     | the block will be called before starting the shutdown sequence. |
+| `:stop`         | the block will be called just before stopping iodine (both on child and parent processes). |
+| `:exit`         | the block will be called during iodine library cleanup, similar to a Ruby `at_exit` callback. |
 
 Code runs in both the parent and the child.
 */

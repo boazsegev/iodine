@@ -462,6 +462,8 @@ module Iodine
   # (Rack SPEC compatible logger behavior). Nothing is evaluated while the
   # level is silenced by the current verbosity (lazy evaluation).
   #
+  # Rack applications receive this module as `env['rack.logger']`.
+  #
   # Log levels (constants, e.g. {Iodine::Logger::DEBUG}):
   # - 0: NONE - No logging
   # - 1: FATAL - Fatal errors only
@@ -821,9 +823,9 @@ module Iodine
 
     # Generates a new TOTP secret suitable for Google Authenticator.
     #
-    # The secret is generated using cryptographically secure random bytes
-    # and encoded in Base32 (uppercase, no padding) for compatibility with
-    # authenticator apps.
+    # The secret uses random bytes from the system CSPRNG (falling back to the
+    # facil.io PRNG, like {secure_random}), encoded in Base32 (uppercase, no
+    # padding) for compatibility with authenticator apps.
     #
     # @param len [Integer] (**optional**) Length of the secret in bytes (default: 20, range: 10-64)
     # @return [String] Base32 encoded secret suitable for QR codes and authenticator apps
@@ -1110,14 +1112,16 @@ module Iodine
 
     # Generates cryptographically secure random bytes using the system CSPRNG.
     #
-    # Uses arc4random_buf on BSD/macOS or /dev/urandom on Linux to generate
-    # random bytes suitable for cryptographic key generation, nonces, and
-    # other security-sensitive applications.
+    # Use it for keys, nonces, salts, and other security-sensitive values.
+    #
+    # The system CSPRNG is `arc4random_buf` on BSD/macOS, `BCryptGenRandom` on
+    # Windows, and `getrandom` (or `/dev/urandom`) on Linux. If the system
+    # CSPRNG fails, this method falls back to the facil.io PRNG instead of
+    # raising.
     #
     # @param bytes [Integer] number of random bytes to generate (default: 32)
     # @return [String] binary string containing the requested random bytes
     # @raise [RangeError] if bytes count is out of range
-    # @raise [RuntimeError] if the CSPRNG fails to generate random bytes
     #
     # @example
     #   # Generate a 32-byte key (default)
@@ -1687,6 +1691,12 @@ module Iodine
     # Returns true only of the connection is an HTTP connection (not upgraded).
     # @return [Boolean]
     def http?; end
+
+    # Returns true if the connection uses TLS (e.g., HTTPS or WSS).
+    #
+    # Rack applications see the same fact as `env['rack.url_scheme'] == 'https'`.
+    # @return [Boolean]
+    def tls?; end
 
     # Returns the number of bytes that need to be sent before the next `on_drained` callback is called.
     # @return [Integer]

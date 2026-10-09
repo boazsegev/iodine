@@ -333,6 +333,15 @@ static VALUE iodine_connection_is_http(VALUE o) {
   return Qfalse;
 }
 
+static VALUE iodine_connection_is_tls(VALUE o) {
+  iodine_connection_s *c = iodine_connection_ptr(o);
+  if (c->io)
+    return fio_io_tls(c->io) ? Qtrue : Qfalse;
+  if (c->http)
+    return fio_io_tls(fio_http_io(c->http)) ? Qtrue : Qfalse;
+  return Qfalse;
+}
+
 /* *****************************************************************************
 Ruby Store Get/Set
 ***************************************************************************** */
@@ -928,14 +937,15 @@ static VALUE iodine_handler_default_on_message(VALUE h, VALUE c, VALUE m) {
 static void iodine_connection___add_header(fio_http_s *h,
                                            fio_str_info_s n,
                                            fio_str_info_s v) {
-  char *eol = (char *)memchr(v.buf, '\n', v.len);
+  char *eol = (char *)FIO_MEMCHR(v.buf, '\n', v.len);
   while (eol) {
     fio_str_info_s tmp = FIO_STR_INFO2(v.buf, (size_t)(eol - v.buf));
     ++eol;
-    tmp.len -= (tmp.buf[tmp.len - 1] == '\r');
-    fio_http_response_header_add(h, n, tmp);
-    v.buf = eol;
     v.len -= tmp.len + 1;
+    v.buf = eol;
+    tmp.len -= (uint8_t)(tmp.len && tmp.buf[tmp.len - 1] == '\r');
+    fio_http_response_header_add(h, n, tmp);
+    eol = (char *)FIO_MEMCHR(v.buf, '\n', v.len);
   }
   fio_http_response_header_add(h, n, v);
 }
@@ -1419,19 +1429,15 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
       FIO_STR_INFO1((char *)"rack.multipart.tempfile_factory"),
       Qnil,
       &keeper);
-  iodine_env_set_const_val(
-      env,
-      FIO_STR_INFO1((char *)"rack.logger"),
-      rb_funcallv(rb_const_get(rb_cObject, rb_intern2("Logger", 6)),
-                  IODINE_NEW_ID,
-                  1,
-                  &rb_stderr),
-      &keeper);
-  iodine_env_set_key_pair(
-      env,
-      FIO_STR_INFO2((char *)"rack.url_scheme", 15),
-      FIO_STR_INFO2((char *)"https",
-                    (fio_cli_get("-tls") ? 5 : 4))); /* FIXME? */
+  /* Iodine::Logger meets the Rack logger interface and shares the C STL log
+   * sink and level (no dependency on the `logger` gem). */
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"rack.logger"),
+                           iodine_rb_IODINE_LOGGER,
+                           &keeper);
+  iodine_env_set_key_pair(env,
+                          FIO_STR_INFO2((char *)"rack.url_scheme", 15),
+                          FIO_STR_INFO2((char *)"https", 4));
 
   rb_hash_aset(env, IODINE_RACK_AFTER_RPLY_STR, Qnil);
 
@@ -1507,6 +1513,12 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
                                   FIO_STR_INFO1((char *)"SERVER_PORT"),
                                   prt);
   }
+  /* initialize the HTTPS template */
+  IODINE_CONNECTION_ENV_TEMPLATE_HTTPS = rb_hash_dup(env);
+  STORE.hold(IODINE_CONNECTION_ENV_TEMPLATE_HTTPS);
+  iodine_env_set_key_pair(IODINE_CONNECTION_ENV_TEMPLATE_HTTPS,
+                          FIO_STR_INFO2((char *)"rack.url_scheme", 15),
+                          FIO_STR_INFO2((char *)"https", 5));
 }
 
 /** Returns the client's current `env` object. */
@@ -1518,8 +1530,9 @@ static VALUE iodine_connection_env_get(VALUE self) {
     return c->store[IODINE_CONNECTION_STORE_env];
   if (!c->http)
     return (c->store[IODINE_CONNECTION_STORE_env] = rb_hash_new());
-  VALUE env = c->store[IODINE_CONNECTION_STORE_env] =
-      rb_hash_dup(IODINE_CONNECTION_ENV_TEMPLATE);
+  VALUE env = c->store[IODINE_CONNECTION_STORE_env] = rb_hash_dup(
+      fio_io_tls(fio_http_io(c->http)) ? IODINE_CONNECTION_ENV_TEMPLATE_HTTPS
+                                       : IODINE_CONNECTION_ENV_TEMPLATE);
 
   rb_hash_aset(env, IODINE_RACK_NEORACK_CLIENT, self);
   {
@@ -2284,7 +2297,6 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       }
     }
   }
-  fio_cli_set("-b", NULL);
   return r;
 }
 
@@ -3194,13 +3206,14 @@ static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
   fio_io_tls_free(s.settings.tls);
   if (!listener) /* resources freed by fio_io_listen if it fails */
     rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
-  if (fio_io_listener_is_tls(listener))
-    iodine_env_set_key_pair(IODINE_CONNECTION_ENV_TEMPLATE,
-                            FIO_STR_INFO2((char *)"rack.url_scheme", 15),
-                            FIO_STR_INFO2((char *)"https", 5));
   r = iodine_listener_new(listener,
                           (VALUE)s.settings.udata,
                           s.service != IODINE_SERVICE_RAW);
+  /* avoid listening to the same address/port combination again */
+  fio_cli_set("-p", NULL);
+  if (fio_cli_get("-b") &&
+      fio_url_parse(fio_cli_get("-b"), strlen(fio_cli_get("-b"))).port.len)
+    fio_cli_set("-b", NULL);
   return r;
   (void)self;
 }
@@ -3454,6 +3467,7 @@ static void Init_Iodine_Connection(void)  {
   rb_define_method(m, "websocket?", iodine_connection_is_websocket, 0);
   rb_define_method(m, "sse?", iodine_connection_is_sse, 0);
   rb_define_method(m, "http?", iodine_connection_is_http, 0);
+  rb_define_method(m, "tls?", iodine_connection_is_tls, 0);
 
   rb_define_method(m, "peer_addr", iodine_connection_peer_addr, 0);
   rb_define_method(m, "from", iodine_connection_from, 0);

@@ -75,7 +75,7 @@ supports macros that will help detect and validate it's version.
 /** PATCH version: Bug fixes, minor features may be added. */
 #define FIO_VERSION_PATCH 0
 /** Build version: optional build info (string), i.e. "beta.02" */
-#define FIO_VERSION_BUILD "rc.03"
+/* #define FIO_VERSION_BUILD */
 
 #ifdef FIO_VERSION_BUILD
 /** Version as a String literal (MACRO). */
@@ -1303,8 +1303,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
                                   max_concurrent_allocations)                  \
   enum { name##__hdr_ = (int)((sizeof(type_T) < 16) ? sizeof(type_T) : 16) };  \
   typedef struct FIO_ALIGN(16) name##__slot_s {                                \
-    unsigned char busy_;                                                       \
-    char reserved_[name##__hdr_ - 1];                                          \
+    unsigned char busy_[name##__hdr_];                                         \
     type_T data_[(units_per_allocation)];                                      \
   } name##__slot_s;                                                            \
   FIO_ASSERT_STATIC(offsetof(name##__slot_s, data_) == (size_t)name##__hdr_,   \
@@ -1317,7 +1316,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
     size_t start = fio_atomic_add(&hint, 1);                                   \
     for (size_t i = 0; i < (size_t)(max_concurrent_allocations); ++i) {        \
       size_t at = (start + i) % (size_t)(max_concurrent_allocations);          \
-      if (!(fio_atomic_or(&name##buffer[at].busy_, 1) & 1))                    \
+      if (!(fio_atomic_or(name##buffer[at].busy_, 1) & 1))                     \
         return name##buffer[at].data_;                                         \
     }                                                                          \
     return NULL;                                                               \
@@ -1326,7 +1325,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
   FIO_SFUNC void name##_free(type_T *ptr) {                                    \
     name##__slot_s *slot =                                                     \
         (name##__slot_s *)(void *)((char *)ptr - name##__hdr_);                \
-    fio_atomic_and(&slot->busy_, 0);                                           \
+    fio_atomic_and(slot->busy_, 0);                                            \
   }                                                                            \
   /** Returns the logical arena capacity in `type_T` units. */                 \
   FIO_IFUNC size_t name##_size(void) {                                         \
@@ -5963,7 +5962,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_loadu_si128(const void *p) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_loadu_si128((const fio_fx86_m128i *)p);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, p);
   return r;
 #endif
@@ -5974,7 +5973,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_load_si128(const void *p) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_load_si128((const fio_fx86_m128i *)p);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, p);
   return r;
 #endif
@@ -5997,7 +5996,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_add_epi32(fio_fx86_m128i a,
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_add_epi32(a, b);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 4; ++i)
     r.u32[i] = a.u32[i] + b.u32[i];
   return r;
@@ -6012,7 +6011,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_xor_si128(fio_fx86_m128i a,
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_xor_si128(a, b);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u64[0] = a.u64[0] ^ b.u64[0];
   r.u64[1] = a.u64[1] ^ b.u64[1];
   return r;
@@ -6024,7 +6023,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_or_si128(fio_fx86_m128i a, fio_fx86_m128i b) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_or_si128(a, b);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u64[0] = a.u64[0] | b.u64[0];
   r.u64[1] = a.u64[1] | b.u64[1];
   return r;
@@ -6037,7 +6036,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_and_si128(fio_fx86_m128i a,
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_and_si128(a, b);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u64[0] = a.u64[0] & b.u64[0];
   r.u64[1] = a.u64[1] & b.u64[1];
   return r;
@@ -6132,7 +6131,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi32(fio_fx86_m128i a, int imm8) {
   case 31: return _mm_slli_epi32(a, 31);
   default: {
     uint32_t in[4], out[4];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(in, &a);
     for (int i = 0; i < 4; ++i)
       out[i] = (n >= 32) ? 0 : (in[i] << n);
@@ -6143,7 +6142,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi32(fio_fx86_m128i a, int imm8) {
 #else
   if (n >= 32)
     return (fio_fx86_m128i){0};
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 4; ++i)
     r.u32[i] = a.u32[i] << n;
   return r;
@@ -6165,7 +6164,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi32(fio_fx86_m128i a, int imm8) {
   case 31: return _mm_srli_epi32(a, 31);
   default: {
     uint32_t in[4], out[4];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(in, &a);
     for (int i = 0; i < 4; ++i)
       out[i] = (n >= 32) ? 0 : (in[i] >> n);
@@ -6176,7 +6175,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi32(fio_fx86_m128i a, int imm8) {
 #else
   if (n >= 32)
     return (fio_fx86_m128i){0};
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 4; ++i)
     r.u32[i] = a.u32[i] >> n;
   return r;
@@ -6197,7 +6196,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi64(fio_fx86_m128i a, int imm8) {
   case 63: return _mm_slli_epi64(a, 63);
   default: {
     uint64_t in[2], out[2];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(in, &a);
     for (int i = 0; i < 2; ++i)
       out[i] = (n >= 64) ? 0 : (in[i] << n);
@@ -6208,7 +6207,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi64(fio_fx86_m128i a, int imm8) {
 #else
   if (n >= 64)
     return (fio_fx86_m128i){0};
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 2; ++i)
     r.u64[i] = a.u64[i] << n;
   return r;
@@ -6229,7 +6228,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi64(fio_fx86_m128i a, int imm8) {
   case 63: return _mm_srli_epi64(a, 63);
   default: {
     uint64_t in[2], out[2];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(in, &a);
     for (int i = 0; i < 2; ++i)
       out[i] = (n >= 64) ? 0 : (in[i] >> n);
@@ -6240,7 +6239,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi64(fio_fx86_m128i a, int imm8) {
 #else
   if (n >= 64)
     return (fio_fx86_m128i){0};
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 2; ++i)
     r.u64[i] = a.u64[i] >> n;
   return r;
@@ -6261,7 +6260,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_shuffle_epi32(fio_fx86_m128i a, int imm8) {
   case 0xFF: return _mm_shuffle_epi32(a, 0xFF);
   default: {
     uint32_t in[4], out[4];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(in, &a);
     out[0] = in[(n >> 0) & 3];
     out[1] = in[(n >> 2) & 3];
@@ -6272,7 +6271,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_shuffle_epi32(fio_fx86_m128i a, int imm8) {
   }
   }
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u32[0] = a.u32[(n >> 0) & 3];
   r.u32[1] = a.u32[(n >> 2) & 3];
   r.u32[2] = a.u32[(n >> 4) & 3];
@@ -6289,7 +6288,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_cmpeq_epi8(fio_fx86_m128i a,
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_cmpeq_epi8(a, b);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 16; ++i)
     r.u8[i] = (a.u8[i] == b.u8[i]) ? 0xFF : 0x00;
   return r;
@@ -6317,7 +6316,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_set_epi32(int e3, int e2, int e1, int e0) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_set_epi32(e3, e2, e1, e0);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u32[0] = (uint32_t)e0;
   r.u32[1] = (uint32_t)e1;
   r.u32[2] = (uint32_t)e2;
@@ -6331,7 +6330,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_set_epi64x(int64_t e1, int64_t e0) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_set_epi64x(e1, e0);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u64[0] = (uint64_t)e0;
   r.u64[1] = (uint64_t)e1;
   return r;
@@ -6373,7 +6372,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_set_epi8(char e15,
                       e1,
                       e0);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   r.u8[0] = (uint8_t)e0;
   r.u8[1] = (uint8_t)e1;
   r.u8[2] = (uint8_t)e2;
@@ -6399,7 +6398,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_set1_epi8(char a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_set1_epi8(a);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   for (int i = 0; i < 16; ++i)
     r.u8[i] = (uint8_t)a;
   return r;
@@ -6438,7 +6437,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_shuffle_epi8(fio_fx86_m128i a,
 #else
   fio_u128 ua = fio___fx86_to_u128(a);
   fio_u128 ub = fio___fx86_to_u128(b);
-  fio_u128 r;
+  fio_u128 r = {0};
   for (int i = 0; i < 16; ++i) {
     if (ub.u8[i] & 0x80)
       r.u8[i] = 0;
@@ -6495,7 +6494,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_blend_epi16(fio_fx86_m128i a,
   case 0xF0: return _mm_blend_epi16(a, b, 0xF0);
   default: {
     uint16_t va[8], vb[8], out[8];
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     fio_memcpy16(va, &a);
     fio_memcpy16(vb, &b);
     for (int i = 0; i < 8; ++i)
@@ -6507,7 +6506,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_blend_epi16(fio_fx86_m128i a,
 #else
   fio_u128 ua = fio___fx86_to_u128(a);
   fio_u128 ub = fio___fx86_to_u128(b);
-  fio_u128 r;
+  fio_u128 r = {0};
   for (int i = 0; i < 8; ++i)
     r.u16[i] = ((n >> i) & 1U) ? ub.u16[i] : ua.u16[i];
   return fio___fx86_from_u128(r);
@@ -6654,7 +6653,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_aesenc_si128(fio_fx86_m128i a,
   /* AddRoundKey */
   for (int i = 0; i < 16; ++i)
     state[i] ^= ((const uint8_t *)&roundkey)[i];
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, state);
   return r;
 #endif
@@ -6676,7 +6675,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_aesenclast_si128(fio_fx86_m128i a,
   /* AddRoundKey (no MixColumns) */
   for (int i = 0; i < 16; ++i)
     state[i] ^= ((const uint8_t *)&roundkey)[i];
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, state);
   return r;
 #endif
@@ -6716,7 +6715,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_aeskeygenassist_si128(fio_fx86_m128i a,
       x1[i] = fio___fx86_aes_sbox[src[4 + i]];
       x3[i] = fio___fx86_aes_sbox[src[12 + i]];
     }
-    fio_fx86_m128i r;
+    fio_fx86_m128i r = {0};
     uint8_t *dst = (uint8_t *)&r;
     /* dst[31:0] = SubWord(src[63:32]) */
     dst[0] = x1[0];
@@ -6751,7 +6750,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_aeskeygenassist_si128(fio_fx86_m128i a,
     x1[i] = fio___fx86_aes_sbox[src[4 + i]];
     x3[i] = fio___fx86_aes_sbox[src[12 + i]];
   }
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   uint8_t *dst = (uint8_t *)&r;
   /* dst[31:0] = SubWord(src[63:32]) */
   dst[0] = x1[0];
@@ -6820,7 +6819,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_clmulepi64_si128(fio_fx86_m128i a,
         hi ^= va >> (64 - i);
     }
   }
-  fio_u128 r;
+  fio_u128 r = {0};
   r.u64[0] = lo;
   r.u64[1] = hi;
   return fio___fx86_from_u128(r);
@@ -6887,7 +6886,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha256rnds2_epu32(fio_fx86_m128i cdgh,
   }
 
   /* Pack result as new abef: {a, b, e, f} */
-  fio_u128 r;
+  fio_u128 r = {0};
   r.u32[3] = a;
   r.u32[2] = b;
   r.u32[1] = e;
@@ -6908,7 +6907,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha256msg1_epu32(fio_fx86_m128i msg0,
 #else
   fio_u128 umsg0 = fio___fx86_to_u128(msg0);
   fio_u128 umsg1 = fio___fx86_to_u128(msg1);
-  fio_u128 r;
+  fio_u128 r = {0};
   /* sigma0 inputs: {msg0[1], msg0[2], msg0[3], msg1[0]}
    * i.e. W[i+1]..W[i+3] from msg0, W[i+4] from msg1. */
   for (int i = 0; i < 4; ++i) {
@@ -6936,7 +6935,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha256msg2_epu32(fio_fx86_m128i msg4,
    * then use the new values for msg4[2] and msg4[3]. */
   fio_u128 umsg4 = fio___fx86_to_u128(msg4);
   fio_u128 umsg1 = fio___fx86_to_u128(msg1);
-  fio_u128 r;
+  fio_u128 r = {0};
   uint32_t w14 = umsg1.u32[2]; /* W[i-2] */
   uint32_t w15 = umsg1.u32[3]; /* W[i-1] */
 
@@ -7016,7 +7015,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha1rnds4_epu32(fio_fx86_m128i abcd,
     a = t;
   }
 
-  fio_u128 r;
+  fio_u128 r = {0};
   r.u32[3] = a;
   r.u32[2] = b;
   r.u32[1] = c;
@@ -7037,7 +7036,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha1nexte_epu32(fio_fx86_m128i a,
 #else
   fio_u128 ua = fio___fx86_to_u128(a);
   fio_u128 ub = fio___fx86_to_u128(b);
-  fio_u128 r;
+  fio_u128 r = {0};
   uint32_t e = ua.u32[3];
   uint32_t rotated = (e << 30) | (e >> 2);
   r.u32[3] = rotated + ub.u32[3];
@@ -7063,7 +7062,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha1msg1_epu32(fio_fx86_m128i msg0,
 #else
   fio_u128 umsg0 = fio___fx86_to_u128(msg0);
   fio_u128 umsg1 = fio___fx86_to_u128(msg1);
-  fio_u128 r;
+  fio_u128 r = {0};
   r.u32[3] = umsg0.u32[3] ^ umsg0.u32[1];
   r.u32[2] = umsg0.u32[2] ^ umsg0.u32[0];
   r.u32[1] = umsg0.u32[1] ^ umsg1.u32[3];
@@ -7091,7 +7090,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_sha1msg2_epu32(fio_fx86_m128i msg5,
 #else
   fio_u128 umsg5 = fio___fx86_to_u128(msg5);
   fio_u128 umsg1 = fio___fx86_to_u128(msg1);
-  fio_u128 r;
+  fio_u128 r = {0};
   uint32_t t3 = umsg5.u32[3] ^ umsg1.u32[2];
   uint32_t t2 = umsg5.u32[2] ^ umsg1.u32[1];
   uint32_t t1 = umsg5.u32[1] ^ umsg1.u32[0];
@@ -7115,7 +7114,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_loadu_si256(const void *p) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_loadu_si256((const fio_fx86_m256i *)p);
 #else
-  fio_fx86_m256i r;
+  fio_fx86_m256i r = {0};
   fio_memcpy32(&r, p);
   return r;
 #endif
@@ -7126,7 +7125,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_load_si256(const void *p) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_load_si256((const fio_fx86_m256i *)p);
 #else
-  fio_fx86_m256i r;
+  fio_fx86_m256i r = {0};
   fio_memcpy32(&r, p);
   return r;
 #endif
@@ -7151,7 +7150,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_add_epi16(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 16; ++i)
     r.u16[i] = ua.u16[i] + ub.u16[i];
   return fio___fx86_from_u256(r);
@@ -7166,7 +7165,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sub_epi16(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 16; ++i)
     r.u16[i] = ua.u16[i] - ub.u16[i];
   return fio___fx86_from_u256(r);
@@ -7181,7 +7180,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_mullo_epi16(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 16; ++i)
     r.u16[i] = (uint16_t)((uint32_t)ua.u16[i] * (uint32_t)ub.u16[i]);
   return fio___fx86_from_u256(r);
@@ -7198,7 +7197,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_add_epi32(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.u32[i] = ua.u32[i] + ub.u32[i];
   return fio___fx86_from_u256(r);
@@ -7213,7 +7212,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sub_epi32(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.u32[i] = ua.u32[i] - ub.u32[i];
   return fio___fx86_from_u256(r);
@@ -7228,7 +7227,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_mullo_epi32(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.u32[i] = ua.u32[i] * ub.u32[i];
   return fio___fx86_from_u256(r);
@@ -7245,7 +7244,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_add_epi64(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = ua.u64[i] + ub.u64[i];
   return fio___fx86_from_u256(r);
@@ -7260,7 +7259,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sub_epi64(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = ua.u64[i] - ub.u64[i];
   return fio___fx86_from_u256(r);
@@ -7277,7 +7276,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_slli_epi32(fio_fx86_m256i a, int imm8) {
   case 16: return _mm256_slli_epi32(a, 16);
   default: {
     uint32_t in[8], out[8];
-    fio_fx86_m256i r;
+    fio_fx86_m256i r = {0};
     fio_memcpy32(in, &a);
     for (int i = 0; i < 8; ++i)
       out[i] = (n >= 32) ? 0 : (in[i] << n);
@@ -7305,7 +7304,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_srai_epi32(fio_fx86_m256i a, int imm8) {
   case 26: return _mm256_srai_epi32(a, 26);
   default: {
     int32_t in[8], out[8];
-    fio_fx86_m256i r;
+    fio_fx86_m256i r = {0};
     fio_memcpy32(in, &a);
     for (int i = 0; i < 8; ++i)
       out[i] = (n >= 32) ? (in[i] >> 31) : (in[i] >> n);
@@ -7315,7 +7314,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_srai_epi32(fio_fx86_m256i a, int imm8) {
   }
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.i32[i] = (n >= 32) ? (ua.i32[i] >> 31) : (ua.i32[i] >> n);
   return fio___fx86_from_u256(r);
@@ -7332,7 +7331,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_xor_si256(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = ua.u64[i] ^ ub.u64[i];
   return fio___fx86_from_u256(r);
@@ -7347,7 +7346,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_and_si256(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = ua.u64[i] & ub.u64[i];
   return fio___fx86_from_u256(r);
@@ -7362,7 +7361,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_or_si256(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = ua.u64[i] | ub.u64[i];
   return fio___fx86_from_u256(r);
@@ -7379,7 +7378,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_cmpeq_epi8(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 32; ++i)
     r.u8[i] = (ua.u8[i] == ub.u8[i]) ? 0xFF : 0x00;
   return fio___fx86_from_u256(r);
@@ -7408,7 +7407,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set1_epi8(char a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set1_epi8(a);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 32; ++i)
     r.u8[i] = (uint8_t)a;
   return fio___fx86_from_u256(r);
@@ -7420,7 +7419,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set1_epi16(short a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set1_epi16(a);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 16; ++i)
     r.u16[i] = (uint16_t)a;
   return fio___fx86_from_u256(r);
@@ -7432,7 +7431,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set1_epi32(int a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set1_epi32(a);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.u32[i] = (uint32_t)a;
   return fio___fx86_from_u256(r);
@@ -7444,7 +7443,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set1_epi64x(long long a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set1_epi64x(a);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 4; ++i)
     r.u64[i] = (uint64_t)a;
   return fio___fx86_from_u256(r);
@@ -7459,7 +7458,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set_epi64x(long long e3,
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set_epi64x(e3, e2, e1, e0);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   r.u64[0] = (uint64_t)e0;
   r.u64[1] = (uint64_t)e1;
   r.u64[2] = (uint64_t)e2;
@@ -7535,7 +7534,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set_epi8(char e31,
                          e1,
                          e0);
 #else
-  fio_u256 r;
+  fio_u256 r = {0};
   r.u8[0] = (uint8_t)e0;
   r.u8[1] = (uint8_t)e1;
   r.u8[2] = (uint8_t)e2;
@@ -7591,7 +7590,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_shuffle_epi8(fio_fx86_m256i a,
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   /* Low 128-bit lane */
   for (int i = 0; i < 16; ++i) {
     if (ub.u8[i] & 0x80)
@@ -7659,7 +7658,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_permute4x64_epi64(fio_fx86_m256i a,
   case 0xD8: return _mm256_permute4x64_epi64(a, 0xD8);
   default: {
     uint64_t in[4], out[4];
-    fio_fx86_m256i r;
+    fio_fx86_m256i r = {0};
     fio_memcpy32(in, &a);
     out[0] = in[(n >> 0) & 3];
     out[1] = in[(n >> 2) & 3];
@@ -7671,7 +7670,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_permute4x64_epi64(fio_fx86_m256i a,
   }
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
-  fio_u256 r;
+  fio_u256 r = {0};
   r.u64[0] = ua.u64[(n >> 0) & 3];
   r.u64[1] = ua.u64[(n >> 2) & 3];
   r.u64[2] = ua.u64[(n >> 4) & 3];
@@ -7693,7 +7692,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_packs_epi32(fio_fx86_m256i a,
    * Lane 1: a[4..7] saturated to i16, then b[4..7] saturated to i16. */
   fio_u256 ua = fio___fx86_to_u256(a);
   fio_u256 ub = fio___fx86_to_u256(b);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int lane = 0; lane < 2; ++lane) {
     int base_a = lane * 4;
     int base_b = lane * 4;
@@ -7724,7 +7723,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_cvtepi16_epi32(fio_fx86_m128i a) {
   return _mm256_cvtepi16_epi32(a);
 #else
   fio_u128 ua = fio___fx86_to_u128(a);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (int i = 0; i < 8; ++i)
     r.i32[i] = (int32_t)ua.i16[i];
   return fio___fx86_from_u256(r);
@@ -7738,7 +7737,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_256_castsi256_si128(fio_fx86_m256i a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_castsi256_si128(a);
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, &a);
   return r;
 #endif
@@ -7753,7 +7752,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_256_extracti128_si256(fio_fx86_m256i a,
   default: return _mm256_extracti128_si256(a, 1);
   }
 #else
-  fio_fx86_m128i r;
+  fio_fx86_m128i r = {0};
   fio_memcpy16(&r, (const uint8_t *)&a + ((imm8 & 1) * 16));
   return r;
 #endif
@@ -7815,7 +7814,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512rnds2_epi64(fio_fx86_m256i state1,
   }
 
   /* Return updated state1 = {e, f, g, h} */
-  fio_u256 r;
+  fio_u256 r = {0};
   r.u64[3] = e;
   r.u64[2] = f;
   r.u64[1] = g;
@@ -7839,7 +7838,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512msg1_epi64(fio_fx86_m256i w0,
 #else
   fio_u256 uw0 = fio___fx86_to_u256(w0);
   fio_u256 uw1 = fio___fx86_to_u256(w1);
-  fio_u256 r;
+  fio_u256 r = {0};
   /* sigma0 inputs: {w0[1], w0[2], w0[3], w1[0]} */
   uint64_t src[4] = {uw0.u64[1], uw0.u64[2], uw0.u64[3], uw1.u64[0]};
   for (int i = 0; i < 4; ++i) {
@@ -7865,7 +7864,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512msg2_epi64(fio_fx86_m256i w0,
 #else
   fio_u256 uw0 = fio___fx86_to_u256(w0);
   fio_u256 uw1 = fio___fx86_to_u256(w1);
-  fio_u256 r;
+  fio_u256 r = {0};
   uint64_t w14 = uw1.u64[2]; /* W[t-2] */
   uint64_t w15 = uw1.u64[3]; /* W[t-1] */
 
@@ -13801,7 +13800,7 @@ FIO_SFUNC fio_u256 fio___risky256_finalize(uint64_t v0[8], uint64_t v1[8]) {
   for (size_t i = 0; i < 8; ++i)
     v0[i] ^= fio___risky256_primes[i];
   fio___risky256_round(v0);
-  fio_u256 r;
+  fio_u256 r = {0};
   for (size_t i = 0; i < 4; ++i)
     r.u64[i] = v0[i] ^ v0[i + 4];
   return r;
@@ -13825,7 +13824,7 @@ FIO_SFUNC fio_u512 fio___risky512_finalize(uint64_t v0[8], uint64_t v1[8]) {
     v0[i] ^= fio___risky256_extra0[i];
   fio___risky256_round(v0);
   /* First squeeze: 256 bits */
-  fio_u512 r;
+  fio_u512 r = {0};
   for (size_t i = 0; i < 8; ++i)
     v0[i] ^= fio___risky256_primes[i];
   fio___risky256_round(v0);
@@ -14184,10 +14183,12 @@ SFUNC int fio_rand_bytes_secure(void *target, size_t len) {
   arc4random_buf(target, len);
   return 0;
 #elif FIO_OS_WIN && !defined(__CYGWIN__)
-  /* Windows: system-preferred CSPRNG; ULONG is 32 bit, so chunk large requests */
+  /* Windows: system-preferred CSPRNG; ULONG is 32 bit, so chunk large requests
+   */
   uint8_t *buf = (uint8_t *)target;
   while (len) {
-    ULONG chunk = (len > (size_t)0x40000000UL) ? (ULONG)0x40000000UL : (ULONG)len;
+    ULONG chunk =
+        (len > (size_t)0x40000000UL) ? (ULONG)0x40000000UL : (ULONG)len;
     NTSTATUS st = BCryptGenRandom(NULL,
                                   (PUCHAR)buf,
                                   chunk,
@@ -14219,7 +14220,7 @@ SFUNC int fio_rand_bytes_secure(void *target, size_t len) {
   if (!len)
     return 0;
 #endif /* FIO___RAND_HAS_GETRANDOM */
-  /* Generic POSIX fallback: read from /dev/urandom */
+    /* Generic POSIX fallback: read from /dev/urandom */
 #ifdef O_CLOEXEC
   int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
 #else
@@ -17409,6 +17410,23 @@ FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p);
 #define FIO___HTTP1_FLAG_EXPECT ((size_t)1)
 /** Internal parser flag: the message has no body (ignore body framing). */
 #define FIO___HTTP1_FLAG_NO_BODY ((size_t)2)
+/** Internal parser flag: an HTTP/1.1+ request still requires a Host header. */
+#define FIO___HTTP1_FLAG_HOST_REQUIRED ((size_t)4)
+/** Internal parser flag: a request Host header was already received. */
+#define FIO___HTTP1_FLAG_HOST_SEEN ((size_t)8)
+/** Internal parser flag: the message is a request (not a response). */
+#define FIO___HTTP1_FLAG_REQUEST ((size_t)16)
+/** Internal parser flag: Transfer-Encoding seen without a final `chunked`. */
+#define FIO___HTTP1_FLAG_TE_UNFRAMED ((size_t)32)
+
+/**
+ * Returns non-zero if `version` is exactly `HTTP/1.0`.
+ *
+ * HTTP/1.0 messages are not persistent without a `keep-alive` connection
+ * option and never use chunked transfer coding (RFC 9112 §9.3, §6.1). Every
+ * other version string (HTTP/0.9 is unsupported) gets HTTP/1.1 semantics.
+ */
+FIO_IFUNC int fio_http1_version_is_legacy(fio_buf_info_s version);
 
 /* *****************************************************************************
 HTTP/1.x callbacks (to be implemented by parser user)
@@ -17519,6 +17537,11 @@ FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p) {
          (size_t)(p->expected == FIO___HTTP1_BODY_NOT_ALLOWED);
 }
 
+/** Returns non-zero if `version` is exactly `HTTP/1.0` (one 64 bit test). */
+FIO_IFUNC int fio_http1_version_is_legacy(fio_buf_info_s v) {
+  return v.len == 8 && fio_buf2u64u(v.buf) == fio_buf2u64u("HTTP/1.0");
+}
+
 /* *****************************************************************************
 Main Parsing Loop
 ***************************************************************************** */
@@ -17612,6 +17635,10 @@ static int fio_http1___start(fio_http1_parser_s *p,
        ((fio_buf2u64u(wrd[0].buf) | (uint64_t)0x2020202020202020ULL) ==
         method_options)))
     p->expected = FIO___HTTP1_BODY_NOT_ALLOWED;
+  /* HTTP/1.1 requests require exactly one Host header (RFC 9112 §3.2) */
+  p->flags |= FIO___HTTP1_FLAG_REQUEST;
+  if (!fio_http1_version_is_legacy(wrd[2]))
+    p->flags |= FIO___HTTP1_FLAG_HOST_REQUIRED;
 
   if (fio_http1_on_method(wrd[0], udata))
     return -1;
@@ -17643,6 +17670,29 @@ parse_response_line:
 Reading Headers
 ***************************************************************************** */
 
+/* Returns non-zero if a transfer-coding list names `chunked` (any position). */
+static int fio_http1___te_has_chunked(fio_buf_info_s v) {
+  while (v.len) {
+    char *comma = (char *)FIO_MEMCHR(v.buf, ',', v.len);
+    size_t len = comma ? (size_t)(comma - v.buf) : v.len;
+    char *semi = (char *)FIO_MEMCHR(v.buf, ';', len);
+    size_t start = 0, end = semi ? (size_t)(semi - v.buf) : len;
+    while (start < end && (v.buf[start] == ' ' || v.buf[start] == '\t'))
+      ++start;
+    while (end > start && (v.buf[end - 1] == ' ' || v.buf[end - 1] == '\t'))
+      --end;
+    if (end - start == 7 &&
+        (fio_buf2u32u(v.buf + start) | 0x20202020UL) == fio_buf2u32u("chun") &&
+        (fio_buf2u32u(v.buf + start + 3) | 0x20202020UL) ==
+            fio_buf2u32u("nked"))
+      return 1;
+    len += !!comma;
+    v.buf += len;
+    v.len -= len;
+  }
+  return 0;
+}
+
 /* handle headers before calling callback. */
 static inline int fio_http1___on_header(fio_http1_parser_s *p,
                                         fio_buf_info_s name,
@@ -17653,8 +17703,18 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
   const size_t no_body = (p->flags & FIO___HTTP1_FLAG_NO_BODY);
   /* test for special headers */
   switch (name.len) {
+  case 4: /* test for "host" (requests: exactly one, RFC 9112 §3.2) */
+    if ((p->flags & FIO___HTTP1_FLAG_REQUEST) &&
+        fio_buf2u32u(name.buf) == fio_buf2u32u("host")) {
+      if ((p->flags & FIO___HTTP1_FLAG_HOST_SEEN))
+        return -1;
+      p->flags |= FIO___HTTP1_FLAG_HOST_SEEN;
+      p->flags &= ~FIO___HTTP1_FLAG_HOST_REQUIRED;
+    }
+    break;
   case 6: /* test for "expect" */
-    if (!no_body && value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
+    if (!no_body && value.len == 12 &&
+        fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
         fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect")) {
       /* Expect value validation */
       if (fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
@@ -17701,27 +17761,43 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
     }
     break;
   case 17: /* test for "transfer-encoding" (chunked?) */
-    if (!no_body && value.len >= 7 && (name.buf[16] == 'g') &&
+    if (!no_body && (name.buf[16] == 'g') &&
         !((fio_buf2u64u(name.buf) ^ fio_buf2u64u("transfer")) |
           (fio_buf2u64u(name.buf + 8) ^ fio_buf2u64u("-encodin")))) {
-      char *c_start = value.buf + value.len - 7;
-      if ((fio_buf2u32u(c_start) | 0x20202020UL) == fio_buf2u32u("chun") &&
-          (fio_buf2u32u(c_start + 3) | 0x20202020UL) == fio_buf2u32u("nked")) {
-        if (p->expected && p->expected != FIO_HTTP1_EXPECTED_CHUNKED)
-          return -1;
-        p->expected = FIO_HTTP1_EXPECTED_CHUNKED;
-        /* endpoint does not need to know if the body was chunked or not */
-        if (value.len == 7)
-          return 0;
-        if (c_start[-1] != ' ' && c_start[-1] != ',' && c_start[-1] != '\t')
-          return -1;
-        while (c_start > value.buf &&
-               (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t'))
-          --c_start;
-        if (c_start == value.buf)
-          return 0;
-        value.len = c_start - value.buf;
+      /* `chunked` MUST be the final coding, applied once (RFC 9112 §6.3,
+       * §7). Field lines form a single list (RFC 9110 §5.3): a coding after
+       * `chunked`, a repeated `chunked`, Content-Length (TE.CL) or a bodyless
+       * method (GET / HEAD / OPTIONS) all leave `p->expected` set - reject.
+       * A list that doesn't end with `chunked` can't be framed and is
+       * rejected once the headers end, rather than misreading the body as
+       * the next message (request smuggling). */
+      if (p->expected)
+        return -1;
+      char *c_start = value.buf + value.len - (value.len >= 7 ? 7 : 0);
+      if (value.len < 7 ||
+          (fio_buf2u32u(c_start) | 0x20202020UL) != fio_buf2u32u("chun") ||
+          (fio_buf2u32u(c_start + 3) | 0x20202020UL) !=
+              fio_buf2u32u("nked") ||
+          (value.len > 7 && c_start[-1] != ' ' && c_start[-1] != ',' &&
+           c_start[-1] != '\t')) {
+        if (fio_http1___te_has_chunked(value))
+          return -1; /* `chunked` isn't the final coding */
+        p->flags |= FIO___HTTP1_FLAG_TE_UNFRAMED;
+        break; /* forward the codings, a later field line may end the list */
       }
+      p->expected = FIO_HTTP1_EXPECTED_CHUNKED;
+      p->flags &= ~FIO___HTTP1_FLAG_TE_UNFRAMED;
+      /* endpoint does not need to know if the body was chunked or not */
+      while (c_start > value.buf &&
+             (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t'))
+        --c_start;
+      if (c_start == value.buf)
+        return 0;
+      value.len = c_start - value.buf;
+      if (fio_http1___te_has_chunked(value))
+        return -1;
+      /* remaining codings (i.e., `gzip`) are forwarded for the endpoint to
+       * decode (a 501 response is only a SHOULD, RFC 9112 §6.1). */
     }
     break;
   }
@@ -17757,25 +17833,28 @@ static inline int fio_http1___on_trailer(fio_http1_parser_s *p,
   return fio_http1_on_header(name, value, udata);
 }
 
+/** The subset of the forbidden chars that allows UTF-8 headers */
+static const _Bool FIO___HTTP_FORBIDDEN_NAME_CHARS[256] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
 /* seeks to the ':' divisor while testing and converting to downcase. */
 static char *fio_http1___seek_header_div(char *p) {
-  /* this is the subset of the forbidden chars that allows UTF-8 headers */
-  static const _Bool forbidden_name_chars[256] = {
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  FIO_ASSERT(forbidden_name_chars[' '] && forbidden_name_chars['\t'],
+  FIO_ASSERT(FIO___HTTP_FORBIDDEN_NAME_CHARS[' '] &&
+                 FIO___HTTP_FORBIDDEN_NAME_CHARS['\t'],
              "missing forbidden HTTP Header Name characters");
   for (;;) {
-    if (FIO_UNLIKELY(forbidden_name_chars[((uint8_t)(*p))]))
+    if (FIO_UNLIKELY(FIO___HTTP_FORBIDDEN_NAME_CHARS[((uint8_t)(*p))]))
       return p;
     *p = fio_ct_tolower(*p);
     ++p;
@@ -17826,6 +17905,9 @@ static inline int fio_http1___read_header_line(
   }
 
 headers_finished:
+  if ((p->flags &
+       (FIO___HTTP1_FLAG_HOST_REQUIRED | FIO___HTTP1_FLAG_TE_UNFRAMED)))
+    return -1; /* no Host for HTTP/1.1 (RFC 9112 §3.2) or no final chunked */
   if ((p->flags & FIO___HTTP1_FLAG_NO_BODY))
     p->expected = 0; /* body framing ignored (i.e., skip_body set late) */
   if ((p->flags & FIO___HTTP1_FLAG_EXPECT)) {
@@ -30679,11 +30761,21 @@ SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
                                      const void *raw,
                                      size_t raw_len) {
   static const uint8_t base32encode[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  int r = 0;
-  size_t expected = ((raw_len * 8) / 5) + 1;
-  if (fio_string___write_validate_len(dest, reallocate, &expected)) {
-    return (r = -1); /* no partial encoding. */
-  }
+  int r = -1;
+
+  /*  expected length calculation. */
+  const size_t groups = raw_len / 5;
+  const size_t rem = raw_len % 5;
+  const size_t partial = rem ? ((rem * 8 + 4) / 5) + 1 : 0; /* symbols + '=' */
+  if (groups > (SIZE_MAX - partial - 1) / 8 || !dest ||
+      dest->len > SIZE_MAX - (groups * 8 + partial) - 1)
+    return r;
+  size_t expected = groups * 8 + partial;
+
+  if (fio_string___write_validate_len(dest, reallocate, &expected))
+    return r;
+
+  r = 0;
   expected = dest->len;
   size_t bits = 0, store = 0;
   for (size_t i = 0; i < raw_len; ++i) {
@@ -30703,10 +30795,8 @@ SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
     bits -= 5;
   }
   if (bits) {
-    // dest->buf[dest->len++] = base32encode[store & ((1U << bits) - 1)];
     dest->buf[dest->len++] = base32encode[31U & (store << (5 - bits))];
-    dest->buf[dest->len] = '=';
-    dest->len += !!((dest->len - expected) % 5);
+    dest->buf[dest->len++] = '=';
   }
   dest->buf[dest->len] = 0;
   return r;
@@ -30748,11 +30838,14 @@ SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
       255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
       255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
       255};
-  int r = 0;
+  int r = -1;
   size_t expected = ((encoded_len * 5) / 8) + 1;
+  if (expected > encoded_len || expected > UINT32_MAX) /* overflow / risk */
+    return r;
   if (fio_string___write_validate_len(dest, reallocate, &expected)) {
-    return (r = -1); /* no partial encoding. */
+    return r; /* no partial encoding. */
   }
+  r = 0;
   uint64_t val = 0;
   uint64_t bits = 0;
   uint8_t *s = (uint8_t *)dest->buf + dest->len;
@@ -30775,11 +30868,7 @@ SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
     *(s++) = (0xFF & (val >> (bits - 8)));
     bits -= 8;
   }
-  if (bits) { /* letfover bits considered padding? */
-    val = 0xFF & (val << (8 - bits));
-    if (val || (encoded_len && ((uint8_t *)encoded)[encoded_len - 1] != '='))
-      *(s++) = val;
-  }
+  /* Remaining bits do not constitute another byte. */
   dest->len = (size_t)(s - (uint8_t *)dest->buf);
   dest->buf[dest->len] = 0;
   return r;
@@ -31012,15 +31101,16 @@ FIO_IFUNC int fio_string_write_url_dec_internal(
   if (dest->len + encoded_len >= dest->capa) { /* reserve only what we need */
     size_t act_len = 0;
     while (end > pr && (pr = (uint8_t *)FIO_MEMCHR(pr, '%', end - pr))) {
+      ++pr;
       act_len += pr - last;
-      last = pr + 1;
-      if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16)
+      last = pr;
+      if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16) {
         last += 2;
-      else if (end - last > 4 && (last[0] | 32) == 'u' &&
-               fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
-               fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
+      } else if (end - last > 4 && (last[0] | 32) == 'u' &&
+                 fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
+                 fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
         last += 5;
-        act_len += 3; /* uXXXX length maxes out at 4 ... I think */
+        act_len += 2; /* uXXXX length maxes out at 4 ... I think, -% -u = 2 */
       }
       pr = last;
     }
@@ -37233,6 +37323,8 @@ typedef struct {
   fio_thread_mutex_t mutex;
   fio_thread_cond_t cond;
   size_t workers;
+  /** number of workers waiting (or about to wait) on `cond`. */
+  size_t sleeping;
   volatile unsigned stop;
 } fio___thread_group_s;
 
@@ -37304,10 +37396,19 @@ FIO_IFUNC uint32_t fio_queue_count(fio_queue_s *q);
 /** Adds worker / consumer threads to perform the jobs in the queue. */
 SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t count);
 
-/** Signals all worker threads to stop performing tasks and terminate. */
-SFUNC void fio_queue_workers_stop(fio_queue_s *q);
+/**
+ * Signals all worker threads to stop performing tasks and terminate.
+ *
+ * Returns the number of worker groups signaled. Does NOT wait and does NOT
+ * promise that pending tasks are performed.
+ */
+SFUNC size_t fio_queue_workers_stop(fio_queue_s *q);
 
-/** Signals all worker threads to stop, waiting for them to complete. */
+/**
+ * Signals all worker threads to stop, waiting for them to complete.
+ *
+ * If the queue had workers, pending tasks are performed before returning.
+ */
 SFUNC void fio_queue_workers_join(fio_queue_s *q);
 
 /** Signals all worker threads to go back to work (new tasks added). */
@@ -37462,8 +37563,10 @@ SFUNC void fio_queue_destroy(fio_queue_s *q) {
   while (q->r) {
     fio___task_ring_s *tmp = q->r;
     q->r = q->r->next;
-    if (tmp != &q->mem)
-      FIO_MEM_FREE_(tmp, sizeof(*tmp));
+    if (tmp == &q->mem)
+      continue;
+    FIO_LEAK_COUNTER_ON_FREE(fio_queue_task_rings);
+    FIO_MEM_FREE_(tmp, sizeof(*tmp));
   }
   FIO___LOCK_UNLOCK(q->lock);
   FIO___LOCK_DESTROY(q->lock);
@@ -37530,6 +37633,28 @@ FIO_IFUNC fio_queue_task_s fio___task_ring_pop(fio___task_ring_s *r) {
   return t;
 }
 
+/* Wakes one idle worker per active worker group. Call with `q->lock` held,
+ * after `q->count` was incremented.
+ *
+ * Lost wakeup protection: a worker increments `sleeping` and then reads
+ * `q->count`, both while holding the group mutex, and keeps holding the mutex
+ * until `cond_wait` releases it. A pusher increments `q->count` and then reads
+ * `sleeping`. All are sequentially consistent atomics, so either the worker
+ * sees the task (and doesn't wait) or the pusher sees the sleeper (and signals
+ * under the mutex, which it can only acquire once the worker is waiting).
+ * Groups without sleepers are skipped, avoiding the mutex on busy queues. */
+FIO_SFUNC void fio___queue_workers_signal(fio_queue_s *q) {
+  if (!q->consumers.next || FIO_LIST_IS_EMPTY(&q->consumers))
+    return;
+  FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
+    if (fio_atomic_add(&pos->stop, 0) || !fio_atomic_add(&pos->sleeping, 0))
+      continue;
+    fio_thread_mutex_lock(&pos->mutex);
+    fio_thread_cond_signal(&pos->cond);
+    fio_thread_mutex_unlock(&pos->mutex);
+  }
+}
+
 int fio_queue_push___(void); /* sublime text marker */
 /** Pushes a task to the queue. Returns -1 on error. */
 SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
@@ -37557,12 +37682,7 @@ SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
     fio___task_ring_push(q->w, task);
   }
   fio_atomic_add(&q->count, 1);
-  if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
-    FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      if (!fio_atomic_add(&pos->stop, 0))
-        fio_thread_cond_signal(&pos->cond);
-    }
-  }
+  fio___queue_workers_signal(q);
   FIO___LOCK_UNLOCK(q->lock);
   return 0;
 no_mem:
@@ -37593,12 +37713,7 @@ SFUNC int fio_queue_push_urgent FIO_NOOP(fio_queue_s *q,
     tmp->buf[0] = task;
   }
   fio_atomic_add(&q->count, 1);
-  if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
-    FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      if (!fio_atomic_add(&pos->stop, 0))
-        fio_thread_cond_signal(&pos->cond);
-    }
-  }
+  fio___queue_workers_signal(q);
   FIO___LOCK_UNLOCK(q->lock);
   return 0;
 no_mem:
@@ -37673,8 +37788,11 @@ FIO_SFUNC void *fio___queue_worker_task(void *g_) {
   while (!fio_atomic_add(&grp->stop, 0)) {
     fio_queue_perform_all(grp->queue);
     fio_thread_mutex_lock(&grp->mutex);
-    if (!fio_atomic_add(&grp->stop, 0))
+    /* announce, then re-check - see `fio___queue_workers_signal` */
+    fio_atomic_add(&grp->sleeping, 1);
+    if (!fio_atomic_add(&grp->stop, 0) && !fio_queue_count(grp->queue))
       fio_thread_cond_wait(&grp->cond, &grp->mutex);
+    fio_atomic_sub(&grp->sleeping, 1);
     fio_thread_mutex_unlock(&grp->mutex);
     fio_queue_perform_all(grp->queue);
   }
@@ -37751,17 +37869,20 @@ SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
   return 0;
 }
 
-SFUNC void fio_queue_workers_stop(fio_queue_s *q) {
+SFUNC size_t fio_queue_workers_stop(fio_queue_s *q) {
   if (!q)
-    return;
+    return 0;
+  size_t count = 0;
   FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
   FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
     fio_atomic_or(&pos->stop, 1);
     fio_thread_mutex_lock(&pos->mutex);
     fio_thread_cond_broadcast(&pos->cond);
     fio_thread_mutex_unlock(&pos->mutex);
+    ++count;
   }
   FIO___LOCK_UNLOCK(q->lock);
+  return count;
 }
 
 /** Signals all worker threads to go back to work (new tasks added). */
@@ -37769,10 +37890,7 @@ SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
   if (!q)
     return;
   FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
-  FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-    if (!fio_atomic_add(&pos->stop, 0))
-      fio_thread_cond_signal(&pos->cond);
-  }
+  fio___queue_workers_signal(q);
   FIO___LOCK_UNLOCK(q->lock);
 }
 
@@ -37780,8 +37898,7 @@ SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
 SFUNC void fio_queue_workers_join(fio_queue_s *q) {
   if (!q)
     return;
-  uint8_t had_workers = 0;
-  fio_queue_workers_stop(q);
+  uint8_t had_workers = !!fio_queue_workers_stop(q);
   FIO___LOCK_LOCK(q->lock);
   while (q->consumers.next && q->consumers.next != &q->consumers) {
     fio___thread_group_s *pos =
@@ -105141,7 +105258,7 @@ SFUNC int fio_io_is_suspended(fio_io_s *io);
  * suspension or throttling checks. */
 SFUNC void fio_io_on_data_schedule(fio_io_s *io);
 
-/** Returns 1 if the IO handle is marked as open. */
+/** Returns 1 if the IO handle is open and not marked for closure. */
 SFUNC int fio_io_is_open(fio_io_s *io);
 
 /** Returns the approximate number of bytes in the outgoing buffer. */
@@ -106594,9 +106711,10 @@ SFUNC int fio_io_is_suspended(fio_io_s *io) {
   return (int)((io->flags & FIO___IO_FLAG_SUSPENDED) / FIO___IO_FLAG_SUSPENDED);
 }
 
-/** Returns 1 if the IO handle is marked as open. */
+/** Returns 1 if the IO handle is open and not marked for closure. */
 SFUNC int fio_io_is_open(fio_io_s *io) {
-  return (int)((io->flags & FIO___IO_FLAG_OPEN) / FIO___IO_FLAG_OPEN);
+  return (io->flags & (FIO___IO_FLAG_OPEN | FIO___IO_FLAG_CLOSED_ALL)) ==
+         FIO___IO_FLAG_OPEN;
 }
 
 /** Returns the approximate number of bytes in the outgoing buffer. */
@@ -106730,7 +106848,11 @@ finish_loop:
       FIO___IO_FLAG_SET(io, FIO___IO_FLAG_THROTTLED);
     }
     fio___io_monitor_out(io);
-  } else if ((io->flags & FIO___IO_FLAG_CLOSE)) {
+  } else if ((io->flags & (FIO___IO_FLAG_CLOSE | FIO___IO_FLAG_WRITE_DIRTY))) {
+    /* Queued writes may not have reached io->out yet. The finish path clears
+     * WRITE_DIRTY and schedules another ready task behind those writes. */
+    if (io->flags & FIO___IO_FLAG_WRITE_DIRTY)
+      goto finish;
     io->pr->io_functions.finish(io->fd, io->tls);
     fio_io_close_now(io);
   } else {
@@ -109604,7 +109726,7 @@ FIO_SFUNC void fio___ipc_on_rpc_master(void *ipc_, void *io_) {
   fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
   ipc->from = io_;
   fio_u128 *uuid = fio_io_buffer(io_);
-  fio_u128 peer_uuid;
+  fio_u128 peer_uuid = {0};
 
   if (fio_ipc_decrypt(ipc))
     goto peer_error;
@@ -109634,7 +109756,13 @@ FIO_SFUNC void fio___ipc_on_rpc_master(void *ipc_, void *io_) {
 uuid_msg:
   if (uuid->u64[0] || uuid->u64[1])
     goto peer_error; /* Already received UUID from this connection */
-  fio_memcpy16(&peer_uuid, &ipc->on_reply);
+  if (sizeof(ipc->on_reply) >= 8) {
+    fio_memcpy8(&peer_uuid, (char *)(void *)(&ipc->on_reply));
+    fio_memcpy8(&peer_uuid.u8[8], (char *)(void *)(&ipc->on_done));
+  } else /* (sizeof(ipc->on_reply) >= 4) */ {
+    fio_memcpy4(&peer_uuid, (char *)(void *)(&ipc->on_reply));
+    fio_memcpy4(&peer_uuid.u8[4], (char *)(void *)(&ipc->on_done));
+  }
   /* test if we already connected to peer previously */
   if (fio___ipc_cluster_filter(&FIO___IPC.peers,
                                peer_uuid.u64[0],
@@ -110115,6 +110243,8 @@ FIO_SFUNC void fio___ipc_cluster_udp_start(uint16_t port) {
 /* *****************************************************************************
 IPC - Remote - New Connection Attachments
 ***************************************************************************** */
+FIO_ASSERT_STATIC((sizeof(void (*)(void *)) >= 4),
+                  "function pointers MUST be 4 bytes or more");
 SFUNC void fio___ipc_on_attach_cluster(fio_io_s *io) {
   /* set peer UUID to zero and initialize parser */
   *fio___ipc_cluster_uuid(io) = fio_u128_init64(0, 0);
@@ -110125,7 +110255,14 @@ SFUNC void fio___ipc_on_attach_cluster(fio_io_s *io) {
   ipc->opcode = (uint32_t)0xFFFFFFFF;
   ipc->udata = FIO_IPC_EXCLUDE_SELF;
   ipc->routing_flags |= (FIO_IPC_FLAG_CLUSTER | FIO_IPC_FLAG_OPCODE);
-  fio_memcpy16(&ipc->on_reply, FIO___IPC.uuid.u8);
+  /* Store UUID over the `ipc->on_reply` and `ipc->on_done pointers */
+  if (sizeof(ipc->on_reply) >= 8) {
+    fio_memcpy8((char *)(void *)(&ipc->on_reply), FIO___IPC.uuid.u8);
+    fio_memcpy8((char *)(void *)(&ipc->on_done), FIO___IPC.uuid.u8 + 8);
+  } else /* (sizeof(ipc->on_reply) >= 4) */ {
+    fio_memcpy4((char *)(void *)(&ipc->on_reply), FIO___IPC.uuid.u8);
+    fio_memcpy4((char *)(void *)(&ipc->on_done), FIO___IPC.uuid.u8 + 4);
+  }
   fio_ipc_send_to(io, ipc);
 }
 
@@ -119552,7 +119689,8 @@ SFUNC void fio_http_write(fio_http_s *, fio_http_write_args_s args);
   fio_http_write(http_handle, (fio_http_write_args_s){__VA_ARGS__})
 #define fio_http_finish(http_handle) fio_http_write(http_handle, .finish = 1)
 
-/** Closes a persistent HTTP connection (i.e., if upgraded). */
+/** Closes the associated connection after previously scheduled output drains.
+ * Schedule the complete response before calling this (i.e., in on_finish). */
 SFUNC void fio_http_close(fio_http_s *h);
 
 /* *****************************************************************************
@@ -119662,105 +119800,78 @@ fio_http_body_parse(fio_http_s *h,
                     void *udata);
 
 /* *****************************************************************************
-Header Parsing Helpers
+Header Value / Property Iteration
 ***************************************************************************** */
 
 /**
- * Copies all header data, from possibly an array of identical response headers,
- * resulting in a parsed format outputted to `buf_parsed`.
- *
- * Returns 0 on success or -1 on error (i.e., `buf_parsed.capa` wasn't enough
- * for the parsed output).
- *
- * Note that the parsed output isn't readable as a string, but is designed to
- * work with the `FIO_HTTP_PARSED_HEADER_EACH` and
- * `FIO_HTTP_HEADER_VALUE_EACH_PROPERTY` property.
- *
- * See also `fio_http_response_header_parse`.
+ * A zero-copy cursor over repeated header fields, comma-separated values and
+ * semicolon-separated properties. `name` / `value` are length-delimited slices
+ * borrowed from the HTTP handle, NOT necessarily NUL-terminated. Quotes and
+ * escapes are retained, not decoded. Do not mutate headers during iteration.
+ * `properties` holds the bounded property span (or remaining properties).
+ * `index` and `is_request` are iterator state; do not change them.
+ * `value.buf == NULL` marks the end; a property may have a non-NULL value
+ * with zero length. Empty list elements and empty property names are skipped.
  */
-SFUNC int fio_http_response_header_parse(fio_http_s *h,
-                                         fio_str_info_s *buf_parsed,
-                                         fio_str_info_s header_name);
+typedef struct fio_http_header_each_s {
+  fio_buf_info_s name;       /* header name, or property name */
+  fio_buf_info_s value;      /* list value, or property value */
+  fio_buf_info_s properties; /* property span; cursor in property iterator */
+  unsigned index;            /* index of the current repeated header field */
+  unsigned is_request;
+} fio_http_header_each_s;
 
-/**
- * Copies all header data, from possibly an array of identical response headers,
- * resulting in a parsed format outputted to `buf_parsed`.
- *
- * Returns 0 on success or -1 on error (i.e., `buf_parsed.capa` wasn't enough
- * for the parsed output).
- *
- * Note that the parsed output isn't readable as a string, but is designed to
- * work with the `FIO_HTTP_PARSED_HEADER_EACH` and
- * `FIO_HTTP_HEADER_VALUE_EACH_PROPERTY` property.
- *
- * i.e.:
- *
- * ```c
- *  FIO_STR_INFO_TMP_VAR(buf, 1023); // tmp buffer for the parsed output
- *  fio_http_s *h = fio_http_new();  // using a mock HTTP handle
- *  fio_http_request_header_add(
- *      h,
- *      FIO_STR_INFO2("accept", 6),
- *      FIO_STR_INFO1("text/html, application/json;q=0.9; d=500, image/png"));
- *  fio_http_request_header_add(h,
- *                              FIO_STR_INFO2("accept", 6),
- *                              FIO_STR_INFO1("text/yaml"));
- *  FIO_ASSERT(  // in production do NOT assert, but route to error instead!
- *      !fio_http_request_header_parse(h, &buf, FIO_STR_INFO2("accept", 6)),
- *      "parse returned error!");
- *  FIO_HTTP_PARSED_HEADER_EACH(buf, value) {
- *    printf("* processing value (%zu bytes): %s\n", value.len, value.buf);
- *    FIO_HTTP_HEADER_VALUE_EACH_PROPERTY(value, prop) {
- *      printf("* for value %s: (%zu,%zu bytes) %s = %s\n",
- *             value.buf,
- *             prop.name.len,
- *             prop.value.len,
- *             prop.name.buf,
- *             prop.value.buf);
- *    }
- *  }
- * ```
+/** Starts iterating a header's values. `header_name` is a borrowed lookup key.
+ * Returns an iterator with `value.buf == NULL` when no value is available. */
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_first(fio_http_s *http_handle,
+                           int is_request,
+                           fio_str_info_s header_name);
+
+/** Advances to the next value; `http_handle` must be the original handle.
+ * Sets `value.buf` to NULL after the last value. */
+FIO_IFUNC void fio_http_header_each_next(fio_http_header_each_s *pos,
+                                         fio_http_s *http_handle);
+
+/** Starts iterating a value's bounded property span. `properties` is borrowed.
+ * Returns an iterator with `value.buf == NULL` when no property exists. */
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_property_first(const fio_buf_info_s *properties);
+
+/** Advances to the next property. A property without `=` has an empty value.
+ * Sets `value.buf` to NULL after the last property. */
+FIO_IFUNC void fio_http_header_each_property_next(fio_http_header_each_s *pos);
+
+/** Iterate repeated request (`is_request = 1`) or response (`0`) header
+ * fields and their comma-separated values; `pos` is a chosen cursor name.
+ * SP / HTAB around each value is trimmed. Use `.value.buf` and `.value.len`,
+ * not string functions, for the non-NUL-terminated slice. Do not mutate the
+ * handle while iterating. `break` / `continue` work as in a regular for loop.
+ * Example:
+ *   FIO_HTTP_HEADER_EACH_VALUE(h, 1, FIO_STR_INFO1("accept"), item) {
+ *     FIO_HTTP_HEADER_EACH_PROPERTY(item, property) {
+ *       // property.name and property.value are length-delimited slices.
+ *     }
+ *   }
  */
-SFUNC int fio_http_request_header_parse(fio_http_s *h,
-                                        fio_str_info_s *buf_parsed,
-                                        fio_str_info_s header_name);
+#define FIO_HTTP_HEADER_EACH_VALUE(http_handle, is_request, header_name, pos)  \
+  for (fio_http_header_each_s pos = fio_http_header_each_first((http_handle),  \
+                                                               (is_request),   \
+                                                               (header_name)); \
+       pos.value.buf;                                                          \
+       fio_http_header_each_next(&pos, (http_handle)))
 
-/**
- * Parses header for multiple values and properties and iterates over all
- * values.
- *
- * This MACRO will allocate 2048 bytes on the stack for parsing the header
- * values and properties, if more space is necessary dig deeper.
- *
- * Use FIO_HTTP_HEADER_VALUE_EACH_PROPERTY to iterate over a value's properties.
+/** Iterate semicolon-separated properties for a value cursor; `pos` is a
+ * chosen name. Names and values are trimmed of surrounding SP / HTAB.
+ * A missing `=` or an empty right-hand side yields `value.len == 0` with a
+ * non-NULL `value.buf`; stop iteration only when `value.buf == NULL`.
+ * Quoted strings remain quoted, without decoding. `break` / `continue` work.
  */
-#define FIO_HTTP_HEADER_EACH_VALUE(/* fio_http_s */ http_handle,               \
-                                   /* int / bool */ is_request,                \
-                                   /* fio_str_info_s */ header_name,           \
-                                   /* chosen var named */ value)               \
-  for (char fio___buf__##value##__[2048], /* allocate buffer on stack */       \
-           *fio___buf__##value##_ptr = NULL;                                   \
-       !fio___buf__##value##_ptr;                                              \
-       fio___buf__##value##_ptr = fio___buf__##value##__)                      \
-    for (fio_str_info_s fio___buf__##value##__str = /* declare buffer var */   \
-         FIO_STR_INFO3(fio___buf__##value##__, 0, 2048);                       \
-         fio___buf__##value##__str.buf == fio___buf__##value##__;              \
-         fio___buf__##value##__str.buf = fio___buf__##value##__ + 1)           \
-      if (!((is_request ? fio_http_request_header_parse                        \
-                        : fio_http_response_header_parse)(                     \
-              http_handle, /* parse headers */                                 \
-              &fio___buf__##value##__str,                                      \
-              header_name)))                                                   \
-  FIO_HTTP_PARSED_HEADER_EACH(fio___buf__##value##__str, value) /* loop        \
-                                                                 */
-
-/** Iterated through the properties associated with a parsed header values. */
-#define FIO_HTTP_HEADER_VALUE_EACH_PROPERTY(/* fio_str_info_s   */ value,      \
-                                            /* chosen var named */ property)
-
-/** Used internally to iterate over a parsed header buffer. */
-#define FIO_HTTP_PARSED_HEADER_EACH(/* fio_str_info_s   */ buf_parsed,         \
-                                    /* chosen var named */ value)
+#define FIO_HTTP_HEADER_EACH_PROPERTY(value_, pos)                             \
+  for (fio_http_header_each_s pos =                                            \
+           fio_http_header_each_property_first(&(value_).properties);          \
+       pos.value.buf;                                                          \
+       fio_http_header_each_property_next(&pos))
 
 /* *****************************************************************************
 General Helpers
@@ -119961,6 +120072,174 @@ HTTP Settings Resolver
 SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
 
 /* *****************************************************************************
+Header Value / Property Iterator - Inline Implementation
+***************************************************************************** */
+
+/* Returns a trimmed slice (HTTP OWS is SP / HTAB only). */
+FIO_IFUNC fio_buf_info_s fio___http_header_each_trim(fio_buf_info_s slice) {
+  if (!slice.buf)
+    return slice;
+  while (slice.len && (*slice.buf == ' ' || *slice.buf == '\t')) {
+    ++slice.buf;
+    --slice.len;
+  }
+  while (slice.len &&
+         (slice.buf[slice.len - 1] == ' ' || slice.buf[slice.len - 1] == '\t'))
+    --slice.len;
+  return slice;
+}
+
+/* Scan NUL-terminated header storage without decoding quoted strings.
+ * An escaped quote/delimiter inside quotes is not a separator. */
+FIO_IFUNC const char *fio___http_header_each_find(const char *p,
+                                                  char first,
+                                                  char second) {
+  for (unsigned quoted = 0;
+       *p && (quoted | ((unsigned)(*p != first) & (unsigned)(*p != second)));
+       ++p) {
+    quoted ^= (unsigned)(*p == '"');
+    p += (unsigned)(quoted && *p == '\\' && p[1]);
+  }
+  return p;
+}
+
+/* Scan a property span, stopping at end or NUL. Never read beyond end,
+ * including when a backslash is its final byte. */
+FIO_IFUNC const char *fio___http_header_each_find_bounded(const char *p,
+                                                          const char *end,
+                                                          char first,
+                                                          char second) {
+  for (unsigned quoted = 0;
+       p < end && *p &&
+       (quoted | ((unsigned)(*p != first) & (unsigned)(*p != second)));
+       ++p) {
+    quoted ^= (unsigned)(*p == '"');
+    p += (unsigned)(quoted && *p == '\\' && p + 1 < end && p[1]);
+  }
+  return p;
+}
+
+/* Value iteration uses the NUL byte supplied by HTTP header storage.
+ * name retains the header lookup key; index changes only between fields.
+ * value.buf == NULL means end, not an empty token (empty list items skip).
+ * The handle and its headers must stay alive and unmodified during iteration.
+ */
+FIO_IFUNC void fio_http_header_each_next(fio_http_header_each_s *pos,
+                                         fio_http_s *http_handle) {
+  if (!pos)
+    return;
+  if (!http_handle) {
+    pos->value = FIO_BUF_INFO0;
+    return;
+  }
+  const char *p = NULL;
+  if (pos->value.buf) {
+    /* The property span ends at the current comma or the field's NUL.
+     * Without properties, resume just after the trimmed value. */
+    p = pos->properties.buf ? pos->properties.buf + pos->properties.len
+                            : pos->value.buf + pos->value.len;
+    p = fio___http_header_each_find(p, ',', ',');
+    if (*p == ',')
+      ++p;
+    else {
+      if (pos->index == INT32_MAX) {
+        pos->value = FIO_BUF_INFO0;
+        return;
+      }
+      ++pos->index;
+      p = NULL;
+    }
+  }
+  for (;;) {
+    if (!p) {
+      fio_str_info_s name = FIO_STR_INFO2(pos->name.buf, pos->name.len);
+      fio_str_info_s field =
+          pos->is_request
+              ? fio_http_request_header(http_handle, name, pos->index)
+              : fio_http_response_header(http_handle, name, pos->index);
+      if (!field.buf || !field.len) {
+        pos->value = FIO_BUF_INFO0;
+        pos->properties = FIO_BUF_INFO0;
+        return;
+      }
+      p = field.buf;
+    }
+    const char *separator = fio___http_header_each_find(p, ',', ';');
+    const char *end = separator;
+    if (*separator == ';')
+      end = fio___http_header_each_find(separator + 1, ',', ',');
+    pos->value = fio___http_header_each_trim(
+        FIO_BUF_INFO2((char *)p, (size_t)(separator - p)));
+    pos->properties = (*separator == ';')
+                          ? FIO_BUF_INFO2((char *)separator + 1,
+                                          (size_t)(end - separator - 1))
+                          : FIO_BUF_INFO0;
+    if (pos->value.len)
+      return;
+    if (*end == ',') {
+      p = end + 1;
+      continue;
+    }
+    if (pos->index == INT32_MAX) {
+      pos->value = FIO_BUF_INFO0;
+      return;
+    }
+    ++pos->index;
+    p = NULL;
+  }
+}
+
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_first(fio_http_s *http_handle,
+                           int is_request,
+                           fio_str_info_s header_name) {
+  fio_http_header_each_s pos = {0};
+  if (!http_handle || !header_name.buf || !header_name.len)
+    return pos;
+  pos.name = FIO_BUF_INFO2(header_name.buf, header_name.len);
+  pos.is_request = !!is_request;
+  fio_http_header_each_next(&pos, http_handle);
+  return pos;
+}
+
+/* Property iteration is bounded by properties.len: the next comma is not a
+ * property separator. Empty property values have a non-NULL pointer. */
+FIO_IFUNC void fio_http_header_each_property_next(fio_http_header_each_s *pos) {
+  if (!pos)
+    return;
+  pos->value = FIO_BUF_INFO0;
+  while (pos->properties.len) {
+    const char *start = pos->properties.buf;
+    const char *limit = start + pos->properties.len;
+    const char *semi =
+        fio___http_header_each_find_bounded(start, limit, ';', ';');
+    const char *eq = fio___http_header_each_find_bounded(start, semi, '=', '=');
+    pos->name = fio___http_header_each_trim(
+        FIO_BUF_INFO2((char *)start, (size_t)(eq - start)));
+    pos->value =
+        (eq < semi)
+            ? fio___http_header_each_trim(
+                  FIO_BUF_INFO2((char *)eq + 1, (size_t)(semi - eq - 1)))
+            : FIO_BUF_INFO2((char *)semi, 0);
+    pos->properties.buf = (char *)semi + (semi < limit);
+    pos->properties.len = (size_t)(limit - semi) - (semi < limit);
+    if (pos->name.len)
+      return;
+  }
+  pos->value = FIO_BUF_INFO0;
+}
+
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_property_first(const fio_buf_info_s *properties) {
+  fio_http_header_each_s pos = {0};
+  if (properties && properties->buf && properties->len) {
+    pos.properties = *properties;
+    fio_http_header_each_property_next(&pos);
+  }
+  return pos;
+}
+
+/* *****************************************************************************
 HTTP API Finish
 ***************************************************************************** */
 #endif /* FIO_HTTP */
@@ -120031,82 +120310,6 @@ All memory allocations should use:
 * FIO_MEM_FREE_(ptr, size)
 
 */
-
-/* *****************************************************************************
-Header Parsing Helpers - inlined helpers
-***************************************************************************** */
-
-#define FIO___HTTP_PARSED_HEADER_VALUE              0
-#define FIO___HTTP_PARSED_HEADER_PROPERTY_BLOCK_LEN 1
-#define FIO___HTTP_PARSED_HEADER_PROPERTY_DATA      2
-
-typedef struct {
-  fio_str_info_s name;
-  fio_str_info_s value;
-} fio___http_header_property_s;
-
-/**
- * Assumes a Buffer of bytes containing length info and string data as such:
- *   [ NUL byte - 1 byte at head of format ]
- *   repeat
- *   [ 2 byte info: (type | (len << 2)) ]
- *   [ Optional 2 byte info: (len << 2) (if type was 1)]
- *   [ String of `len` bytes][ NUL byte (not counted in `len`)]
- */
-
-FIO_IFUNC fio_str_info_s fio___http_parsed_headers_next(fio_str_info_s value) {
-  for (;;) {
-    const size_t coded = (size_t)fio_buf2u16u(value.buf + value.len + 1U);
-    if (!coded)
-      return (value = (fio_str_info_s){0});
-    const size_t block_len = coded >> 2;
-    value.buf += value.len + 3;
-    value.len = block_len;
-    if (!(coded & 3))
-      return value;
-    value.buf -= 3; /* reposition to read NUL + value rather than text start */
-  }
-}
-
-FIO_IFUNC fio___http_header_property_s
-fio___http_parsed_property_next(fio___http_header_property_s property) {
-  for (;;) {
-    size_t coded =
-        (size_t)fio_buf2u16u(property.value.buf + property.value.len + 1);
-    if (!(coded & 3))
-      return (property = (fio___http_header_property_s){{0}, {0}});
-    if ((coded & 3) == FIO___HTTP_PARSED_HEADER_PROPERTY_BLOCK_LEN) {
-      property.value.buf += 2;
-      coded = (size_t)fio_buf2u16u(property.value.buf + property.value.len + 1);
-    }
-    if ((coded & 3) != 2)
-      return (property = (fio___http_header_property_s){{0}, {0}});
-    coded >>= 2;
-    property.name.buf = property.value.buf + property.value.len + 3;
-    property.name.len = coded;
-    coded = (size_t)fio_buf2u16u(property.name.buf + property.name.len + 1);
-    FIO_ASSERT_DEBUG((coded & 3) == 2,
-                     "header property value parsing format error");
-    property.value.buf = property.name.buf + property.name.len + 3;
-    property.value.len = coded >> 2;
-    return property;
-  }
-}
-
-#undef FIO_HTTP_PARSED_HEADER_EACH
-#define FIO_HTTP_PARSED_HEADER_EACH(buf_parsed, value)                         \
-  for (fio_str_info_s value =                                                  \
-           fio___http_parsed_headers_next(FIO_STR_INFO2(buf_parsed.buf, 0));   \
-       value.len;                                                              \
-       value = fio___http_parsed_headers_next(value))
-
-#undef FIO_HTTP_HEADER_VALUE_EACH_PROPERTY
-#define FIO_HTTP_HEADER_VALUE_EACH_PROPERTY(value_, property)                  \
-  for (fio___http_header_property_s property =                                 \
-           fio___http_parsed_property_next(                                    \
-               (fio___http_header_property_s){.value = value_});               \
-       property.name.len;                                                      \
-       property = fio___http_parsed_property_next(property))
 
 /* *****************************************************************************
 Path Section Looping
@@ -121123,7 +121326,7 @@ FIO_IFUNC void fio___http_hmap_key_to_lower(fio_str_info_s *t,
     goto too_big;
   for (size_t i = 0; i < k->len; ++i) {
     uint8_t c = (uint8_t)k->buf[i];
-    c |= (uint8_t)(c >= 'A' || c <= 'Z') << 5;
+    c |= (uint8_t)(c >= 'A' && c <= 'Z') << 5;
     t->buf[i] = c;
   }
   t->len = k->len;
@@ -121143,10 +121346,31 @@ FIO_IFUNC fio_str_info_s fio___http_hmap_set2(fio___http_hmap_s *map,
                                               fio_str_info_s val,
                                               int add) {
   fio_str_info_s r = {0};
-  if (!key_input.buf || !key_input.len || !map)
+  if (!key_input.buf || !key_input.len || !map || key_input.len > 4095)
     return r;
-  /* make sure key is all lower-case? */
-  FIO___HTTP_ENFORCE_LOWERCASE(key, key_input);
+#if FIO_HTTP_ENFORCE_LOWERCASE_HEADERS
+  FIO_STR_INFO_TMP_VAR(key, 4096);
+  key.len = key_input.len;
+#else
+  fio_str_info_s key = key_input;
+#endif
+  /* Validate and, when enabled, normalize in the same bounded pass. */
+  for (size_t i = 0; i < key_input.len; ++i) {
+    const uint8_t c = (uint8_t)key_input.buf[i];
+    if (FIO_UNLIKELY(FIO___HTTP_FORBIDDEN_NAME_CHARS[c]))
+      return r;
+#if FIO_HTTP_ENFORCE_LOWERCASE_HEADERS
+    key.buf[i] = fio_ct_tolower((char)c);
+#endif
+  }
+  /* Reject injection before removing/replacing or caching any data. */
+  if (val.buf) {
+    for (size_t i = 0; i < val.len; ++i) {
+      const uint8_t c = (uint8_t)val.buf[i];
+      if (FIO_UNLIKELY(c == 0 || c == '\r' || c == '\n'))
+        return r;
+    }
+  }
   fio___http_sary_s *o;
   if (!val.buf || !val.len)
     goto remove_key;
@@ -121186,6 +121410,8 @@ FIO_IFUNC fio_str_info_s fio___http_hmap_get2(fio___http_hmap_s *map,
                                               fio_str_info_s key_input,
                                               int32_t index) {
   fio_str_info_s r = {0};
+  if (key_input.len > 4095)
+    return r;
   FIO___HTTP_ENFORCE_LOWERCASE(key, key_input);
   fio___http_sary_s *a =
       fio___http_hmap_node2val_ptr(fio___http_hmap_get_ptr(map, key));
@@ -121410,7 +121636,8 @@ SFUNC void fio_http_start_time_set(fio_http_s *h) {
   h->received_at = fio_http_get_timestump();
 }
 
-/** Closes a persistent HTTP connection (i.e., if upgraded). */
+/** Closes the associated connection after previously scheduled output drains.
+ */
 SFUNC void fio_http_close(fio_http_s *h) { h->controller->close_io(h); }
 
 /** Creates a copy of an existing handle, copying only its request data. */
@@ -122321,8 +122548,45 @@ FIO_SFUNC int fio____http_write_upgraded(fio_http_s *h,
   return 0;
 }
 
+/* Internal state: the response omits all content (HEAD / no-content status).
+ * Set once by `fio____http_write_start`; body writes are then discarded and
+ * the response is never streamed, so controllers never frame a body. */
+#define FIO___HTTP_STATE_NO_CONTENT 128
+
+/* Responses that never carry content: 1xx, 204, 205, 304 (RFC 9110 §15). */
+FIO_IFUNC int fio___http_status_has_no_content(size_t status) {
+  return ((status - 100) < 100) | (status == 204) | (status == 205) |
+         (status == 304);
+}
+
+/* Framing headers for a response without content (no streaming / coding). */
+FIO_SFUNC void fio___http_no_content_headers(fio_http_s *h,
+                                             fio___http_hmap_s *hdrs) {
+  fio___http_hmap_set2(hdrs,
+                       FIO_STR_INFO2((char *)"transfer-encoding", 17),
+                       FIO_STR_INFO0,
+                       -1);
+  if (h->status == 304) /* may describe the selected representation (§8.6) */
+    return;
+  /* 1xx / 204 MUST NOT send Content-Length (§8.6); 205 MUST indicate zero
+   * length (§15.3.6) - any other value would desynchronize the client. */
+  fio___http_hmap_set2(hdrs,
+                       FIO_STR_INFO2((char *)"content-length", 14),
+                       (h->status == 205) ? FIO_STR_INFO2((char *)"0", 1)
+                                          : FIO_STR_INFO0,
+                       -1);
+}
+
 FIO_SFUNC int fio____http_write_start(fio_http_s *h,
                                       fio_http_write_args_s *args) {
+  /* no content and no finish: nothing to frame yet. The response (headers,
+   * Content-Length vs. streaming) starts with the first body data or finish,
+   * so an empty stream becomes a `content-length: 0` response. */
+  if (!args->len && !args->finish && (uint32_t)(args->fd + 1) <= 1U) {
+    if (args->dealloc && args->buf)
+      args->dealloc((void *)args->buf);
+    return 0;
+  }
   /* if response has an `etag` header matching `if-none-match`, skip */
   fio___http_hmap_s *hdrs = h->headers + (!!h->status);
   if (h->status) {
@@ -122338,6 +122602,17 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
         FIO_STR_INFO2((char *)"date", 4),
         fio_http_date(fio_http_get_timestump() / FIO___HTTP_TIME_DIV),
         0);
+    if (FIO_UNLIKELY(fio___http_status_has_no_content(h->status))) {
+      h->state |= FIO___HTTP_STATE_NO_CONTENT;
+      fio___http_no_content_headers(h, hdrs);
+      goto send_headers; /* never compressed, framed or streamed */
+    }
+    { /* HEAD: GET's headers, no content (RFC 9110 §9.3.2) */
+      fio_str_info_s m = fio_keystr_info(&h->method);
+      if (FIO_UNLIKELY(m.len == 4 && (fio_buf2u32u(m.buf) | 0x20202020UL) ==
+                                         fio_buf2u32u("head")))
+        h->state |= FIO___HTTP_STATE_NO_CONTENT;
+    }
   }
 #if 1
   if (args->finish &&
@@ -122459,10 +122734,11 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
       v.len = fio_digits10u(args->len);
       fio_ltoa10u(v.buf, args->len, v.len);
       fio___http_hmap_set2(hdrs, k, v, -1);
-    } else {
+    } else if (!(h->state & FIO___HTTP_STATE_NO_CONTENT)) {
       h->state |= FIO_HTTP_STATE_STREAMING;
     }
   }
+send_headers:
   /* start a response, unless status == 0 (which starts a request). */
   h->controller->send_headers(h);
   return (h->writer = fio____http_write_cont)(h, args);
@@ -122470,8 +122746,7 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
 
 FIO_SFUNC int fio____http_write_cont(fio_http_s *h,
                                      fio_http_write_args_s *args) {
-  int r = (int)0 - (int)((unsigned)(h->status == 204) | (h->status == 205) |
-                         (h->status == 304));
+  int r = 0 - !!(h->state & FIO___HTTP_STATE_NO_CONTENT);
   if (!r) {
     h->controller->write_body(h, *args);
     h->sent += args->len;
@@ -122790,137 +123065,6 @@ SFUNC void fio_http_sse_set_request(fio_http_s *h) {
   fio_http_request_header_set(h,
                               FIO_STR_INFO2((char *)"cache-control", 13),
                               FIO_STR_INFO2((char *)"no-cache", 8));
-}
-
-/* *****************************************************************************
-Header Parsing Helpers - Implementation
-***************************************************************************** */
-
-/**
- * Assumes a Buffer of bytes containing length info and string data as such:
- *
- *   [ 2 byte info: (type | (len << 2)) ]
- *   [ Optional 2 byte info: (len << 2) (if type was 1)]
- *   [ String of `len` bytes][ NUL byte (not counted in `len`)]
- */
-
-FIO_SFUNC int fio___http_header_parse_properties(fio_str_info_s *dst,
-                                                 char *start,
-                                                 char *const end) {
-  for (;;) {
-    char *nxt = (char *)FIO_MEMCHR(start, ';', end - start);
-    if (!nxt)
-      nxt = end;
-    char *eq = (char *)FIO_MEMCHR(start, '=', nxt - start);
-    if (!eq)
-      eq = nxt;
-    /* write value to dst */
-    size_t len = eq - start;
-    if ((len & (~(size_t)0x3FFF)) | (dst->len + len + 3 > dst->capa))
-      return -1; /* too long */
-    fio_u2buf16u(dst->buf + dst->len,
-                 ((len << 2) | FIO___HTTP_PARSED_HEADER_PROPERTY_DATA));
-    dst->len += 2;
-    if (len)
-      FIO_MEMCPY(dst->buf + dst->len, start, len);
-    dst->len += len;
-    dst->buf[dst->len++] = 0;
-
-    eq += (eq[0] == '=');
-    eq += (eq[0] == ' ' || eq[0] == '\t');
-    len = nxt - eq;
-    if ((len & (~(size_t)0x3FFF)) | (dst->len + len + 3 > dst->capa))
-      return -1; /* too long */
-    fio_u2buf16u(dst->buf + dst->len,
-                 ((len << 2) | FIO___HTTP_PARSED_HEADER_PROPERTY_DATA));
-    dst->len += 2;
-    if (len)
-      FIO_MEMCPY(dst->buf + dst->len, eq, len);
-    dst->len += len;
-    dst->buf[dst->len++] = 0;
-
-    if (nxt == end)
-      return 0;
-    nxt += (*nxt == ';');
-    while (*nxt == ' ' || *nxt == '\t')
-      ++nxt;
-    start = nxt;
-  }
-  return 0;
-}
-
-FIO_IFUNC int fio___http_header_parse(fio___http_hmap_s *map,
-                                      fio_str_info_s *dst,
-                                      fio_str_info_s header_name) {
-  fio___http_sary_s *a =
-      fio___http_hmap_node2val_ptr(fio___http_hmap_get_ptr(map, header_name));
-  if (!a)
-    return -1;
-  dst->len = 0;
-  if (dst->capa < 3)
-    return -1;
-  dst->buf[dst->len++] = 0; /* first byte is a pretend NUL */
-  FIO_ARRAY_EACH(fio___http_sary, a, pos) {
-    fio_buf_info_s i = fio_bstr_buf(*pos);
-    if (!i.len)
-      continue;
-    char *const end = i.buf + i.len;
-    char *sep;
-    do {
-      sep = (char *)FIO_MEMCHR(i.buf, ',', end - i.buf);
-      if (!sep)
-        sep = end;
-      char *prop = (char *)FIO_MEMCHR(i.buf, ';', sep - i.buf);
-      if (!prop)
-        prop = sep;
-      size_t len = prop - i.buf;
-      if ((len & (~(size_t)0x3FFF)) | (dst->len + len + 3 > dst->capa))
-        return -1; /* too long */
-      fio_u2buf16u(dst->buf + dst->len, (len << 2));
-      dst->len += 2;
-      FIO_MEMCPY(dst->buf + dst->len, i.buf, len);
-      dst->len += len;
-      dst->buf[dst->len++] = 0;
-      if (prop != sep) { /* parse properties */
-        ++prop;
-        len = sep - prop;
-        if ((len & (~(size_t)0x3FFF)) | (dst->len + len + 3 > dst->capa))
-          return -1;
-        const size_t old_len = dst->len;
-        dst->len += 2;
-        if (fio___http_header_parse_properties(dst, prop, sep))
-          return -1;
-        len = dst->len - old_len;
-        if ((len & (~(size_t)0x3FFF)) | (dst->len + len + 3 > dst->capa))
-          return -1;
-        fio_u2buf16u(
-            dst->buf + old_len,
-            ((len << 2) | FIO___HTTP_PARSED_HEADER_PROPERTY_BLOCK_LEN));
-      }
-      sep += (*sep == ',');
-      while (*sep == ' ' || *sep == '\t')
-        ++sep;
-      i.buf = sep;
-    } while (sep < end);
-  }
-  if (dst->len + 2 > dst->capa)
-    return -1;
-  /* last u16 must be zero (end marker) */
-  dst->buf[dst->len++] = 0;
-  dst->buf[dst->len++] = 0;
-  return 0;
-}
-
-SFUNC int fio_http_response_header_parse(fio_http_s *h,
-                                         fio_str_info_s *buf_parsed,
-                                         fio_str_info_s header_name) {
-  return fio___http_header_parse(HTTP_HDR_RESPONSE(h), buf_parsed, header_name);
-}
-
-SFUNC int fio_http_request_header_parse(fio_http_s *h,
-                                        fio_str_info_s *buf_parsed,
-                                        fio_str_info_s header_name) {
-  return fio___http_header_parse(HTTP_HDR_REQUEST(h), buf_parsed, header_name);
 }
 
 /* *****************************************************************************
@@ -123357,6 +123501,7 @@ FIO_SFUNC void *fio___http_json_on_float(void *udata, double f) {
   return a->callbacks->on_float(a->udata, f);
 }
 
+FIO_STATIC_SAFE_ALLOC_DEF(fio___http_json_on_string_alloc, char, 4096, 32)
 /** Escaped string - needs unescaping before passing to callback */
 FIO_SFUNC void *fio___http_json_on_string(void *udata,
                                           const void *start,
@@ -123365,11 +123510,18 @@ FIO_SFUNC void *fio___http_json_on_string(void *udata,
   if (!a || !a->callbacks->on_string)
     return NULL;
   /* Unescape JSON string */
-  fio_str_info_s unescaped = {0};
-  fio_string_write_unescape(&unescaped, FIO_STRING_REALLOC, start, len);
+  fio_str_info_s unescaped = FIO_STR_INFO3(NULL, 0, 4095);
+  do {
+    unescaped.buf = fio___http_json_on_string_alloc_try();
+  } while (!unescaped.buf);
+  char *org = unescaped.buf;
+  fio_string_write_unescape(&unescaped, FIO_STRING_ALLOC_COPY, start, len);
   void *result =
       a->callbacks->on_string(a->udata, unescaped.buf, unescaped.len);
-  FIO_STRING_FREE(unescaped.buf);
+  if (unescaped.buf == org)
+    fio___http_json_on_string_alloc_free(org);
+  else
+    FIO_STRING_FREE(unescaped.buf);
   return result;
 }
 
@@ -123539,14 +123691,14 @@ FIO_SFUNC void *fio___http_urlenc_on_pair(void *udata_,
   /* Decode name */
   FIO_STR_INFO_TMP_VAR(decoded_name, 1024);
   fio_string_write_url_dec(&decoded_name,
-                           FIO_STRING_REALLOC,
+                           FIO_STRING_ALLOC_COPY, /* allocates new memory */
                            name.buf,
                            name.len);
 
   /* Decode value */
   FIO_STR_INFO_TMP_VAR(decoded_value, 4096);
   fio_string_write_url_dec(&decoded_value,
-                           FIO_STRING_REALLOC,
+                           FIO_STRING_ALLOC_COPY, /* allocates new memory */
                            value.buf,
                            value.len);
 
@@ -125817,6 +125969,24 @@ FIO_SFUNC int fio___http_controller_get_fd(fio_http_s *h) {
   return fio_io_fd(fio_http_io(h));
 }
 
+/* Returns true for HTTP/1.0 handles (anything else is HTTP/1.1). */
+FIO_IFUNC int fio___http1_is_legacy(fio_http_s *h) {
+  return fio_http1_version_is_legacy(FIO_STR2BUF_INFO(fio_http_version(h)));
+}
+
+/* Streamed responses use chunked framing only for HTTP/1.1+ (RFC 9112 §6.1).
+ * HTTP/1.0 streams are delimited by closing the connection. */
+FIO_IFUNC int fio___http1_is_chunked(fio_http_s *h) {
+  return fio_http_is_streaming(h) && !fio___http1_is_legacy(h);
+}
+
+/* Request `Connection` options (RFC 9110 §7.6.1) as bit flags. */
+#define FIO___HTTP1_CONN_CLOSE      1
+#define FIO___HTTP1_CONN_KEEP_ALIVE 2
+
+/* Collects request Connection options (defined below). */
+FIO_SFUNC int fio___http1_connection_options(fio_http_s *h);
+
 /** Informs the controller that request / response headers must be sent. */
 FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
@@ -125845,11 +126015,23 @@ FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
   /* write cookies */
   fio_http_set_cookie_each(h, fio_http1___write_header_callback, &buf);
   /* add streaming headers? */
-  if (fio_http_is_streaming(h))
+  if (fio___http1_is_chunked(h))
     fio_string_write(&buf,
                      FIO_STRING_REALLOC,
                      "transfer-encoding: chunked\r\n",
                      28);
+  /* HTTP/1.0 persistence must be confirmed (RFC 9112 §C.2.2) */
+  else if (fio___http1_is_legacy(h) && !c->is_client &&
+           !fio_http_is_streaming(h) &&
+           fio___http1_connection_options(h) == FIO___HTTP1_CONN_KEEP_ALIVE &&
+           !fio_http_response_header(h,
+                                     FIO_STR_INFO2((char *)"connection", 10),
+                                     0)
+                .buf)
+    fio_string_write(&buf,
+                     FIO_STRING_REALLOC,
+                     "connection:keep-alive\r\n",
+                     23);
   fio_string_write(&buf, FIO_STRING_REALLOC, "\r\n", 2);
   /* send data (move memory ownership)? */
   c->state.http.buf = buf;
@@ -125860,6 +126042,21 @@ FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
   //               .dealloc = FIO_STRING_FREE,
   //               .copy = 0);
 }
+/* Sends pending response headers (if any) followed by a chunk-size line.
+ * The header buffer is grown as needed: it may have no spare capacity. */
+FIO_SFUNC void fio___http1_write_chunk_header(fio___http_connection_s *c,
+                                              size_t len) {
+  fio_string_write2(&c->state.http.buf,
+                    FIO_STRING_REALLOC,
+                    FIO_STRING_WRITE_HEX(len),         /* chunk length */
+                    FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header EOL */
+  fio_io_write2(c->io,
+                .buf = (void *)c->state.http.buf.buf,
+                .len = c->state.http.buf.len,
+                .dealloc = FIO_STRING_FREE);
+  c->state.http.buf = FIO_STR_INFO0;
+}
+
 /** called by the HTTP handle for each body chunk (or to finish a response. */
 FIO_SFUNC void fio___http_controller_http1_write_body(
     fio_http_s *h,
@@ -125867,7 +126064,7 @@ FIO_SFUNC void fio___http_controller_http1_write_body(
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   if (!c->io || !fio_io_is_open(c->io))
     goto no_write_err;
-  if (fio_http_is_streaming(h))
+  if (fio___http1_is_chunked(h))
     goto stream_chunk;
   if (c->state.http.buf.len) {
     if (args.buf && args.len) {
@@ -125915,22 +126112,7 @@ stream_chunk:
         args.dealloc((void *)args.buf);
       return;
     } else { /* avoid copying the incoming data if possible */
-      FIO_STR_INFO_TMP_VAR(buf, 32);
-      if (c->state.http.buf.buf)
-        buf = c->state.http.buf;
-      c->state.http.buf = FIO_STR_INFO0;
-      fio_string_write2(
-          &buf,
-          NULL,
-          FIO_STRING_WRITE_HEX(args.len),    /* chunk header - length */
-          FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header - EOL */
-      fio_io_write2(c->io,
-                    .buf = buf.buf,
-                    .len = buf.len,
-                    .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
-                    .dealloc = FIO_STR_INFO_TMP_IS_REALLOCATED(buf)
-                                   ? FIO_STRING_FREE
-                                   : NULL);
+      fio___http1_write_chunk_header(c, args.len);
       fio_io_write2(c->io,
                     .buf = (void *)args.buf,
                     .len = args.len,
@@ -125952,22 +126134,7 @@ stream_chunk:
         goto no_length_err;
       args.len = (size_t)len;
     }
-    FIO_STR_INFO_TMP_VAR(buf, 32);
-    if (c->state.http.buf.buf)
-      buf = c->state.http.buf;
-    c->state.http.buf = FIO_STR_INFO0;
-    fio_string_write2(
-        &buf,
-        NULL,
-        FIO_STRING_WRITE_HEX(args.len),    /* chunk header - length */
-        FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header - EOL */
-    fio_io_write2(
-        c->io,
-        .buf = buf.buf,
-        .len = buf.len,
-        .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
-        .dealloc =
-            (FIO_STR_INFO_TMP_IS_REALLOCATED(buf) ? FIO_STRING_FREE : NULL));
+    fio___http1_write_chunk_header(c, args.len);
     fio_io_write2(c->io,
                   .fd = args.fd,
                   .len = args.len,
@@ -126002,11 +126169,10 @@ FIO_SFUNC void fio___http_controller_http1_on_finish_task(void *c_,
     goto no_io;
 
   if (fio_io_is_open(c->io)) {
-    /* TODO: test for connection:close header and h->status values */
     fio___http1_process_data(c->io, c);
+    if (!c->suspend && fio_io_is_open(c->io))
+      fio_io_unsuspend(c->io);
   }
-  if (!c->suspend)
-    fio_io_unsuspend(c->io);
   fio_io_free(c->io);
   return;
 
@@ -126052,11 +126218,64 @@ no_io:
   fio___http_connection_free(c); /* free HTTP connection element */
 }
 
+/* Collects the `close` / `keep-alive` options of all request Connection
+ * fields. */
+FIO_SFUNC int fio___http1_connection_options(fio_http_s *h) {
+  int r = 0;
+  fio___http_sary_s *a = fio___http_hmap_node2val_ptr(
+      fio___http_hmap_get_ptr(HTTP_HDR_REQUEST(h),
+                              FIO_STR_INFO2((char *)"connection", 10)));
+  if (!a)
+    return r;
+  FIO_ARRAY_EACH(fio___http_sary, a, pos) {
+    fio_buf_info_s v = fio_bstr_buf(*pos);
+    while (v.len) {
+      char *comma = (char *)FIO_MEMCHR(v.buf, ',', v.len);
+      const size_t consumed = comma ? (size_t)(comma - v.buf) + 1 : v.len;
+      size_t first = 0;
+      size_t last = comma ? consumed - 1 : consumed;
+      while (first < last && (v.buf[first] == ' ' || v.buf[first] == '\t'))
+        ++first;
+      while (last > first &&
+             (v.buf[last - 1] == ' ' || v.buf[last - 1] == '\t'))
+        --last;
+      if (last - first == 5 && (v.buf[first] | 0x20) == 'c' &&
+          (fio_buf2u32u(v.buf + first + 1) | (uint32_t)0x20202020UL) ==
+              fio_buf2u32u("lose"))
+        r |= FIO___HTTP1_CONN_CLOSE;
+      else if (last - first == 10 &&
+               (fio_buf2u64u(v.buf + first) |
+                (uint64_t)0x2020202020202020ULL) ==
+                   (fio_buf2u64u("keep-alive") |
+                    (uint64_t)0x2020202020202020ULL) &&
+               (fio_buf2u16u(v.buf + first + 8) | (uint16_t)0x2020U) ==
+                   fio_buf2u16u("ve"))
+        r |= FIO___HTTP1_CONN_KEEP_ALIVE;
+      v.buf += consumed;
+      v.len -= consumed;
+    }
+  }
+  return r;
+}
+
+/* Returns true if the server must close the connection after the response.
+ *
+ * HTTP/1.1: only when a request Connection field contains `close`.
+ * HTTP/1.0: unless `keep-alive` was requested (RFC 9112 §9.3) - and always
+ * for streamed responses, which are delimited by the connection close. */
+FIO_SFUNC int fio___http1_should_close(fio_http_s *h) {
+  if (!fio___http1_is_legacy(h))
+    return fio___http1_connection_options(h) & FIO___HTTP1_CONN_CLOSE;
+  if (fio_http_is_streaming(h))
+    return 1; /* close delimited, no header scan required */
+  return fio___http1_connection_options(h) != FIO___HTTP1_CONN_KEEP_ALIVE;
+}
+
 /** called once a request / response had finished */
 FIO_SFUNC void fio___http_controller_http1_on_finish(fio_http_s *h) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   if (c->state.http.buf.len) {
-    if (fio_http_is_streaming(h))
+    if (fio___http1_is_chunked(h))
       fio_string_write(&c->state.http.buf, FIO_STRING_REALLOC, "0\r\n\r\n", 5);
     fio_io_write2(c->io,
                   .buf = (void *)c->state.http.buf.buf,
@@ -126064,7 +126283,7 @@ FIO_SFUNC void fio___http_controller_http1_on_finish(fio_http_s *h) {
                   .dealloc = FIO_STRING_FREE);
     c->state.http.buf = FIO_STR_INFO0;
   } else {
-    if (fio_http_is_streaming(h))
+    if (fio___http1_is_chunked(h))
       fio_io_write2(c->io, .buf = (char *)"0\r\n\r\n", .len = 5, .copy = 1);
   }
   if (c->log)
@@ -126073,7 +126292,13 @@ FIO_SFUNC void fio___http_controller_http1_on_finish(fio_http_s *h) {
     goto upgraded;
   /* once the function returns, `h` may be freed (auto-finish on free).
    * so we must call this callback here (sync), no matter the thread */
+  const int close_connection = fio___http1_should_close(h);
   c->state.http.on_finish(h);
+  if (close_connection && c->io) {
+    fio_io_close(c->io);
+    fio_io_free(c->io); /* balance the completion-time fio_io_dup */
+    return;
+  }
   fio_io_defer(fio___http_controller_http1_on_finish_task, (void *)(c), NULL);
   return;
 
@@ -126459,18 +126684,20 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
         FIO_STR_INFO2((char *)"sec-websocket-extensions", 24),
         val) {
       FIO_LOG_DDEBUG2("WebSocket extension requested: %.*s",
-                      (int)val.len,
-                      val.buf);
-      if (!FIO_STR_INFO_IS_EQ(val,
-                              FIO_STR_INFO2((char *)"permessage-deflate", 18)))
+                      (int)val.value.len,
+                      val.value.buf);
+      if (!FIO_BUF_INFO_IS_EQ(
+              val.value,
+              FIO_BUF_INFO2((char *)"permessage-deflate", 18)))
         continue;
       /* Negotiate: ALWAYS force both no_context_takeover flags (persistent
        * compression state stays ~0 per connection); honor
        * server_max_window_bits when offered. */
       char ext_resp[80];
       int server_bits = 15;
-      size_t ext_len = fio___http_ws_deflate_negotiate(val,
-                                                       ext_resp,
+      size_t ext_len = fio___http_ws_deflate_negotiate(
+          FIO_STR_INFO2(val.value.buf, val.value.len),
+          ext_resp,
                                                        sizeof(ext_resp),
                                                        &server_bits);
       if (!ext_len)
@@ -127068,6 +127295,59 @@ FIO_SFUNC void fio___http_controller_ws_write_body(fio_http_s *h,
         !!fio_string_utf8_valid(FIO_STR_INFO2((char *)args.buf, args.len));
     fio_http_websocket_write(h, (void *)args.buf, args.len, is_text);
     if (args.dealloc)
+      args.dealloc((void *)args.buf);
+    return;
+  }
+  if (c->is_client) {
+    /* Generic writes must mask the actual payload, not only set the MASK bit.
+     * An fd cannot be sent directly: read it before framing, then close it
+     * as promised by the HTTP generic-write contract (even with copy=1). */
+    const size_t framed_len = fio_websocket_write_len(args.len, 1);
+    char *frame = NULL;
+    if (args.len <= SIZE_MAX - args.offset && framed_len <= UINT32_MAX &&
+        (args.buf ||
+         ((off_t)args.offset >= 0 &&
+          (uintmax_t)(off_t)args.offset == (uintmax_t)args.offset &&
+          (off_t)(args.offset + args.len) >= 0 &&
+          (uintmax_t)(off_t)(args.offset + args.len) ==
+              (uintmax_t)(args.offset + args.len))))
+      frame = fio_bstr_reserve(NULL, framed_len);
+    if (!frame)
+      goto client_write_error;
+    if (args.buf) {
+      fio_websocket_write_message_client(
+          frame, FIO_BUF_INFO2((char *)args.buf + args.offset, args.len), 0, 0, 0);
+    } else {
+      uint32_t mask = (uint32_t)(fio_rand64() | 0x01020408U);
+      size_t head = fio___websocket_hdr((uint8_t *)frame,
+                                       args.len,
+                                       mask,
+                                       FIO_WEBSOCKET_OP_BINARY,
+                                       0);
+      if (fio_fd_read(args.fd, frame + head, args.len, (off_t)args.offset) !=
+          args.len) {
+        fio_bstr_free(frame);
+        goto client_write_error;
+      }
+      fio_xmask_cpy(frame + head,
+                    frame + head,
+                    args.len,
+                    ((uint64_t)mask << 32) | (uint64_t)mask);
+    }
+    if (!args.buf && (unsigned)(args.fd + 1) > 1)
+      close(args.fd);
+    if (args.dealloc && args.buf)
+      args.dealloc((void *)args.buf);
+    fio_io_write2(c->io,
+                  .buf = frame,
+                  .len = framed_len,
+                  .dealloc = (void (*)(void *))fio_bstr_free);
+    return;
+  client_write_error:
+    FIO_LOG_ERROR("WebSocket client write: couldn't frame %zu bytes", args.len);
+    if (!args.buf && (unsigned)(args.fd + 1) > 1)
+      close(args.fd);
+    if (args.dealloc && args.buf)
       args.dealloc((void *)args.buf);
     return;
   }
