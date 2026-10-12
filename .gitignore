@@ -11,6 +11,7 @@
 *.bundle
 *.so
 *.gem
+/ai-*
 
 .ruby-version
 .clang_complete
