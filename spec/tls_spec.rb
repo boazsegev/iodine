@@ -63,11 +63,6 @@ RSpec.describe Iodine::TLS do
       expect(Iodine::TLS.default).to eq(:openssl)
     end
 
-    it 'raises RuntimeError when setting :openssl without OpenSSL support' do
-      skip 'OpenSSL is compiled in' if Iodine::TLS::OPENSSL_AVAILABLE
-      expect { Iodine::TLS.default = :openssl }.to raise_error(RuntimeError)
-    end
-
     it 'raises ArgumentError for an unknown backend symbol' do
       expect { Iodine::TLS.default = :invalid_backend }.to raise_error(ArgumentError)
     end

@@ -167,10 +167,9 @@ module Iodine
       nil
     end
 
-    # Benchmark the {Iodine::Utils} module and see if you want to use {Iodine::Utils.monkey_patch} when using Rack.
-    def self.random
+    # Benchmarks keyed MACs (including non-cryptographic Risky Hash MACs).
+    def self.hmac
       require 'benchmark/ips'
-      require 'securerandom'
       begin
         require 'openssl'
       rescue LoadError
@@ -189,7 +188,7 @@ module Iodine
       #   risky512_hmac => keyed MAC on non-crypto Risky Hash — NOT for security-critical use
       #
       # Payload: 512 bytes of the benchmark file itself (representative of a
-      # short-to-medium web token or session payload).
+      # short-to-medium authenticated payload).
       # -----------------------------------------------------------------------
       benchmark_secret = Iodine.secret
       benchmark_payload = (File.exist?(__FILE__) ? IO.binread(__FILE__)[0...512] : 'my message payload')
@@ -197,8 +196,8 @@ module Iodine
       puts "HMAC benchmarks — all MACs ranked — #{benchmark_payload.bytesize}-byte message, #{benchmark_secret.bytesize}-byte secret"
       puts "  [WARNING: risky256_hmac / risky512_hmac are NOT suitable for security-critical authentication]"
 
-      # Pre-create OpenSSL digest objects outside the hot loop so we measure
-      # only the HMAC computation, not object allocation.
+      # Pre-create OpenSSL digest objects outside the hot loop. Compare the
+      # same Base64 output format as Iodine's hmac* methods.
       if defined?(OpenSSL)
         digest_sha1   = OpenSSL::Digest.new('SHA1')
         digest_sha256 = OpenSSL::Digest.new('SHA256')
@@ -230,17 +229,30 @@ module Iodine
           Iodine::Utils.hmac512(benchmark_secret, benchmark_payload)
         end
         if defined?(OpenSSL)
-          bm.report('OpenSSL::HMAC.digest SHA1                ') do
-            OpenSSL::HMAC.digest(digest_sha1, benchmark_secret, benchmark_payload)
+          bm.report('OpenSSL::HMAC.base64digest SHA1          ') do
+            OpenSSL::HMAC.base64digest(digest_sha1, benchmark_secret, benchmark_payload)
           end
-          bm.report('OpenSSL::HMAC.digest SHA256              ') do
-            OpenSSL::HMAC.digest(digest_sha256, benchmark_secret, benchmark_payload)
+          bm.report('OpenSSL::HMAC.base64digest SHA256        ') do
+            OpenSSL::HMAC.base64digest(digest_sha256, benchmark_secret, benchmark_payload)
           end
-          bm.report('OpenSSL::HMAC.digest SHA512              ') do
-            OpenSSL::HMAC.digest(digest_sha512, benchmark_secret, benchmark_payload)
+          bm.report('OpenSSL::HMAC.base64digest SHA512        ') do
+            OpenSSL::HMAC.base64digest(digest_sha512, benchmark_secret, benchmark_payload)
           end
         end
         bm.compare!
+      end
+
+      nil
+    end
+
+    # Benchmarks UUIDs, random bytes (including secure_random), and random floats.
+    def self.random
+      require 'benchmark/ips'
+      require 'securerandom'
+      begin
+        require 'openssl'
+      rescue LoadError
+        nil
       end
 
       # -----------------------------------------------------------------------
@@ -258,8 +270,9 @@ module Iodine
       # Random bytes generation — all generators ranked per size
       #
       # Iodine::Utils.random uses a fast PRNG (not cryptographically secure).
-      # Iodine::Utils.secure_random uses arc4random_buf (BSD/macOS) or
-      # /dev/urandom (Linux) — suitable for key generation and nonces.
+      # Iodine::Utils.secure_random requests system CSPRNG bytes (with a
+      # PRNG fallback if the system source fails); unlike random, it is
+      # intended for keys and nonces under normal operation.
       # Compared against SecureRandom.random_bytes and OpenSSL::Random.random_bytes.
       # -----------------------------------------------------------------------
       puts "\nRandom bytes — all generators ranked — 16 bytes"
@@ -1629,6 +1642,8 @@ module Iodine
     # Runs all crypto benchmarks.
     #
     # This is a convenience method that runs all crypto-related benchmarks:
+    # - hmac (keyed MACs)
+    # - random (UUIDs, PRNG and secure random bytes)
     # - crypto_symmetric (AEAD ciphers)
     # - crypto_asymmetric (Ed25519, X25519)
     # - hashing (SHA-2, SHA-3, BLAKE2)
@@ -1643,6 +1658,10 @@ module Iodine
       puts 'Running All Crypto Benchmarks'
       puts '=' * 70 + "\n"
 
+      hmac
+      puts "\n"
+      random
+      puts "\n"
       crypto_symmetric
       puts "\n"
       crypto_asymmetric

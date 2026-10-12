@@ -2404,7 +2404,7 @@ module Iodine
         # Compresses data using raw DEFLATE.
         #
         # @param data [String] Data to compress
-        # @param level [Integer] Compression level (0-9, default: 6).
+        # @param level [Integer] Compression level (0-9, default: 3 for lower server CPU cost).
         #   0 = no compression (store), 1-3 = fast, 4-6 = balanced, 7-9 = best compression.
         # @return [String] Compressed data (binary string)
         # @raise [ArgumentError] if level is not between 0 and 9
@@ -2412,17 +2412,20 @@ module Iodine
         #
         # @example
         #   compressed = Iodine::Base::Compression::Deflate.compress("Hello, World!", level: 6)
-        def self.compress(data, level: 6); end
+        def self.compress(data, level: 3); end
 
         # Decompresses raw DEFLATE data.
         #
         # @param data [String] Compressed data (raw DEFLATE, no gzip/zlib headers)
+        # @param max_output [Integer] Maximum output bytes (default: 64 MiB); set
+        #   lower for untrusted input, higher for trusted large streams.
         # @return [String] Decompressed data (binary string)
+        # @raise [ArgumentError] if output exceeds max_output
         # @raise [RuntimeError] if data is corrupt or truncated
         #
         # @example
         #   original = Iodine::Base::Compression::Deflate.decompress(compressed)
-        def self.decompress(data); end
+        def self.decompress(data, max_output: 64 * 1024 * 1024); end
       end
 
       # GZIP compression (RFC 1952).
@@ -2437,7 +2440,7 @@ module Iodine
         # Compresses data using GZIP format.
         #
         # @param data [String] Data to compress
-        # @param level [Integer] Compression level (0-9, default: 6).
+        # @param level [Integer] Compression level (0-9, default: 3 for lower server CPU cost).
         #   0 = no compression (store), 1-3 = fast, 4-6 = balanced, 7-9 = best compression.
         # @return [String] GZIP-compressed data (binary string)
         # @raise [ArgumentError] if level is not between 0 and 9
@@ -2445,17 +2448,20 @@ module Iodine
         #
         # @example
         #   gzipped = Iodine::Base::Compression::Gzip.compress("Hello, World!", level: 6)
-        def self.compress(data, level: 6); end
+        def self.compress(data, level: 3); end
 
         # Decompresses GZIP data.
         #
         # @param data [String] GZIP-compressed data
+        # @param max_output [Integer] Maximum output bytes (default: 64 MiB); set
+        #   lower for untrusted input, higher for trusted large streams.
         # @return [String] Decompressed data (binary string)
+        # @raise [ArgumentError] if output exceeds max_output
         # @raise [RuntimeError] if data is corrupt or truncated
         #
         # @example
         #   original = Iodine::Base::Compression::Gzip.decompress(gzipped)
-        def self.decompress(data); end
+        def self.decompress(data, max_output: 64 * 1024 * 1024); end
       end
 
       # Brotli compression (RFC 7932).
@@ -2465,32 +2471,35 @@ module Iodine
       # content like HTML, CSS, and JavaScript. It is widely supported by browsers
       # via `Content-Encoding: br`.
       #
-      # @note The quality parameter ranges from 1-4 (not 0-11 as in the reference
-      #   Brotli library). Quality 1 uses fast greedy matching while quality 4 uses
-      #   lazy matching for better compression.
+      # @note The quality parameter ranges from 1-6 (not 0-11 as in the reference
+      #   Brotli library). Quality 3 balances CPU and size; 5-6 use slower
+      #   hash-chain matching and context modeling.
       module Brotli
         # Compresses data using Brotli.
         #
         # @param data [String] Data to compress
-        # @param quality [Integer] Compression quality (1-4, default: 4).
-        #   1 = fastest (greedy), 4 = best compression (lazy matching).
+        # @param quality [Integer] Compression quality (1-6, default: 3).
+        #   1 = fastest (greedy), 5-6 = higher compression at greater CPU cost.
         # @return [String] Brotli-compressed data (binary string)
-        # @raise [ArgumentError] if quality is not between 1 and 4
+        # @raise [ArgumentError] if quality is not between 1 and 6
         # @raise [RuntimeError] if compression fails
         #
         # @example
         #   compressed = Iodine::Base::Compression::Brotli.compress("Hello, World!", quality: 4)
-        def self.compress(data, quality: 4); end
+        def self.compress(data, quality: 3); end
 
         # Decompresses Brotli data.
         #
         # @param data [String] Brotli-compressed data
+        # @param max_output [Integer] Maximum output bytes (default: 64 MiB); set
+        #   lower for untrusted input, higher for trusted large streams.
         # @return [String] Decompressed data (binary string)
+        # @raise [ArgumentError] if output exceeds max_output
         # @raise [RuntimeError] if data is corrupt or truncated
         #
         # @example
         #   original = Iodine::Base::Compression::Brotli.decompress(compressed)
-        def self.decompress(data); end
+        def self.decompress(data, max_output: 64 * 1024 * 1024); end
       end
     end
 
