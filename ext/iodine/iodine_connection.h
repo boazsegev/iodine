@@ -825,11 +825,14 @@ FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
 }
 
 FIO_SFUNC VALUE iodine_connection_body_close(VALUE o) {
+  VALUE r = Qtrue;
   iodine_connection_s *c = iodine_connection_ptr(o);
   if (!c->http)
     return Qnil;
+  if (!fio_http_body_length(c->http))
+    r = Qfalse;
   fio_http_body_close(c->http);
-  return o;
+  return r;
 }
 
 /* *****************************************************************************
@@ -2651,8 +2654,10 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
                                                  _Bool finish) {
   VALUE r = Qtrue;
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c || (!c->http && !c->io))
+  if (!c || (!c->http && !c->io)) {
+    rb_check_funcall(data, IODINE_CLOSE_ID, 0, NULL);
     return (r = Qfalse);
+  }
   fio_str_info_s to_write;
   unsigned to_copy = 1;
   unsigned is_text = 0;

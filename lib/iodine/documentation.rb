@@ -1790,7 +1790,7 @@ module Iodine
     #
     # Subsequent body reads will return `nil` and `length` will return `0`. The connection itself remains open.
     #
-    # @return [self]
+    # @return [Boolean, nil] `true` if body data was available to close, `false` if the body was empty or already closed, or `nil` when there is no HTTP request
     def close_body; end
 
     # @!group HTTP Cookies

@@ -79,9 +79,11 @@ module TestHTTPHandler
     when '/close_body'
       before_len = e.length
       first_read = e.read(5).to_s
-      ret = e.close_body
+      first_close = e.close_body
+      second_close = e.close_body
       e.finish("before=#{before_len} first=#{first_read} after=#{e.length} " \
-               "post_read=#{e.read.inspect} self=#{ret.equal?(e)}")
+               "post_read=#{e.read.inspect} first_close=#{first_close.inspect} " \
+               "second_close=#{second_close.inspect}")
 
     else
       e.status = 404
@@ -246,6 +248,10 @@ RSpec.describe 'Iodine HTTP server' do
       resp = Net::HTTP.post(URI("#{base}/native/close_body"), 'x' * 300, 'Content-Type' => 'text/plain')
       HTTP_RESULTS[:close_body_status] = resp.code.to_i
       HTTP_RESULTS[:close_body]        = resp.body
+
+      # POST /native/close_body - empty body has nothing to close
+      resp = Net::HTTP.post(URI("#{base}/native/close_body"), '', 'Content-Type' => 'text/plain')
+      HTTP_RESULTS[:close_body_empty] = resp.body
 
       # POST /native/close_body - large body (> 128KiB RAM limit, spills to a temp file)
       resp = Net::HTTP.post(URI("#{base}/native/close_body"), 'y' * (200 * 1024), 'Content-Type' => 'text/plain')
@@ -452,8 +458,13 @@ RSpec.describe 'Iodine HTTP server' do
       expect(HTTP_RESULTS[:close_body]).to include('post_read=nil')
     end
 
-    it 'returns self' do
-      expect(HTTP_RESULTS[:close_body]).to include('self=true')
+    it 'returns true when body data is released and false after it is gone' do
+      expect(HTTP_RESULTS[:close_body]).to include('first_close=true second_close=false')
+    end
+
+    it 'returns false when there is no body data to close' do
+      expect(HTTP_RESULTS[:close_body_empty]).to include('before=0')
+      expect(HTTP_RESULTS[:close_body_empty]).to include('first_close=false second_close=false')
     end
 
     it 'returns status 200 for a file-backed body' do
@@ -464,6 +475,7 @@ RSpec.describe 'Iodine HTTP server' do
       expect(HTTP_RESULTS[:close_body_fd]).to include("before=#{200 * 1024}")
       expect(HTTP_RESULTS[:close_body_fd]).to include('after=0')
       expect(HTTP_RESULTS[:close_body_fd]).to include('post_read=nil')
+      expect(HTTP_RESULTS[:close_body_fd]).to include('first_close=true second_close=false')
     end
   end
 end

@@ -7,7 +7,7 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### 0.8.0 - unreleased
+#### 0.8.0 - 2026-10-14
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
 

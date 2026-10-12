@@ -46,6 +46,7 @@ module Iodine
       #
       # Accepts an optional block for nested URL mapping and middleware use.
       def map(path, handler = nil, &block)
+        path = "/" if path.nil?
         raise "`path` must be a String in a call to map(path)." unless path.is_a?(String)
         @middleware ||= []
         @app ||= nil
