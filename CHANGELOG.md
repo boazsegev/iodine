@@ -7,6 +7,12 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
+#### 0.8.1 - 2026-10-15
+
+**Feature**: `Iodine.connect(...)` forwards arguments and keyword options to `Iodine::Connection.new(...)` and returns the new outbound connection.
+
+**Fix**: Preserve frozen connection handlers and correct listener handler routing (including callbacks for explicitly mapped handlers).
+
 #### 0.8.0 - 2026-10-14
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).

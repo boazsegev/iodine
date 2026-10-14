@@ -140,8 +140,9 @@ Ruby Connection Object - Internal Data Structures
  * These are cached Ruby objects associated with each connection.
  */
 typedef enum {
-  IODINE_CONNECTION_STORE_handler = 0, /**< Handler object for callbacks */
-  IODINE_CONNECTION_STORE_env,         /**< Rack environment hash */
+  IODINE_CONNECTION_STORE_handler = 0,  /**< Handler object for callbacks */
+  IODINE_CONNECTION_STORE_user_handler, /**< User passed Handler */
+  IODINE_CONNECTION_STORE_env,          /**< Rack environment hash */
   IODINE_CONNECTION_STORE_rack,   /**< Rack response array [status,hdrs,body] */
   IODINE_CONNECTION_STORE_method, /**< Cached HTTP method string */
   IODINE_CONNECTION_STORE_path,   /**< Cached request path string */
@@ -256,7 +257,8 @@ static VALUE iodine_connection_create_from_io(fio_io_s *io) {
   VALUE m = rb_obj_alloc(iodine_rb_IODINE_CONNECTION);
   STORE.hold(m);
   iodine_connection_s *c = iodine_connection_ptr(m);
-  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)fio_io_udata(io);
+  c->store[IODINE_CONNECTION_STORE_handler] =
+      c->store[IODINE_CONNECTION_STORE_user_handler] = (VALUE)fio_io_udata(io);
   c->io = io;
   c->http = NULL;
   fio_io_udata_set(io, (void *)m);
@@ -270,7 +272,8 @@ static VALUE iodine_connection_create_from_http(fio_http_s *h) {
                 : iodine_connection_alloc(iodine_rb_IODINE_CONNECTION);
   STORE.hold(m);
   iodine_connection_s *c = iodine_connection_ptr(m);
-  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)fio_http_udata(h);
+  c->store[IODINE_CONNECTION_STORE_handler] =
+      c->store[IODINE_CONNECTION_STORE_user_handler] = (VALUE)fio_http_udata(h);
   c->io = fio_http_io(h);
   if (!(c->flags & IODINE_CONNECTION_CLIENT))
     c->http = fio_http_dup(h);
@@ -346,23 +349,22 @@ static VALUE iodine_connection_is_tls(VALUE o) {
 Ruby Store Get/Set
 ***************************************************************************** */
 
-#define IODINE_DEF_GET_FUNC(val_name)                                          \
+#define IODINE_DEF_GET_FUNC(name, val_name)                                    \
   /** Returns the client's current val_name object. */                         \
-  static VALUE iodine_connection_##val_name##_get(VALUE self) {                \
+  static VALUE iodine_connection_##name##_get(VALUE self) {                    \
     iodine_connection_s *c = iodine_connection_ptr(self);                      \
     return c->store[IODINE_CONNECTION_STORE_##val_name];                       \
   }
-#define IODINE_DEF_SET_FUNC(val_name)                                          \
+#define IODINE_DEF_SET_FUNC(name, val_name)                                    \
   /** Sets the client's val_name object. */                                    \
-  static VALUE iodine_connection_##val_name##_set(VALUE self,                  \
-                                                  VALUE updated_val) {         \
+  static VALUE iodine_connection_##name##_set(VALUE self, VALUE updated_val) { \
     iodine_connection_s *c = iodine_connection_ptr(self);                      \
     c->store[IODINE_CONNECTION_STORE_##val_name] = updated_val;                \
     return updated_val;                                                        \
   }
 
-IODINE_DEF_GET_FUNC(handler);
-IODINE_DEF_SET_FUNC(env);
+IODINE_DEF_GET_FUNC(handler, user_handler);
+IODINE_DEF_SET_FUNC(env, env);
 
 #undef IODINE_DEF_GET_FUNC
 #undef IODINE_DEF_SET_FUNC
@@ -624,6 +626,8 @@ typedef struct {
   fio_buf_info_s hint;
   VALUE headers;
   VALUE cookies;
+  VALUE handler;
+  VALUE user_handler;
   fio_buf_info_s method;
   fio_buf_info_s body;
   fio_http_settings_s settings;
@@ -1196,13 +1200,107 @@ static VALUE iodine_handler_on_auth_rack_sse(VALUE handler, VALUE client) {
                                               IODINE_RACK_UPGRADE_SSE_SYM);
 }
 
+/* Frozen handlers cannot receive Iodine's default singleton callbacks. Keep
+ * their implemented callbacks on a mutable adapter, with direct C forwarding
+ * (rather than SimpleDelegator's per-request method_missing lookup). */
+#define IODINE_FORWARD_1(name, id)                                             \
+  static VALUE iodine_handler_forward_##name(VALUE wrapper, VALUE arg) {       \
+    VALUE original = rb_ivar_get(wrapper, IODINE_WRAPPER_VAR_ID);              \
+    return rb_funcallv(original, id, 1, &arg);                                 \
+  }
+#define IODINE_FORWARD_2(name, id)                                             \
+  static VALUE iodine_handler_forward_##name(VALUE wrapper,                    \
+                                             VALUE a,                          \
+                                             VALUE b) {                        \
+    VALUE original = rb_ivar_get(wrapper, IODINE_WRAPPER_VAR_ID);              \
+    VALUE args[] = {a, b};                                                     \
+    return rb_funcallv(original, id, 2, args);                                 \
+  }
+IODINE_FORWARD_1(call, IODINE_CALL_ID)
+IODINE_FORWARD_1(on_http, IODINE_ON_HTTP_ID)
+IODINE_FORWARD_1(on_finish, IODINE_ON_FINISH_ID)
+IODINE_FORWARD_1(on_close, IODINE_ON_CLOSE_ID)
+IODINE_FORWARD_2(on_eventsource, IODINE_ON_EVENTSOURCE_ID)
+IODINE_FORWARD_2(on_eventsource_reconnect, IODINE_ON_EVENTSOURCE_RECONNECT_ID)
+IODINE_FORWARD_1(on_drained, IODINE_ON_DRAINED_ID)
+IODINE_FORWARD_1(on_shutdown, IODINE_ON_SHUTDOWN_ID)
+IODINE_FORWARD_1(on_timeout, IODINE_ON_TIMEOUT_ID)
+IODINE_FORWARD_1(on_authenticate, IODINE_ON_AUTHENTICATE_ID)
+IODINE_FORWARD_1(on_authenticate_sse, IODINE_ON_AUTHENTICATE_SSE_ID)
+IODINE_FORWARD_1(on_authenticate_websocket, IODINE_ON_AUTHENTICATE_WEBSOCKET_ID)
+IODINE_FORWARD_1(on_open, IODINE_ON_OPEN_ID)
+IODINE_FORWARD_2(on_message, IODINE_ON_MESSAGE_ID)
+#undef IODINE_FORWARD_1
+#undef IODINE_FORWARD_2
+
+static VALUE iodine_handler_method_injection__inner_frozen(VALUE handler,
+                                                           bool is_middleware) {
+  const struct {
+    ID id;
+    union {
+      VALUE (*one)(VALUE, VALUE);
+      VALUE (*two)(VALUE, VALUE, VALUE);
+    } forward;
+    int argc;
+    bool required;
+  } callbacks[] = {
+      /* clang-format off */
+      {IODINE_CALL_ID, {.one = iodine_handler_forward_call}, 1, false},
+      {IODINE_ON_HTTP_ID, {.one = iodine_handler_forward_on_http}, 1, true},
+      {IODINE_ON_FINISH_ID, {.one = iodine_handler_forward_on_finish}, 1, true},
+      {IODINE_ON_CLOSE_ID, {.one = iodine_handler_forward_on_close}, 1, true},
+      {IODINE_ON_EVENTSOURCE_ID, {.two = iodine_handler_forward_on_eventsource}, 2, true},
+      {IODINE_ON_EVENTSOURCE_RECONNECT_ID,
+       {.two = iodine_handler_forward_on_eventsource_reconnect}, 2, true},
+      {IODINE_ON_DRAINED_ID, {.one = iodine_handler_forward_on_drained}, 1, true},
+      {IODINE_ON_SHUTDOWN_ID, {.one = iodine_handler_forward_on_shutdown}, 1, true},
+      {IODINE_ON_TIMEOUT_ID, {.one = iodine_handler_forward_on_timeout}, 1, true},
+      {IODINE_ON_AUTHENTICATE_ID, {.one = iodine_handler_forward_on_authenticate}, 1, false},
+      {IODINE_ON_AUTHENTICATE_SSE_ID,
+       {.one = iodine_handler_forward_on_authenticate_sse}, 1, true},
+      {IODINE_ON_AUTHENTICATE_WEBSOCKET_ID,
+       {.one = iodine_handler_forward_on_authenticate_websocket}, 1, true},
+      {IODINE_ON_OPEN_ID, {.one = iodine_handler_forward_on_open}, 1, true},
+      {IODINE_ON_MESSAGE_ID, {.two = iodine_handler_forward_on_message}, 2, true},
+  }; /* clang-format on */
+  bool needs_defaults = false;
+  for (size_t i = 0; i < sizeof(callbacks) / sizeof(*callbacks); ++i)
+    needs_defaults |=
+        callbacks[i].required && !rb_respond_to(handler, callbacks[i].id);
+  if (!needs_defaults)
+    return handler;
+
+  VALUE wrapper = rb_obj_alloc(rb_cObject);
+  rb_ivar_set(wrapper, IODINE_WRAPPER_VAR_ID, handler);
+  for (size_t i = 0; i < sizeof(callbacks) / sizeof(*callbacks); ++i) {
+    if (!rb_respond_to(handler, callbacks[i].id))
+      continue;
+    if (callbacks[i].argc == 1)
+      rb_define_singleton_method(wrapper,
+                                 rb_id2name(callbacks[i].id),
+                                 callbacks[i].forward.one,
+                                 1);
+    else
+      rb_define_singleton_method(wrapper,
+                                 rb_id2name(callbacks[i].id),
+                                 callbacks[i].forward.two,
+                                 2);
+  }
+  return wrapper;
+  (void)is_middleware;
+}
+
 static VALUE iodine_handler_method_injection__inner(VALUE self,
                                                     VALUE handler,
                                                     bool is_middleware) {
-  static VALUE previous = Qnil;
-  if (handler == previous)
-    return handler;
-  previous = handler;
+  if (rb_obj_frozen_p(handler)) {
+    VALUE original = handler;
+    handler =
+        iodine_handler_method_injection__inner_frozen(handler, is_middleware);
+    if (handler == original)
+      return handler;
+  }
+
 /* test for handler responses and set a callback if missing */
 #define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
   do {                                                                         \
@@ -1335,8 +1433,9 @@ static VALUE iodine_connection_handler_set(VALUE client, VALUE handler) {
     return Qnil;
   if (IODINE_STORE_IS_SKIP(handler))
     rb_raise(rb_eArgError, "invalid handler!");
-  iodine_handler_method_injection(Qnil, handler);
-  c->store[IODINE_CONNECTION_STORE_handler] = handler;
+  c->store[IODINE_CONNECTION_STORE_user_handler] = handler;
+  c->store[IODINE_CONNECTION_STORE_handler] =
+      iodine_handler_method_injection(Qnil, handler);
   return handler;
 }
 
@@ -2248,9 +2347,12 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
   }
 
   /* No errors, start protecting Ruby data from GC */
-  STORE.hold((VALUE)r.settings.udata);
+  r.user_handler = (VALUE)r.settings.udata;
+  STORE.cache(r.user_handler);
   /* make sure all proper callbacks are defined. */
-  iodine_handler_method_injection(Qnil, (VALUE)r.settings.udata);
+  r.handler = iodine_handler_method_injection(Qnil, r.user_handler);
+  STORE.cache(r.handler);
+  r.settings.udata = (void *)r.handler;
 
   r.settings.sse_timeout = r.settings.ws_timeout;
 
@@ -2467,7 +2569,8 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
         "See documentation, use tcp(s)://.../  or  http(s)://.../  or  "
         "ws(s):/.../ etc'");
   /* Keep the returned client and its handler alive until close/failure. */
-  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)args.settings.udata;
+  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)args.handler;
+  c->store[IODINE_CONNECTION_STORE_user_handler] = (VALUE)args.user_handler;
   c->flags |= IODINE_CONNECTION_CLIENT;
 
   /* test if HTTP scheme */
@@ -2504,6 +2607,16 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
                            .on_failed = iodine_io_raw_client_on_failed);
   }
   return self;
+}
+
+/** Creates an outbound connection using Connection.new, forwarding keywords. */
+static VALUE iodine_connection_connect(int argc, VALUE *argv, VALUE self) {
+  (void)self;
+  return rb_funcallv_kw(iodine_rb_IODINE_CONNECTION,
+                        IODINE_NEW_ID,
+                        argc,
+                        argv,
+                        RB_PASS_CALLED_KEYWORDS);
 }
 
 /** Returns true if the connection appears to be open (no known issues). */
@@ -3212,7 +3325,8 @@ static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
   if (!listener) /* resources freed by fio_io_listen if it fails */
     rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
   r = iodine_listener_new(listener,
-                          (VALUE)s.settings.udata,
+                          (VALUE)s.handler,
+                          (VALUE)s.user_handler,
                           s.service != IODINE_SERVICE_RAW);
   /* avoid listening to the same address/port combination again */
   fio_cli_set("-p", NULL);
@@ -3416,6 +3530,7 @@ static void Init_Iodine_Connection(void)  {
 #undef IODINE_CONST_RACK_STORE
 
   rb_define_method(m, "initialize", iodine_connection_initialize, -1);
+  rb_define_singleton_method(iodine_rb_IODINE, "connect", iodine_connection_connect, -1);
 
   #define IODINE_DEFINE_GETSET_METHOD(name)\
   rb_define_method(m, #name, iodine_connection_##name##_get, 0);\

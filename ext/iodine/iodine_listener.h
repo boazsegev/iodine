@@ -39,9 +39,10 @@ static VALUE iodine_rb_IODINE_LISTENER;
  * (fio_io_listener_s) along with its Ruby handler object.
  */
 typedef struct {
-  void *listener;   /**< Pointer to fio_http_listener_s or fio_io_listener_s */
-  VALUE handler;    /**< Ruby handler object for callbacks */
-  bool is_http;     /**< true if HTTP listener, false if raw TCP */
+  void *listener; /**< Pointer to fio_http_listener_s or fio_io_listener_s */
+  VALUE handler;  /**< Ruby handler object for callbacks */
+  VALUE user;     /**< User supplied handler (handler might wrap it) */
+  bool is_http;   /**< true if HTTP listener, false if raw TCP */
 } iodine_listener_s;
 
 static void iodine_listener_free(void *p) {
@@ -58,6 +59,8 @@ FIO_IFUNC void iodine_listener_gc_mark(void *p) {
   iodine_listener_s *m = (iodine_listener_s *)p;
   if (!IODINE_STORE_IS_SKIP(m->handler))
     rb_gc_mark(m->handler);
+  if (!IODINE_STORE_IS_SKIP(m->user))
+    rb_gc_mark(m->user);
 }
 
 static const rb_data_type_t IODINE_LISTNER_DATA_TYPE = {
@@ -100,10 +103,10 @@ Helpers - Internal Handler Management
 #define IODINE_LISTNER_ONSET(o)                                                \
   do {                                                                         \
     STORE.release(old_value);                                                  \
-    STORE.hold(o->handler);                                                    \
     iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,          \
                                            o->handler,                         \
                                            0);                                 \
+    STORE.hold(o->handler);                                                    \
   } while (0)
 
 FIO_DEF_GETSET_FUNC(static,
@@ -127,13 +130,17 @@ FIO_DEF_GETSET_FUNC(static,
  *
  * @note Raises NoMemError if allocation fails.
  */
-static VALUE iodine_listener_new(void *listener, VALUE handler, bool is_http) {
+static VALUE iodine_listener_new(void *listener,
+                                 VALUE handler,
+                                 VALUE user_handler,
+                                 bool is_http) {
   VALUE r = iodine_listener_alloc(iodine_rb_IODINE_LISTENER);
   if (IODINE_STORE_IS_SKIP(r))
     rb_raise(rb_eNoMemError, "Listener loocation error!");
   iodine_listener_s *l = iodine_listener_ptr(r);
   *l = (iodine_listener_s){.listener = listener,
                            .handler = handler,
+                           .user = user_handler,
                            .is_http = is_http};
   return r;
 }
@@ -192,10 +199,11 @@ static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
                             ->udata);
     } else { /* set value for HTTP router */
       if (!IODINE_STORE_IS_SKIP(handler)) {
+        handler =
+            iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,
+                                                   handler,
+                                                   0);
         STORE.hold(handler);
-        iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,
-                                               handler,
-                                               0);
       }
       settings =
           *fio_http_listener_settings((fio_http_listener_s *)l->listener);

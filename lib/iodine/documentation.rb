@@ -304,6 +304,12 @@ module Iodine
   #   Iodine.listen(url: "wss://0.0.0.0:3000", handler: MyWSHandler, tls_io: :iodine)
   def self.listen(**options); end
 
+  # Opens an outbound connection, forwarding arguments to {Iodine::Connection.new}.
+  # The caller receives the new connection; constructor errors propagate unchanged.
+  # @return [Iodine::Connection] the new connection
+  # @see Iodine::Connection#initialize
+  def self.connect(url, **options); end
+
   # Sets a block of code to run when Iodine's core state is updated.
   #
   # @param state [Symbol] event the state event for which the block should run (see list).

@@ -98,6 +98,14 @@ Iodine.listen(url: "tcp://127.0.0.1:#{RAW_PORT}", handler: RawEchoHandler)
 
 # ---------------------------------------------------------------------------
 RSpec.describe 'Iodine raw TCP connection' do
+  it 'forwards positional and keyword arguments to Connection.new' do
+    connection = Object.new
+    expect(Iodine::Connection).to receive(:new)
+      .with('tcp://127.0.0.1:1234', handler: RawTcpClientHandler)
+      .and_return(connection)
+    expect(Iodine.connect('tcp://127.0.0.1:1234', handler: RawTcpClientHandler)).to equal(connection)
+  end
+
   RAW_STARTED = [false]  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
