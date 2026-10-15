@@ -7,6 +7,24 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
+#### 0.8.2 - 2026-10-22
+
+[facil.io C STL](https://github.com/facil-io/cstl) updates:
+
+**Security**: (`ipc`) cluster peers must complete the UUID handshake before any other message is handled. Messages sent before the handshake are rejected. A peer is refused when its UUID is zero, equals this instance's UUID, or was already connected. Each instance now draws a non-zero UUID at startup.
+
+**Fix**: (`http`) `fio_http_body_read` overflow protection when a caller passes a very large length.
+
+**Fix**: (`http1` client) the offset into the request header buffer was calculated backwards when sending an HTTP/1 request.
+
+**Fix**: (`ipc`) periodic UDP discovery broadcasts ran only once after startup, because `repetitions = 0` was treated as a single run. Broadcasts now repeat every 4–5 seconds, with jitter.
+
+**API**: (`http`) added case-insensitive method tests for `HEAD`, `OPTIONS`, `CONNECT`, `TRACE`, `COPY`, `MOVE`, `LOCK`, `UNLOCK`, `SEARCH`, `MKCOL`, `PROPFIND`, and `PROPPATCH`: `fio_http_method_is_head`, `fio_http_method_is_options`, and so on.
+
+**API**: (`core`) `fio_buf_info_is_eq` provides a safe `!memcmp` alternative. `FIO_BUF_INFO_IS_EQ` and `FIO_STR_INFO_IS_EQ` call it when `FIO_MEMALT` is set.
+
+**API**: (`ipc`) added `fio_ipc_cluster_on_peer` to receive cluster peer attach and detach events. Register up to 32 subscribers on the master before `fio_io_start`. Callbacks borrow each event; call `fio_ipc_dup` to keep one. An attached event holds a reference to the peer IO, and its data holds the peer UUID.
+
 #### 0.8.1 - 2026-10-15
 
 **Feature**: `Iodine.connect(...)` forwards arguments and keyword options to `Iodine::Connection.new(...)` and returns the new outbound connection.

@@ -247,7 +247,7 @@ FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-forma
 Randomness and Friends
 ***************************************************************************** */
 
-FIO_DEFINE_RANDOM128_FN(static, iodine_random, 10, 0)
+FIO_DEFINE_RANDOM128_FN(static, iodine_random, 11, 0)
 
 FIO_SFUNC VALUE iodine_utils_hmac512(VALUE self, VALUE secret, VALUE massage) {
   rb_check_type(secret, RUBY_T_STRING);

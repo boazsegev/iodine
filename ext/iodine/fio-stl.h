@@ -73,7 +73,7 @@ supports macros that will help detect and validate it's version.
 /** MINOR version: Deprecation, or significant features added. May break ABI. */
 #define FIO_VERSION_MINOR 8
 /** PATCH version: Bug fixes, minor features may be added. */
-#define FIO_VERSION_PATCH 0
+#define FIO_VERSION_PATCH 2
 /** Build version: optional build info (string), i.e. "beta.02" */
 /* #define FIO_VERSION_BUILD */
 
@@ -2146,6 +2146,7 @@ FIO_IFUNC void fio_u2bufzu(void *buf, size_t i) { fio_u2buf32u(buf, i); }
 #warning                                                                       \
     "Couldn't calculate local version for fio_buf2zu and fio_u2bufzu\n\tSIZE_T_MAX == "##SIZE_T_MAX
 #endif
+
 /* *****************************************************************************
 Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
 ***************************************************************************** */
@@ -5026,7 +5027,85 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) {
   }
 
 /* *****************************************************************************
-String and Buffer Information Containers + Helper Macros
+Finding first different byte
+***************************************************************************** */
+#if FIO___DIFF_INDEX
+/**
+ * Returns index of first different byte, or original length if none found.
+ */
+FIO_SFUNC size_t fio___diff_index(const void *a_, const void *b_, size_t len) {
+
+  const uint8_t *a = a_, *b = b_;
+  if (FIO_UNLIKELY(!len | (a == b)))
+    return len;
+  if (a[0] != b[0])
+    return 0;
+  if (len == 1)
+    return len;
+  size_t i = 0;
+  while (len > 127) {
+    uint64_t a1[16], b1[16], tst = 0;
+    fio_memcpy128(a1, a + i);
+    fio_memcpy128(b1, b + i);
+    for (size_t j = 0; j < (sizeof(a1) / sizeof(a1[0])); ++j)
+      tst |= (a1[j] ^ b1[j]);
+    if (tst) {
+      len |= 127;
+      break;
+    }
+    i += 128;
+    len -= 128;
+  }
+
+#define fio___diff_index_step(half)                                            \
+  do {                                                                         \
+    if ((len & half)) {                                                        \
+      uint64_t a1[(half / 8)], b1[(half / 8)];                                 \
+      for (size_t rounds = (len == half); 1; ++rounds) {                       \
+        uint64_t tst = 0;                                                      \
+        fio_memcpy##half(a1, a + i);                                           \
+        fio_memcpy##half(b1, b + i);                                           \
+        for (size_t j = 0; j < (sizeof(a1) / sizeof(a1[0])); ++j) {            \
+          a1[j] ^= b1[j];                                                      \
+          tst |= a1[j];                                                        \
+        }                                                                      \
+        if (tst)                                                               \
+          break;                                                               \
+        if (rounds)                                                            \
+          return i + half;                                                     \
+        i += (len & (half - 1));                                               \
+      }                                                                        \
+      for (size_t j = 0; j < (sizeof(a1) / sizeof(a1[0])); ++j)                \
+        if (a1[j])                                                             \
+          return i + (j << 3) +                                                \
+                 (fio_lsb_index_unsafe(fio_ltole64(a1[j])) >> 3);              \
+      return i;                                                                \
+    }                                                                          \
+  } while (0)
+
+  fio___diff_index_step(64);
+  fio___diff_index_step(32);
+  fio___diff_index_step(16);
+  fio___diff_index_step(8);
+
+  if ((len & 4)) {
+    size_t tst = (fio_buf2u32u(a + i) == fio_buf2u32u(b + i));
+    i += (tst << 2);     /* should skip? */
+    len |= (4 - (!tst)); /* should seek inside? */
+  }
+  if ((len & 2)) {
+    size_t tst = (fio_buf2u16u(a + i) == fio_buf2u16u(b + i));
+    i += (tst << 1);     /* should skip? */
+    len |= (2 - (!tst)); /* should seek inside? */
+  }
+
+  if (len & 1)
+    i += (a[i] == b[i]);
+  return i;
+}
+#endif
+/* *****************************************************************************
+String and Buffer Information Containers
 ***************************************************************************** */
 
 /** An information type for reporting the string's state. */
@@ -5055,15 +5134,205 @@ typedef struct fio_ubuf_info_s {
   unsigned char *buf;
 } fio_ubuf_info_s;
 
+/* *****************************************************************************
+Case Sensitive and Insensitive Equality
+***************************************************************************** */
+
+/**
+ * Returns true if equal, similar to:
+ *       (a.len == b.len && !memcmp(a.buf, b.buf, a.len))
+ */
+FIO_SFUNC bool fio_buf_info_is_eq(const fio_buf_info_s a,
+                                  const fio_buf_info_s b) {
+  if (a.len != b.len)
+    return false;
+  size_t n = a.len;
+  if (!n || a.buf == b.buf)
+    return true;
+  if (!a.buf || !b.buf)
+    return false;
+  const uint8_t *x = (const uint8_t *)a.buf, *y = (const uint8_t *)b.buf;
+  if (x[0] != y[0])
+    return false;
+  if (n <= 32) {
+    if (n > 24)
+      return !((fio_buf2u64u(x) ^ fio_buf2u64u(y)) |
+               (fio_buf2u64u(x + 8) ^ fio_buf2u64u(y + 8)) |
+               (fio_buf2u64u(x + 16) ^ fio_buf2u64u(y + 16)) |
+               (fio_buf2u64u(x + n - 8) ^ fio_buf2u64u(y + n - 8)));
+    if (n > 16)
+      return !((fio_buf2u64u(x) ^ fio_buf2u64u(y)) |
+               (fio_buf2u64u(x + 8) ^ fio_buf2u64u(y + 8)) |
+               (fio_buf2u64u(x + n - 8) ^ fio_buf2u64u(y + n - 8)));
+    if (n >= 8)
+      return !((fio_buf2u64u(x) ^ fio_buf2u64u(y)) |
+               (fio_buf2u64u(x + n - 8) ^ fio_buf2u64u(y + n - 8)));
+    if (n >= 4)
+      return !((fio_buf2u32u(x) ^ fio_buf2u32u(y)) |
+               (fio_buf2u32u(x + n - 4) ^ fio_buf2u32u(y + n - 4)));
+    if (n >= 2)
+      return !((fio_buf2u16u(x) ^ fio_buf2u16u(y)) | (x[n - 1] ^ y[n - 1]));
+    return true;
+  }
+  /* test 32 byte tail */
+  if (((fio_buf2u64u(x + n - 32) ^ fio_buf2u64u(y + n - 32)) |
+       (fio_buf2u64u(x + n - 24) ^ fio_buf2u64u(y + n - 24)) |
+       (fio_buf2u64u(x + n - 16) ^ fio_buf2u64u(y + n - 16)) |
+       (fio_buf2u64u(x + n - 8) ^ fio_buf2u64u(y + n - 8))))
+    return false;
+  while (n >= 128) {
+    uint8_t diff = 0;
+    for (size_t j = 0; j < 128; ++j)
+      diff |= (uint8_t)(x[j] ^ y[j]);
+    if (diff)
+      return false;
+    x += 128;
+    y += 128;
+    n -= 128;
+  }
+  if (n > 64) {
+    uint8_t diff = 0;
+    for (size_t j = 0; j < 64; ++j)
+      diff |= (uint8_t)(x[j] ^ y[j]);
+    if (diff)
+      return false;
+    x += 64;
+    y += 64;
+    n -= 64;
+  }
+  if (n > 32)
+    return !((fio_buf2u64u(x) ^ fio_buf2u64u(y)) |
+             (fio_buf2u64u(x + 8) ^ fio_buf2u64u(y + 8)) |
+             (fio_buf2u64u(x + 16) ^ fio_buf2u64u(y + 16)) |
+             (fio_buf2u64u(x + 24) ^ fio_buf2u64u(y + 24)));
+
+  return true;
+}
+
+/** An ASCII case insensitive compare for binary strings (not UTF-8). */
+FIO_SFUNC bool fio_buf_info_is_ieq(fio_buf_info_s a, fio_buf_info_s b) {
+  if (a.len != b.len)
+    return false;
+  size_t n = a.len;
+  if (!n || a.buf == b.buf)
+    return true;
+  const uint8_t *x = (const uint8_t *)a.buf;
+  const uint8_t *y = (const uint8_t *)b.buf;
+  uint8_t diff = 0;
+  { /* fast path, testing first byte */
+    unsigned letter = ((y[0] | 0x20U) - 'a') <= ('z' - 'a');
+    if ((x[0] ^ y[0]) & ~(letter << 5))
+      return false;
+  }
+  if (n == 1)
+    return true;
+  while (n >= 64) {
+    for (size_t j = 0; j < 64; ++j) {
+      unsigned letter = ((unsigned)(y[j] | 0x20U) - 'a') <= ('z' - 'a');
+      diff |= (uint8_t)((x[j] ^ y[j]) & ~(letter << 5));
+    }
+    if (diff)
+      return false;
+    x += 64;
+    y += 64;
+    n -= 64;
+  }
+  while (n >= 16) {
+    for (size_t j = 0; j < 16; ++j) {
+      unsigned letter = ((unsigned)(y[j] | 0x20U) - 'a') <= ('z' - 'a');
+      diff |= (uint8_t)((x[j] ^ y[j]) & ~(letter << 5));
+    }
+    if (diff)
+      return false;
+    x += 16;
+    y += 16;
+    n -= 16;
+  }
+  if (n & 8) {
+    for (size_t j = 0; j < 8; ++j) {
+      unsigned letter = ((unsigned)(y[j] | 0x20U) - 'a') <= ('z' - 'a');
+      diff |= (uint8_t)((x[j] ^ y[j]) & ~(letter << 5));
+    }
+    n &= 7;
+    x += n;
+    y += n;
+    for (size_t j = 0; j < 8; ++j) {
+      unsigned letter = ((unsigned)(y[j] | 0x20U) - 'a') <= ('z' - 'a');
+      diff |= (uint8_t)((x[j] ^ y[j]) & ~(letter << 5));
+    }
+    return !diff;
+  }
+  for (size_t j = 0; j < n; ++j) {
+    unsigned letter = ((unsigned)(y[j] | 0x20U) - 'a') <= ('z' - 'a');
+    diff |= (uint8_t)((x[j] ^ y[j]) & ~(letter << 5));
+  }
+  return !diff;
+}
+
+/**
+ * Returns true if equal, similar to:
+ *       (a.len == b.len && !memcmp(a.buf, b.buf, a.len))
+ */
+FIO_IFUNC bool fio_ubuf_info_is_eq(const fio_ubuf_info_s a,
+                                   const fio_ubuf_info_s b) {
+  return fio_buf_info_is_eq(
+      (fio_buf_info_s){.len = a.len, .buf = (char *)a.buf},
+      (fio_buf_info_s){.len = b.len, .buf = (char *)b.buf});
+}
+
+/** An ASCII case insensitive compare for binary strings (not UTF-8). */
+FIO_IFUNC bool fio_ubuf_info_is_ieq(const fio_ubuf_info_s a,
+                                    const fio_ubuf_info_s b) {
+  return fio_buf_info_is_ieq(
+      (const fio_buf_info_s){.len = a.len, .buf = (char *)a.buf},
+      (const fio_buf_info_s){.len = b.len, .buf = (char *)b.buf});
+}
+
+/**
+ * Returns true if equal, similar to:
+ *       (a.len == b.len && !memcmp(a.buf, b.buf, a.len))
+ */
+FIO_IFUNC bool fio_str_info_is_eq(const fio_str_info_s a,
+                                  const fio_str_info_s b) {
+  return fio_buf_info_is_eq((const fio_buf_info_s){.len = a.len, .buf = a.buf},
+                            (const fio_buf_info_s){.len = b.len, .buf = b.buf});
+}
+
+/** An ASCII case insensitive compare for binary strings (not UTF-8). */
+FIO_IFUNC bool fio_str_info_is_ieq(const fio_str_info_s a,
+                                   const fio_str_info_s b) {
+  return fio_buf_info_is_ieq(
+      (const fio_buf_info_s){.len = a.len, .buf = a.buf},
+      (const fio_buf_info_s){.len = b.len, .buf = b.buf});
+}
+
+/* *****************************************************************************
+String and Buffer Information – Helper Macros
+***************************************************************************** */
+
+#ifdef FIO_MEMALT
+/** Compares two `fio_str_info_s` objects for content equality. */
+#define FIO_STR_INFO_IS_EQ(s1, s2) fio_str_info_is_eq(s1, s2)
+#else
 /** Compares two `fio_str_info_s` objects for content equality. */
 #define FIO_STR_INFO_IS_EQ(s1, s2)                                             \
   ((s1).len == (s2).len &&                                                     \
    (!(s1).len || (s1).buf == (s2).buf ||                                       \
     ((s1).buf && (s2).buf && (s1).buf[0] == (s2).buf[0] &&                     \
      !FIO_MEMCMP((s1).buf, (s2).buf, (s1).len))))
+#endif
 
+#ifdef FIO_MEMALT
 /** Compares two `fio_buf_info_s` objects for content equality. */
-#define FIO_BUF_INFO_IS_EQ(s1, s2) FIO_STR_INFO_IS_EQ((s1), (s2))
+#define FIO_BUF_INFO_IS_EQ(s1, s2) fio_buf_info_is_eq((s1), (s2))
+/** Compares two `fio_buf_info_s` objects for content equality. */
+#define FIO_UBUF_INFO_IS_EQ(s1, s2) fio_ubuf_info_is_eq((s1), (s2))
+#else
+/** Compares two `fio_buf_info_s` objects for content equality. */
+#define FIO_BUF_INFO_IS_EQ(s1, s2)  FIO_STR_INFO_IS_EQ((s1), (s2))
+/** Compares two `fio_buf_info_s` objects for content equality. */
+#define FIO_UBUF_INFO_IS_EQ(s1, s2) FIO_STR_INFO_IS_EQ((s1), (s2))
+#endif
 
 /** A NULL fio_str_info_s. */
 #define FIO_STR_INFO0 ((fio_str_info_s){0})
@@ -9318,24 +9587,94 @@ SFUNC FIO___ASAN_AVOID size_t fio_strlen(const char *str) {
 fio_memcmp
 ***************************************************************************** */
 
-/** Same as `memcmp`. Returns 1 if `a > b`, -1 if `a < b` and 0 if `a == b`. */
+FIO_SFUNC int fio___memcmp7x(const void *restrict a_,
+                             const void *restrict b_,
+                             size_t len) {
+  unsigned r = 0;
+  const uint8_t *a = a_, *b = b_;
+  const size_t a4 = (len & 4), a3 = (len & 3);
+  if (a4) {
+    const uint64_t diff = (uint64_t)fio_buf2u32_be(a) - fio_buf2u32_be(b);
+    const uint64_t ndiff = ~diff;
+    r = (int)((ndiff & (ndiff + 1)) >> 63) - (int)(diff >> 63);
+  }
+  if (r | (!a3))
+    return r;
+  a += a4;
+  b += a4;
+  switch (a3) {
+  case 0: return 0;
+  case 1: return (int)((unsigned)*(uint8_t *)a - *(uint8_t *)b);
+  case 2: return (int)((unsigned)fio_buf2u16_be(a) - fio_buf2u16_be(b));
+  case 3: return (int)(fio_buf2u24_be(a) - fio_buf2u24_be(b)); ;
+  }
+  return (int)r;
+}
+
 SFUNC int fio_memcmp(const void *a_, const void *b_, size_t len) {
-  if (FIO_UNLIKELY(a_ == b_ || !len))
-    return 0;
-  if (FIO_UNLIKELY(!a_))
-    return -1;
-  if (FIO_UNLIKELY(!b_))
-    return 1;
-  const uint8_t *a = (const uint8_t *)a_;
-  const uint8_t *b = (const uint8_t *)b_;
-  size_t since = 0;
-#define FIO___MEMCMP_ACTION                                                    \
-  since += ((a[i] != b[i]) | (!!since)); /* runs inside loop */                \
-  if (since)                             /* runs outside loop */               \
-    return (int)1 - (int)((unsigned)(a[i - since] < b[i - since]) << 1);
-  FIO_FOR_UNROLL(len, 1, i, FIO___MEMCMP_ACTION);
-#undef FIO___MEMCMP_ACTION
-  return 0;
+  unsigned r = 0;
+  if (!len)
+    return r;
+  if (a_ == b_)
+    return r;
+  const uint8_t *a = a_, *b = b_;
+  uint64_t la, lb;
+  r = *a - *b;
+  if (r)
+    return (int)r;
+
+  if (len > 255)
+    while (len > 127) {
+      uint64_t wa[16], wb[16], diff = 0;
+      fio_memcpy128(wa, a);
+      fio_memcpy128(wb, b);
+      for (size_t i = 0; i < 16; ++i)
+        diff |= (wa[i] ^ wb[i]);
+      if (diff)
+        goto stop;
+      len -= 128;
+      a += 128;
+      b += 128;
+    }
+
+#define fio___memcmp_tst(bytes)                                                \
+  do                                                                           \
+    if ((len & bytes)) {                                                       \
+      uint64_t a1[(bytes / 8)], b1[(bytes / 8)];                               \
+      for (size_t rounds = (len == bytes); 1; ++rounds) {                      \
+        uint64_t tst = 0;                                                      \
+        fio_memcpy##bytes(a1, a);                                              \
+        fio_memcpy##bytes(b1, b);                                              \
+        for (size_t j = 0; j < (sizeof(a1) / sizeof(a1[0])); ++j) {            \
+          a1[j] ^= b1[j];                                                      \
+          tst |= a1[j];                                                        \
+        }                                                                      \
+        if (tst) {                                                             \
+          goto stop;                                                           \
+        }                                                                      \
+        if (rounds)                                                            \
+          return 0;                                                            \
+        a += (len & (bytes - 1));                                              \
+        b += (len & (bytes - 1));                                              \
+      }                                                                        \
+    }                                                                          \
+  while (0)
+
+  fio___memcmp_tst(128);
+  fio___memcmp_tst(64);
+  fio___memcmp_tst(32);
+  fio___memcmp_tst(16);
+  fio___memcmp_tst(8);
+  return fio___memcmp7x(a, b, len);
+
+stop:
+  while ((la = fio_buf2u64u(a)) == (lb = fio_buf2u64u(b))) {
+    a += 8;
+    b += 8;
+  }
+  la = fio_lton64(la);
+  lb = fio_lton64(lb);
+  return (int)(la > lb) - (la < lb);
 }
 
 /* *****************************************************************************
@@ -29695,7 +30034,7 @@ FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b) {
 FIO_SFUNC int fio_bstr_is_eq(const char *a_, const char *b_) {
   fio_buf_info_s a = fio_bstr_buf(a_);
   fio_buf_info_s b = fio_bstr_buf(b_);
-  return FIO_STR_INFO_IS_EQ(a, b);
+  return FIO_BUF_INFO_IS_EQ(a, b);
 }
 
 /** Compares to see if fio_bstr a is equal to another String. */
@@ -54817,12 +55156,13 @@ FIO_IFUNC int fio___p256_scalar_gte_n(const fio___p256_scalar_s a) {
 
 /** Secret-safe check: returns 1 if scalar >= n (curve order). */
 FIO_IFUNC int fio___p256_scalar_ct_gte_n(const fio___p256_scalar_s a) {
-  uint64_t borrow = 0;
-  (void)fio_math_subc64(a[0], FIO___P256_N[0], 0, &borrow);
-  (void)fio_math_subc64(a[1], FIO___P256_N[1], borrow, &borrow);
-  (void)fio_math_subc64(a[2], FIO___P256_N[2], borrow, &borrow);
-  (void)fio_math_subc64(a[3], FIO___P256_N[3], borrow, &borrow);
+  uint64_t borrow = 0, ignr;
+  ignr = fio_math_subc64(a[0], FIO___P256_N[0], 0, &borrow);
+  ignr = fio_math_subc64(a[1], FIO___P256_N[1], borrow, &borrow);
+  ignr = fio_math_subc64(a[2], FIO___P256_N[2], borrow, &borrow);
+  ignr = fio_math_subc64(a[3], FIO___P256_N[3], borrow, &borrow);
   return (int)(borrow ^ 1);
+  (void)ignr;
 }
 
 /** Secret-safe conditional scalar subtraction: a = cond ? a - n : a. */
@@ -58997,7 +59337,7 @@ FIO_SFUNC void fio___rsa_mul_mod(uint64_t *result,
 FIO_SFUNC uint64_t fio___rsa_ct_lt(const uint64_t *a,
                                    const uint64_t *b,
                                    size_t word_count) {
-  uint64_t lt = 0;
+  uint64_t lt = 0, ignr;
   uint64_t eq = (uint64_t)0 - 1; /* ~0 */
   for (size_t i = word_count; i > 0;) {
     --i;
@@ -59005,11 +59345,12 @@ FIO_SFUNC uint64_t fio___rsa_ct_lt(const uint64_t *a,
     uint64_t b_i = b[i];
     uint64_t diff = a_i ^ b_i;
     uint64_t borrow = 0;
-    (void)fio_math_subc64(a_i, b_i, 0, &borrow); /* borrow=1 iff a_i < b_i */
+    ignr = fio_math_subc64(a_i, b_i, 0, &borrow); /* borrow=1 iff a_i < b_i */
     lt |= (eq & borrow);
     eq &= (uint64_t)0 - (diff == 0);
   }
   return lt & 1;
+  (void)ignr;
 }
 
 /**
@@ -59037,15 +59378,15 @@ FIO_SFUNC void fio___rsa_reduce_mod(uint64_t *out,
     size_t high_words = full_word_count - mod_word_count;
     if (high_words > mod_word_count)
       high_words = mod_word_count;
-    FIO_MEMCPY(m_high, m_full + mod_word_count,
-               high_words * sizeof(uint64_t));
+    FIO_MEMCPY(m_high, m_full + mod_word_count, high_words * sizeof(uint64_t));
   }
 
   /* Montgomery multiplication below expects operands in normal form (< mod).
    * Since mod has its top bit set for RSA primes, m_high < R < 2*mod, so one
    * branchless conditional subtraction is sufficient. */
   uint64_t m_high_sub[FIO_RSA_MAX_WORDS];
-  uint64_t m_high_borrow = fio_math_sub(m_high_sub, m_high, mod, mod_word_count);
+  uint64_t m_high_borrow =
+      fio_math_sub(m_high_sub, m_high, mod, mod_word_count);
   uint64_t use_m_high_sub = (uint64_t)0 - (m_high_borrow ^ 1);
   uint64_t use_m_high = (uint64_t)0 - m_high_borrow;
   for (size_t i = 0; i < mod_word_count; ++i)
@@ -59072,7 +59413,7 @@ FIO_SFUNC void fio___rsa_reduce_mod(uint64_t *out,
   uint64_t carry_add[FIO_RSA_MAX_WORDS];
   for (size_t i = 0; i < mod_word_count; ++i)
     carry_add[i] = R_mod_mod[i] & carry_mask;
-  (void)fio_math_add(out, out, carry_add, mod_word_count);
+  uint64_t ignr_ = fio_math_add(out, out, carry_add, mod_word_count);
 
   /* For RSA primes R < 2*mod, so the value is < 2*mod after carry handling.
    * Two conditional subtractions are kept for conservative normalization. */
@@ -59092,6 +59433,7 @@ FIO_SFUNC void fio___rsa_reduce_mod(uint64_t *out,
   fio_secure_zero(m_high, sizeof(m_high));
   fio_secure_zero(m_high_sub, sizeof(m_high_sub));
   fio_secure_zero(carry_add, sizeof(carry_add));
+  (void)ignr_;
 }
 
 /**
@@ -59179,11 +59521,11 @@ FIO_SFUNC void fio___rsa_mul_mod(uint64_t *result,
  * where R = 2^(64 * word_count).
  */
 FIO_SFUNC void fio___rsa_mont_mul(uint64_t *result,
-                                   const uint64_t *a,
-                                   const uint64_t *b,
-                                   const uint64_t *n,
-                                   const uint64_t *n_prime,
-                                   size_t word_count) {
+                                  const uint64_t *a,
+                                  const uint64_t *b,
+                                  const uint64_t *n,
+                                  const uint64_t *n_prime,
+                                  size_t word_count) {
   uint64_t t[FIO_RSA_MAX_WORDS * 2];
   uint64_t m_full[FIO_RSA_MAX_WORDS * 2];
   uint64_t mn[FIO_RSA_MAX_WORDS * 2];
@@ -59221,9 +59563,9 @@ FIO_SFUNC void fio___rsa_mont_mul(uint64_t *result,
  *   r2modn is R^2 mod n.
  */
 FIO_SFUNC void fio___rsa_mont_setup(const uint64_t *n,
-                                     size_t word_count,
-                                     uint64_t *n_prime,
-                                     uint64_t *r2modn) {
+                                    size_t word_count,
+                                    uint64_t *n_prime,
+                                    uint64_t *r2modn) {
   uint64_t n_ext[FIO_RSA_MAX_WORDS * 2];
   uint64_t tmp[FIO_RSA_MAX_WORDS * 2];
   uint64_t prod[FIO_RSA_MAX_WORDS * 2];
@@ -59234,7 +59576,8 @@ FIO_SFUNC void fio___rsa_mont_setup(const uint64_t *n,
   n_prime[0] = (uint64_t)0 - n0_inv;
 
   for (int iter = 0; iter < 16; ++iter) {
-    /* prod = n * n_prime + 2  (Newton step for n' satisfying n*n' == -1 mod R) */
+    /* prod = n * n_prime + 2  (Newton step for n' satisfying n*n' == -1 mod R)
+     */
     fio_math_mul(prod, n, n_prime, word_count);
     uint64_t c = 0;
     prod[0] = fio_math_addc64(prod[0], 2, 0, &c);
@@ -59786,6 +60129,7 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
                                        const uint64_t *m_words,
                                        const fio_rsa_privkey_s *key,
                                        size_t word_count) {
+  uint64_t ignr_ = 0;
   const uint8_t *n_be = key->n;
   const uint8_t *p_be = key->p;
   const uint8_t *q_be = key->q;
@@ -59811,8 +60155,8 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
   size_t p_word_count = (p_len + 7) / 8;
   size_t q_word_count = (q_len + 7) / 8;
 
-  if (!p_word_count || p_word_count > FIO_RSA_MAX_WORDS / 2 ||
-      !q_word_count || q_word_count > FIO_RSA_MAX_WORDS / 2)
+  if (!p_word_count || p_word_count > FIO_RSA_MAX_WORDS / 2 || !q_word_count ||
+      q_word_count > FIO_RSA_MAX_WORDS / 2)
     return -1;
 
   uint64_t n_words[FIO_RSA_MAX_WORDS];
@@ -59881,10 +60225,10 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
   FIO_MEMSET(q_minus_2, 0, sizeof(q_minus_2));
   FIO_MEMCPY(p_minus_2, p, p_word_count * sizeof(uint64_t));
   FIO_MEMCPY(q_minus_2, q, q_word_count * sizeof(uint64_t));
-  (void)fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-1 */
-  (void)fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-2 */
-  (void)fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-1 */
-  (void)fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-2 */
+  ignr_ = fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-1 */
+  ignr_ = fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-2 */
+  ignr_ = fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-1 */
+  ignr_ = fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-2 */
 
   uint64_t r_inv_p[FIO_RSA_MAX_WORDS];
   uint64_t r_inv_q[FIO_RSA_MAX_WORDS];
@@ -59904,7 +60248,7 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
   uint64_t use_add = (uint64_t)0 - borrow;
   for (size_t i = 0; i < p_word_count; ++i)
     p_mask[i] = p[i] & use_add;
-  (void)fio_math_add(diff, diff, p_mask, p_word_count);
+  ignr_ = fio_math_add(diff, diff, p_mask, p_word_count);
   fio___rsa_mul_mod(h, qInv, diff, p, p_word_count);
 
   /* q * h mod n (zero-extend q and h to word_count) */
@@ -59920,7 +60264,7 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
 
   uint64_t qh[FIO_RSA_MAX_WORDS];
   fio___rsa_mul_mod(qh, q_ext, h_ext, n_words, word_count);
-  (void)fio_math_add(result_words, qh, s_q_ext, word_count);
+  ignr_ = fio_math_add(result_words, qh, s_q_ext, word_count);
 
   /* result may be in [0, 2*n); reduce once. */
   uint64_t sub_n[FIO_RSA_MAX_WORDS];
@@ -59960,6 +60304,7 @@ FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
   fio_secure_zero(n_words, sizeof(n_words));
 
   return 0;
+  (void)ignr_;
 }
 
 /**
@@ -60007,9 +60352,9 @@ FIO_SFUNC int fio___rsa_private_op(uint8_t *result,
   fio___rsa_bytes_to_words(d_words, word_count, d, d_len);
   fio___rsa_bytes_to_words(msg_words, word_count, message, msg_len);
 
-  int have_crt = (key->p && key->p_len && key->q && key->q_len &&
-                  key->dP && key->dP_len && key->dQ && key->dQ_len &&
-                  key->qInv && key->qInv_len && key->e && key->e_len);
+  int have_crt = (key->p && key->p_len && key->q && key->q_len && key->dP &&
+                  key->dP_len && key->dQ && key->dQ_len && key->qInv &&
+                  key->qInv_len && key->e && key->e_len);
   int rc = -1;
 
   /* Verify message < modulus (constant-time). */
@@ -60022,8 +60367,11 @@ FIO_SFUNC int fio___rsa_private_op(uint8_t *result,
     /* No CRT parameters: fall back to the plain constant-time Montgomery
      * ladder.  Production signing keys should supply CRT parameters so the
      * CRT+blinding path above is used. */
-    rc = fio___rsa_private_op_non_crt(
-        result_words, msg_words, d_words, n_words, word_count);
+    rc = fio___rsa_private_op_non_crt(result_words,
+                                      msg_words,
+                                      d_words,
+                                      n_words,
+                                      word_count);
   }
 
   if (rc == 0)
@@ -60186,8 +60534,12 @@ SFUNC int fio_rsa_sign_pss(uint8_t *signature,
 
   /* Step 1: EMSA-PSS-ENCODE */
   uint8_t em[FIO_RSA_MAX_BYTES];
-  if (fio___rsa_emsa_pss_encode(
-          em, n_len, msg_hash, hash_len, hash_alg, top_mask) != 0) {
+  if (fio___rsa_emsa_pss_encode(em,
+                                n_len,
+                                msg_hash,
+                                hash_len,
+                                hash_alg,
+                                top_mask) != 0) {
     return -1;
   }
 
@@ -62255,6 +62607,7 @@ no memcmp, no call) after building the value once with fio___der_oid_value.
 Generated by `bun ./ai-tools/oid-table.js c` - do not edit by hand.
 ***************************************************************************** */
 
+/* clang-format off */
 /* Signature Algorithms */
 #define FIO_X509_OID_SHA256_WITH_RSA \
   ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, [15] = 9}}) /* 1.2.840.113549.1.1.11 */
@@ -62330,6 +62683,8 @@ Generated by `bun ./ai-tools/oid-table.js c` - do not edit by hand.
   ((fio_u128){.u8 = {0x55, 0x04, 0x0A, [15] = 3}}) /* 2.5.4.10 */
 #define FIO_X509_OID_ORG_UNIT \
   ((fio_u128){.u8 = {0x55, 0x04, 0x0B, [15] = 3}}) /* 2.5.4.11 */
+
+/* clang-format on */
 
 /* *****************************************************************************
 X.509 Parser API
@@ -62544,9 +62899,9 @@ typedef struct {
   int64_t not_before;     /**< Validity start (Unix timestamp, 0 = now) */
   int64_t not_after;      /**< Validity end (Unix timestamp, 0 = +1 year) */
   const fio_buf_info_s *san_dns; /**< Subject Alternative Names (DNS) */
-  size_t san_dns_count;   /**< Number of SAN DNS entries */
-  int is_ca;              /**< Set CA:TRUE in BasicConstraints */
-  uint16_t key_usage;     /**< Key Usage bits (0 = default for type) */
+  size_t san_dns_count;          /**< Number of SAN DNS entries */
+  int is_ca;                     /**< Set CA:TRUE in BasicConstraints */
+  uint16_t key_usage;            /**< Key Usage bits (0 = default for type) */
 } fio_x509_cert_options_s;
 
 /**
@@ -63244,9 +63599,7 @@ SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
                    cert->san_ext.len);
     /* Re-parse the SAN extension to iterate through all DNS names */
     fio_der_element_s san_seq;
-    if (fio_der_parse(&san_seq,
-                       cert->san_ext.buf,
-                       cert->san_ext.len)) {
+    if (fio_der_parse(&san_seq, cert->san_ext.buf, cert->san_ext.len)) {
       if (fio_der_is_tag(&san_seq, FIO_DER_SEQUENCE)) {
         fio_der_iterator_s san_it;
         fio_der_element_s gn;
@@ -63497,12 +63850,12 @@ SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
       continue;
 
     /* Compare subject DNs (the cert's issuer should match root's subject) */
-    if (FIO_BUF_INFO_IS_EQ(cert->issuer, root.subject)) {
+    if (FIO_UBUF_INFO_IS_EQ(cert->issuer, root.subject)) {
       return 0; /* Found trusted root */
     }
 
     /* Also check if the cert itself is a trusted root */
-    if (FIO_BUF_INFO_IS_EQ(cert->subject, root.subject)) {
+    if (FIO_UBUF_INFO_IS_EQ(cert->subject, root.subject)) {
       return 0; /* Cert is in trust store */
     }
   }
@@ -63533,7 +63886,7 @@ FIO_SFUNC int fio___x509_find_issuer_in_trust_store(
       continue;
 
     /* Check if this root's subject matches cert's issuer */
-    if (FIO_BUF_INFO_IS_EQ(cert->issuer, issuer->subject)) {
+    if (FIO_UBUF_INFO_IS_EQ(cert->issuer, issuer->subject)) {
       return 0; /* Found issuer */
     }
   }
@@ -63591,7 +63944,7 @@ SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
   /* Verify chain signatures and issuer relationships */
   for (size_t i = 0; i < cert_count - 1; ++i) {
     /* Verify issuer DN of cert[i] matches subject DN of cert[i+1] */
-    if (!FIO_BUF_INFO_IS_EQ(chain[i].issuer, chain[i + 1].subject)) {
+    if (!FIO_UBUF_INFO_IS_EQ(chain[i].issuer, chain[i + 1].subject)) {
       FIO_LOG_DEBUG("X.509 chain: issuer mismatch at position %zu", i);
       return FIO_X509_ERR_ISSUER_MISMATCH;
     }
@@ -63600,7 +63953,7 @@ SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
     if (!chain[i + 1].is_ca) {
       /* Check if it's a self-signed root (may not have BasicConstraints) */
       int is_self_signed =
-          FIO_BUF_INFO_IS_EQ(chain[i + 1].issuer, chain[i + 1].subject);
+          FIO_UBUF_INFO_IS_EQ(chain[i + 1].issuer, chain[i + 1].subject);
       /* Allow self-signed certs even without CA flag for compatibility */
       if (!is_self_signed) {
         FIO_LOG_DEBUG("X.509 chain: certificate %zu is not a CA", i + 1);
@@ -63620,7 +63973,7 @@ SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
 
   /* Check if the last certificate is self-signed */
   int is_self_signed =
-      FIO_BUF_INFO_IS_EQ(chain[last].issuer, chain[last].subject);
+      FIO_UBUF_INFO_IS_EQ(chain[last].issuer, chain[last].subject);
 
   if (is_self_signed) {
     /* Self-signed: verify its own signature (well-formedness check) */
@@ -63824,8 +64177,7 @@ FIO_SFUNC size_t fio___x509_encode_name(uint8_t *buf,
 
   /* Organizational Unit (OU) */
   if (opts->ou.len)
-    content_len +=
-        fio___x509_encode_rdn(NULL, FIO_X509_OID_ORG_UNIT, opts->ou);
+    content_len += fio___x509_encode_rdn(NULL, FIO_X509_OID_ORG_UNIT, opts->ou);
 
   /* Common Name (CN) - required */
   content_len +=
@@ -63943,8 +64295,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_basic_constraints(uint8_t *buf,
                                                          int is_ca) {
   /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE } */
   size_t bc_content = is_ca ? fio_der_encode_boolean(NULL, 1) : 0;
-  size_t bc_len =
-      fio_der_encode_sequence_header(NULL, bc_content) + bc_content;
+  size_t bc_len = fio_der_encode_sequence_header(NULL, bc_content) + bc_content;
 
   /* Wrap in OCTET STRING */
   size_t octet_len = fio_der_encode_octet_string(NULL, NULL, bc_len);
@@ -64073,8 +64424,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_san(uint8_t *buf,
     offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_SUBJECT_ALT_NAME);
 
     /* OCTET STRING containing SAN */
-    size_t octet_hdr =
-        fio_der_encode_octet_string(buf + offset, NULL, san_len);
+    size_t octet_hdr = fio_der_encode_octet_string(buf + offset, NULL, san_len);
     uint8_t *san_buf = buf + offset + octet_hdr - san_len;
     size_t san_off = 0;
     san_off += fio_der_encode_sequence_header(san_buf + san_off, san_content);
@@ -64125,8 +64475,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
     offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_EXT_KEY_USAGE);
 
     /* OCTET STRING containing EKU SEQUENCE */
-    size_t octet_hdr =
-        fio_der_encode_octet_string(buf + offset, NULL, eku_len);
+    size_t octet_hdr = fio_der_encode_octet_string(buf + offset, NULL, eku_len);
     uint8_t *eku_buf = buf + offset + octet_hdr - eku_len;
     size_t eku_off = 0;
     eku_off += fio_der_encode_sequence_header(eku_buf + eku_off, eku_content);
@@ -64182,8 +64531,7 @@ fio___x509_encode_extensions(uint8_t *buf,
       fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
 
   /* Wrap in context tag [3] */
-  size_t total =
-      fio_der_encode_context_header(NULL, 3, exts_len, 1) + exts_len;
+  size_t total = fio_der_encode_context_header(NULL, 3, exts_len, 1) + exts_len;
 
   if (buf) {
     size_t offset = 0;
@@ -64205,8 +64553,8 @@ fio___x509_encode_extensions(uint8_t *buf,
 }
 
 /** Helper: encode AlgorithmIdentifier for signature */
-FIO_SFUNC size_t fio___x509_encode_signature_algo(uint8_t *buf,
-                                           fio_x509_keypair_type_e type) {
+FIO_SFUNC size_t
+fio___x509_encode_signature_algo(uint8_t *buf, fio_x509_keypair_type_e type) {
   fio_u128 oid;
   int has_params;
 
@@ -64277,7 +64625,8 @@ SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
   tbs_content += serial_len;
 
   /* Signature algorithm */
-  size_t signature_algo_len = fio___x509_encode_signature_algo(NULL, keypair->type);
+  size_t signature_algo_len =
+      fio___x509_encode_signature_algo(NULL, keypair->type);
   tbs_content += signature_algo_len;
 
   /* Issuer (same as subject for self-signed) */
@@ -64314,7 +64663,8 @@ SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
       fio_der_encode_sequence_header(NULL, tbs_content) + tbs_content;
 
   /* Signature algorithm (again, in outer Certificate) */
-  size_t outer_signature_algo_len = fio___x509_encode_signature_algo(NULL, keypair->type);
+  size_t outer_signature_algo_len =
+      fio___x509_encode_signature_algo(NULL, keypair->type);
 
   /* Signature value (BIT STRING) */
   size_t sig_value_len;
@@ -64357,8 +64707,7 @@ SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
 
   /* We need to encode TBS first to sign it, but we don't know the final
    * certificate length yet. Encode TBS to a temporary location. */
-  uint8_t *tbs_start =
-      buf + fio_der_encode_sequence_header(NULL, cert_content);
+  uint8_t *tbs_start = buf + fio_der_encode_sequence_header(NULL, cert_content);
 
   /* Encode TBSCertificate */
   size_t tbs_offset = 0;
@@ -108861,6 +109210,32 @@ SFUNC void fio_ipc_cluster_connect(const char *url);
  * */
 SFUNC uint16_t fio_ipc_cluster_port(void);
 
+/* At most 32 independent lifecycle subscriptions per process. */
+#define FIO_IPC_CLUSTER_PEER_MAX_SUBSCRIBERS 32
+
+/** Lifecycle events are synthetic, reference-counted fio_ipc_s objects.
+ * data[0..15] contains the peer UUID in UDP-discovery byte order. The
+ * attached event owns a reference to the peer IO in event->from; the detached
+ * event has from == NULL. Never reply to or send an event itself. Instead,
+ * author a normal opcode message and fio_ipc_send_to(event->from, message)
+ * during on_attached. Callbacks borrow each event; fio_ipc_dup retains it.
+ * Retaining attached events may delay on_detached until their IO is freed.
+ * udata is borrowed and must outlive all callbacks using it.
+ */
+typedef struct fio_ipc_cluster_on_peer_s {
+  void (*on_attached)(fio_ipc_s *event); /* optional */
+  void (*on_detached)(fio_ipc_s *event); /* optional */
+  void *udata;                           /* callback context; borrowed */
+} fio_ipc_cluster_on_peer_s;
+
+/** Append a subscriber on the master before fio_io_start. At least one
+ * callback is required. Returns 0 on success, -1 for invalid callbacks,
+ * worker/running IO, or exhausted capacity. No partial registration occurs.
+ */
+SFUNC int fio_ipc_cluster_on_peer(fio_ipc_cluster_on_peer_s args);
+#define fio_ipc_cluster_on_peer(...)                                           \
+  fio_ipc_cluster_on_peer((fio_ipc_cluster_on_peer_s){__VA_ARGS__})
+
 /* *****************************************************************************
 IPC Flags - Used for message routing, settable in routing_flags
 
@@ -109027,6 +109402,8 @@ static struct {
   fio___ipc_cluster_filter_s received;  /* messages recently received */
   fio___ipc_cluster_filter_s peers;     /* connected peers */
   fio_u128 uuid;                        /* instance ID peers */
+  fio_ipc_cluster_on_peer_s on_peer[FIO_IPC_CLUSTER_PEER_MAX_SUBSCRIBERS];
+  size_t on_peer_count;
   uint16_t cluster_port;                /* last port number in cluster_listen */
   char ipc_url[FIO_IPC_URL_MAX_LENGTH]; /* IPC socket path */
 } FIO___IPC;
@@ -109556,11 +109933,12 @@ typedef struct {
   char buffer[];         /* FIO_IPC_BUFFER_LEN for small messages */
 } fio___ipc_parser_s;
 
-FIO_IFUNC fio_u128 *fio___ipc_cluster_uuid(fio_io_s *io) {
-  return (fio_u128 *)fio_io_buffer(io);
+/* The IO buffer need not have fio_u128's 16-byte alignment. */
+FIO_IFUNC uint8_t *fio___ipc_cluster_uuid(fio_io_s *io) {
+  return (uint8_t *)fio_io_buffer(io);
 }
 FIO_IFUNC fio___ipc_parser_s *fio___ipc_cluster_parser(fio_io_s *io) {
-  return (fio___ipc_parser_s *)(fio___ipc_cluster_uuid(io) + 1);
+  return (fio___ipc_parser_s *)(fio___ipc_cluster_uuid(io) + 16);
 }
 
 /** Get parser from IO buffer */
@@ -109721,30 +110099,70 @@ decrypt_error:
   fio___ipc_free(ipc);
 }
 
+/* Allocate a separate borrowed event per subscriber: retaining one event
+ * must not change another subscriber's callback context or ownership. */
+FIO_SFUNC void fio___ipc_lifecycle_emit(fio_io_s *io,
+                                        const fio_u128 *uuid,
+                                        bool attached) {
+  if (!fio_io_is_master())
+    return;
+  for (size_t i = 0; i < FIO___IPC.on_peer_count; ++i) {
+    const fio_ipc_cluster_on_peer_s *sub = &FIO___IPC.on_peer[i];
+    void (*fn)(fio_ipc_s *) = attached ? sub->on_attached : sub->on_detached;
+    if (!fn)
+      continue;
+    fio_ipc_s *event =
+        fio_ipc_new(.data = FIO_IPC_DATA(FIO_BUF_INFO2((char *)uuid->u8, 16)));
+    if (!event) {
+      FIO_LOG_ERROR("(%d) couldn't allocate IPC peer lifecycle event",
+                    fio_io_pid());
+      continue;
+    }
+    event->from = attached ? fio_io_dup(io) : NULL;
+    event->udata = sub->udata;
+    fn(event);
+    fio_ipc_free(event);
+  }
+}
+
+void fio_ipc_cluster_on_peer___(void); /* IDE marker */
+SFUNC int fio_ipc_cluster_on_peer FIO_NOOP(fio_ipc_cluster_on_peer_s args) {
+  if (!fio_io_is_master() || fio_io_is_running() ||
+      (!args.on_attached && !args.on_detached) ||
+      FIO___IPC.on_peer_count >= FIO_IPC_CLUSTER_PEER_MAX_SUBSCRIBERS)
+    return -1;
+  FIO___IPC.on_peer[FIO___IPC.on_peer_count++] = args;
+  return 0;
+}
+
 /** Wrapper that manages request vs response states */
+
 FIO_SFUNC void fio___ipc_on_rpc_master(void *ipc_, void *io_) {
   fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
   ipc->from = io_;
-  fio_u128 *uuid = fio_io_buffer(io_);
+  uint8_t *uuid = fio___ipc_cluster_uuid(io_);
   fio_u128 peer_uuid = {0};
+  fio_u128 old_uuid;
+  fio_memcpy16(old_uuid.u8, uuid);
 
   if (fio_ipc_decrypt(ipc))
     goto peer_error;
-  /* Handle internal ping/pong for cluster connections */
-  if (fio___ipc_handle_ping(ipc, fio___ipc_cluster_parser(io_)))
-    return;
   if (!FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER) ||
       !FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_OPCODE))
     goto peer_error;
-
+  /* Nothing, not even a ping, is dispatched before a validated handshake. */
+  if (ipc->opcode == (uint32_t)0xFFFFFFFF)
+    goto uuid_msg;
+  if (!old_uuid.u64[0] && !old_uuid.u64[1])
+    goto peer_error;
   if (fio___ipc_cluster_filter_window(fio_ltole64(ipc->timestamp)) ||
       fio___ipc_cluster_filter(&FIO___IPC.received,
                                fio_ltole64(ipc->timestamp),
                                ipc->id))
     goto filtered;
-
-  if (ipc->opcode == (uint32_t)0xFFFFFFFF)
-    goto uuid_msg;
+  /* Handle internal ping/pong for established cluster connections. */
+  if (fio___ipc_handle_ping(ipc, fio___ipc_cluster_parser(io_)))
+    return;
 
   if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS)) {
     fio_ipc_send(ipc);
@@ -109754,8 +110172,15 @@ FIO_SFUNC void fio___ipc_on_rpc_master(void *ipc_, void *io_) {
   return;
 
 uuid_msg:
-  if (uuid->u64[0] || uuid->u64[1])
-    goto peer_error; /* Already received UUID from this connection */
+  if (old_uuid.u64[0] || old_uuid.u64[1] || ipc->len ||
+      FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_REPLY) ||
+      FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_PING))
+    goto peer_error;
+  if (fio___ipc_cluster_filter_window(fio_ltole64(ipc->timestamp)) ||
+      fio___ipc_cluster_filter(&FIO___IPC.received,
+                               fio_ltole64(ipc->timestamp),
+                               ipc->id))
+    goto filtered;
   if (sizeof(ipc->on_reply) >= 8) {
     fio_memcpy8(&peer_uuid, (char *)(void *)(&ipc->on_reply));
     fio_memcpy8(&peer_uuid.u8[8], (char *)(void *)(&ipc->on_done));
@@ -109763,13 +110188,18 @@ uuid_msg:
     fio_memcpy4(&peer_uuid, (char *)(void *)(&ipc->on_reply));
     fio_memcpy4(&peer_uuid.u8[4], (char *)(void *)(&ipc->on_done));
   }
+  /* Reject self, zero and duplicate identities before announcing this peer. */
+  if (!peer_uuid.u64[0] || !peer_uuid.u64[1] ||
+      FIO_MEMCMP(peer_uuid.u8, FIO___IPC.uuid.u8, 16) == 0)
+    goto peer_error;
   /* test if we already connected to peer previously */
   if (fio___ipc_cluster_filter(&FIO___IPC.peers,
                                peer_uuid.u64[0],
                                peer_uuid.u64[1]))
     goto peer_error;
   /* set peer uuid */
-  *uuid = peer_uuid;
+  fio_memcpy16(uuid, peer_uuid.u8);
+  fio___ipc_lifecycle_emit(io_, &peer_uuid, true);
   fio___ipc_free(ipc);
   return;
 peer_error:
@@ -110101,12 +110531,12 @@ FIO_SFUNC void fio___ipc_udp_broadcast_task_done(void *io_, void *ignr_) {
 FIO_SFUNC void fio___ipc_udp_on_attach(fio_io_s *io) {
   /* Send initial broadcast */
   fio___ipc_udp_broadcast_hello(io);
-  /* Schedule periodic broadcasts (every 1-2 seconds with jitter) */
+  /* Schedule periodic broadcasts (every 4-5 seconds with jitter) */
   fio_io_run_every(.fn = fio___ipc_udp_broadcast_task,
                    .udata1 = fio_io_dup(io),
-                   .every = (uint32_t)(2048 | (1023 & FIO___IPC.uuid.u64[0])),
+                   .every = (uint32_t)(4096 | (1023 & FIO___IPC.uuid.u64[0])),
                    .on_finish = fio___ipc_udp_broadcast_task_done,
-                   .repetitions = 0); /* Repeat indefinitely */
+                   .repetitions = -1); /* Repeat indefinitely */
 }
 
 /** Called when UDP socket is closed */
@@ -110247,7 +110677,7 @@ FIO_ASSERT_STATIC((sizeof(void (*)(void *)) >= 4),
                   "function pointers MUST be 4 bytes or more");
 SFUNC void fio___ipc_on_attach_cluster(fio_io_s *io) {
   /* set peer UUID to zero and initialize parser */
-  *fio___ipc_cluster_uuid(io) = fio_u128_init64(0, 0);
+  FIO_MEMSET(fio___ipc_cluster_uuid(io), 0, 16);
   fio___ipc_parser_init(fio___ipc_cluster_parser(io));
   /* inform peer about our UUID */
   fio_ipc_s *ipc = fio_ipc_new(0);
@@ -110268,13 +110698,16 @@ SFUNC void fio___ipc_on_attach_cluster(fio_io_s *io) {
 
 /** Called when IPC socket is closed */
 FIO_SFUNC void fio___ipc_on_close_cluster(void *buffer, void *udata) {
-  fio___ipc_parser_s *p =
-      (fio___ipc_parser_s *)((char *)buffer + sizeof(fio_u128));
+  fio___ipc_parser_s *p = (fio___ipc_parser_s *)((char *)buffer + 16);
   fio___ipc_parser_destroy(p);
-  fio___ipc_cluster_filter_remove(
-      &FIO___IPC.peers,
-      (fio___ipc_msg_id_s){fio_buf2u64u(buffer),
-                           fio_buf2u64u(((char *)buffer + sizeof(uint64_t)))});
+  fio_u128 uuid;
+  fio_memcpy16(uuid.u8, buffer);
+  if (fio_io_is_master() && uuid.u64[0] && uuid.u64[1]) {
+    fio___ipc_cluster_filter_remove(
+        &FIO___IPC.peers,
+        (fio___ipc_msg_id_s){uuid.u64[0], uuid.u64[1]});
+    fio___ipc_lifecycle_emit(NULL, &uuid, false);
+  }
   (void)udata;
 }
 
@@ -110374,6 +110807,8 @@ FIO_SFUNC void fio___ipc_destroy(void *ignr_) {
   fio___ipc_cluster_filter_destroy(&FIO___IPC.received);
   fio___ipc_cluster_filter_destroy(&FIO___IPC.peers);
   fio___ipc_cluster_ops_destroy(&FIO___IPC.opcodes);
+  FIO_MEMSET(FIO___IPC.on_peer, 0, sizeof(FIO___IPC.on_peer));
+  FIO___IPC.on_peer_count = 0;
   (void)ignr_;
 }
 
@@ -110383,6 +110818,9 @@ FIO_SFUNC void fio___ipc_on_fork(void *ignr_) {
   /* Cleanup master's resources - except opcodes (clients may use) */
   fio___ipc_cluster_filter_destroy(&FIO___IPC.received);
   fio___ipc_cluster_filter_destroy(&FIO___IPC.peers);
+  /* Child never owns master's lifecycle subscriptions or their udata. */
+  FIO_MEMSET(FIO___IPC.on_peer, 0, sizeof(FIO___IPC.on_peer));
+  FIO___IPC.on_peer_count = 0;
 
   FIO___IPC.protocol_ipc.on_data = fio___ipc_on_data_worker;
   FIO___IPC.protocol_ipc.on_shutdown = fio___ipc_on_shutdown_worker;
@@ -110419,13 +110857,14 @@ FIO_CONSTRUCTOR(fio___ipc_init) {
       .on_data = fio___ipc_on_data_cluster,
       .on_close = fio___ipc_on_close_cluster,
       .on_timeout = fio___ipc_on_timeout_rpc,
-      .buffer_size =
-          sizeof(fio_u128) + sizeof(fio___ipc_parser_s) + FIO_IPC_BUFFER_LEN,
+      .buffer_size = 16 + sizeof(fio___ipc_parser_s) + FIO_IPC_BUFFER_LEN,
       .timeout = (55 * 1024), /* RPC (remote) timeout: ~55 sec */
   };
   fio_io_protocol_set(NULL, &FIO___IPC.protocol_ipc); /* initialize - safety */
   fio_io_protocol_set(NULL, &FIO___IPC.protocol_rpc); /* initialize - safety */
-  FIO___IPC.uuid = fio_u128_init64(fio_rand64(), fio_rand64());
+  do {
+    FIO___IPC.uuid = fio_rand128();
+  } while (!FIO___IPC.uuid.u64[0] || !FIO___IPC.uuid.u64[1]);
   fio_ipc_url_set(NULL);
   fio_state_callback_add(FIO_CALL_BEFORE_FORK, fio___ipc_listen, NULL);
   fio_state_callback_add(FIO_CALL_IN_CHILD, fio___ipc_on_fork, NULL);
@@ -110784,7 +111223,7 @@ static X509 *fio_io_tls_create_self_signed(const char *server_name) {
   }
 
   /* Set subject name with Organization and Common Name */
-  name = X509_get_subject_name(cert);
+  name = (X509_NAME *)X509_get_subject_name(cert);
   if (!name) {
     FIO_LOG_ERROR("OpenSSL: X509_get_subject_name failed");
     goto error;
@@ -118851,6 +119290,7 @@ HTTP Handle Settings
 #endif
 
 #ifndef FIO_HTTP_LOG_X_REQUEST_START
+/** Logs request wait time using x-request-start header */
 #define FIO_HTTP_LOG_X_REQUEST_START 1
 #endif
 
@@ -119041,11 +119481,12 @@ typedef struct fio_http_settings_s {
    * recommended.
    *
    * Note: per-route (read from the matching route's settings; routes
-   * inherit the listener's root value at route-creation). The value is a
-   * failure-memoization shift register, atomically shared by the IO
-   * threads - see `fio_http_static_file_response`. Detached handles (no
-   * settings) gate on the `FIO_HTTP_CFLAG_COMPRESS_STATIC` handle cflag
-   * instead, with no memoization state.
+   * inherit the listener's root value at route-creation). Handles without
+   * settings (created with `fio_http_new`) never create variants.
+   *
+   * Note: on-demand creation disables itself (the value drops to 0) after
+   * repeated failures or a filesystem-full / permission error, until the
+   * settings are re-applied.
    */
   uint8_t compress_static;
   /**
@@ -119294,7 +119735,7 @@ FIO_IFUNC void *fio_http_udata2_set(fio_http_s *, void *);
 /** Gets the HTTP Controller associated with the HTTP handle. */
 FIO_IFUNC fio_http_controller_s *fio_http_controller(fio_http_s *h);
 
-/** Gets the HTTP Controller associated with the HTTP handle. */
+/** Sets the HTTP Controller associated with the HTTP handle. */
 FIO_IFUNC fio_http_controller_s *fio_http_controller_set(
     fio_http_s *h,
     fio_http_controller_s *controller);
@@ -119317,6 +119758,43 @@ SFUNC size_t fio_http_status_set(fio_http_s *, size_t status);
 
 /** Gets the method information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_method(fio_http_s *);
+
+/** Tests for GET, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_get(fio_http_s *h);
+/** Tests for HEAD, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_head(fio_http_s *h);
+/** Tests for POST, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_post(fio_http_s *h);
+/** Tests for PUT, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_put(fio_http_s *h);
+/** Tests for DELETE, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_delete(fio_http_s *h);
+/** Tests for CONNECT, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_connect(fio_http_s *h);
+/** Tests for OPTIONS, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_options(fio_http_s *h);
+/** Tests for TRACE, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_trace(fio_http_s *h);
+/** Tests for PATCH, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_patch(fio_http_s *h);
+/** Tests for QUERY, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_query(fio_http_s *h);
+/** Tests for PROPFIND, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_propfind(fio_http_s *h);
+/** Tests for PROPPATCH, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_proppatch(fio_http_s *h);
+/** Tests for MKCOL, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_mkcol(fio_http_s *h);
+/** Tests for COPY, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_copy(fio_http_s *h);
+/** Tests for MOVE, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_move(fio_http_s *h);
+/** Tests for LOCK, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_lock(fio_http_s *h);
+/** Tests for UNLOCK, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_unlock(fio_http_s *h);
+/** Tests for SEARCH, case-insensitively; requires a non-NULL HTTP handle. */
+SFUNC int fio_http_method_is_search(fio_http_s *h);
 
 /** Sets the method information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_method_set(fio_http_s *, fio_str_info_s);
@@ -119908,9 +120386,8 @@ SFUNC int fio_http_etag_is_match(fio_http_s *h);
  *
  * Pre-compressed variants (`file.br`, `file.zstd`, `file.gz`, `file.zip`,
  * in this preference order) are served when accepted by the client,
- * present on disk, and fresh; with `compress_static` enabled (the matching
- * route's settings, or the `FIO_HTTP_CFLAG_COMPRESS_STATIC` cflag on
- * detached handles), missing `.br` / `.gz` variants are also created on
+ * present on disk, and fresh; with `compress_static` enabled in the matching
+ * route's settings, missing `.br` / `.gz` variants are also created on
  * demand.
  *
  * On success the response is complete and 0 is returned. On failure -1 is
@@ -119952,7 +120429,7 @@ The HTTP Controller
  * order for HTTP responses and requests to be sent.
  */
 struct fio_http_controller_s {
-  /* MUST be initialized to zero, used internally by the HTTP Handle. */
+  /** Reserved. MUST be initialized to zero. */
   uintptr_t private_flags;
   /** Called when an HTTP handle is freed. */
   void (*on_destroyed)(fio_http_s *h);
@@ -119995,23 +120472,6 @@ SFUNC void fio_http_upgrade_sse(fio_http_s *);
 
 /** Sets request data to request an EventSource (SSE) Upgrade.*/
 SFUNC void fio_http_sse_set_request(fio_http_s *);
-
-/* *****************************************************************************
-HTTP Handle State and Controller Flags
-***************************************************************************** */
-
-#define FIO_HTTP_STATE_STREAMING      1
-#define FIO_HTTP_STATE_FINISHED       2
-#define FIO_HTTP_STATE_UPGRADED       4
-#define FIO_HTTP_STATE_WEBSOCKET      8
-#define FIO_HTTP_STATE_SSE            16
-#define FIO_HTTP_STATE_COOKIES_PARSED 32
-#define FIO_HTTP_STATE_FREEING        64
-
-/** Controller flags (cflags) for opt-in compression features. */
-#define FIO_HTTP_CFLAG_COMPRESS_DYNAMIC 1
-#define FIO_HTTP_CFLAG_COMPRESS_WS      2
-#define FIO_HTTP_CFLAG_COMPRESS_STATIC  4
 
 /* *****************************************************************************
 WebSocket Helpers - HTTP Upgraded Connections
@@ -120070,6 +120530,24 @@ HTTP Settings Resolver
 
 /** Returns the HTTP settings associated with the HTTP object, if any. */
 SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
+
+/* *****************************************************************************
+
+
+
+
+
+
+
+                          Inline / Macro Implementations
+
+
+
+
+
+
+
+***************************************************************************** */
 
 /* *****************************************************************************
 Header Value / Property Iterator - Inline Implementation
@@ -120240,46 +120718,15 @@ fio_http_header_each_property_first(const fio_buf_info_s *properties) {
 }
 
 /* *****************************************************************************
-HTTP API Finish
-***************************************************************************** */
-#endif /* FIO_HTTP */
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_HTTP               /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-              HTTP Types - Internal Types, Handle and Core Implementation
-
-See also:
-https://www.rfc-editor.org/rfc/rfc9110.html
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
-    !defined(H___FIO_HTTP_TYPES___H) &&                                        \
-    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
-#define H___FIO_HTTP_TYPES___H
-
-/* *****************************************************************************
 HTTP Handle Implementation - inlined static functions
 ***************************************************************************** */
 
 #define FIO___HTTP_GETSET_PTR(type, name, index_, pre_set_code)                \
-  /** Used internally to set / get the propecrty at its known pointer index.   \
-   */                                                                          \
+  /** Get the name property at its known pointer index. */                     \
   FIO_IFUNC type *fio_http_##name(fio_http_s *h) {                             \
     return ((type **)h)[index_];                                               \
   }                                                                            \
-  /** Used internally to set / get the propercty at its known pointer index.   \
-   */                                                                          \
+  /** Set the name property at its known pointer index. */                     \
   FIO_IFUNC type *fio_http_##name##_set(fio_http_s *h, type *ptr) {            \
     pre_set_code;                                                              \
     return (((type **)h)[index_] = ptr);                                       \
@@ -120288,28 +120735,19 @@ HTTP Handle Implementation - inlined static functions
 SFUNC fio_http_controller_s *fio___http_controller_validate(
     fio_http_controller_s *c);
 
-/* Create fio_http_udata_(get|set) functions */
+/** fio_http_udata / fio_http_udata_set */
 FIO___HTTP_GETSET_PTR(void, udata, 0, (void)0)
-/* Create fio_http_pdata_(get|set) functions */
+/** fio_http_udata2 / fio_http_udata2_set */
 FIO___HTTP_GETSET_PTR(void, udata2, 1, (void)0)
-/* Create fio_http_cdata_(get|set) functions */
+/** fio_http_cdata / fio_http_cdata_set */
 FIO___HTTP_GETSET_PTR(void, cdata, 2, (void)0)
-/* Create fio_http_controller_(get|set) functions */
+/** fio_http_controller / fio_http_controller_set */
 FIO___HTTP_GETSET_PTR(fio_http_controller_s,
                       controller,
                       3,
                       ptr = fio___http_controller_validate(ptr))
 
 #undef FIO___HTTP_GETSET_PTR
-/*
-REMEMBER:
-========
-
-All memory allocations should use:
-* FIO_MEM_REALLOC_(ptr, old_size, new_size, copy_len)
-* FIO_MEM_FREE_(ptr, size)
-
-*/
 
 /* *****************************************************************************
 Path Section Looping
@@ -120435,6 +120873,35 @@ FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   return r;
 }
 
+/* *****************************************************************************
+HTTP API Finish
+***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+              HTTP Types - Internal Types, Handle and Core Implementation
+
+See also:
+https://www.rfc-editor.org/rfc/rfc9110.html
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP_TYPES___H) &&                                        \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_HTTP_TYPES___H
+
 /*
 REMEMBER:
 ========
@@ -120444,6 +120911,23 @@ All memory allocations should use:
 * FIO_MEM_FREE_(ptr, size)
 
 */
+
+/* *****************************************************************************
+HTTP Handle State and Controller Flags
+***************************************************************************** */
+
+#define FIO___HTTP_STATE_STREAMING      1
+#define FIO___HTTP_STATE_FINISHED       2
+#define FIO___HTTP_STATE_UPGRADED       4
+#define FIO___HTTP_STATE_WEBSOCKET      8
+#define FIO___HTTP_STATE_SSE            16
+#define FIO___HTTP_STATE_COOKIES_PARSED 32
+#define FIO___HTTP_STATE_FREEING        64
+
+/** Controller flags (cflags) for opt-in compression features. */
+#define FIO___HTTP_CFLAG_COMPRESS_DYNAMIC 1
+#define FIO___HTTP_CFLAG_COMPRESS_WS      2
+#define FIO___HTTP_CFLAG_COMPRESS_STATIC  4
 
 /* *****************************************************************************
 HTTP Settings Validation
@@ -121550,10 +122034,9 @@ struct fio_http_s {
   int (*writer)(fio_http_s *, fio_http_write_args_s *);
   int64_t received_at;
   size_t sent;
+  uint32_t cflags;
   uint16_t state;
   uint16_t status;
-  uint16_t cflags;
-  uint16_t uflags;
   fio_keystr_s method;
   fio_keystr_s opath;
   fio_keystr_s path;
@@ -121582,7 +122065,7 @@ struct fio_http_s {
 SFUNC fio_http_s *fio_http_destroy(fio_http_s *h) {
   if (!h)
     return h;
-  h->state |= FIO_HTTP_STATE_FREEING;
+  h->state |= FIO___HTTP_STATE_FREEING;
   h->controller->on_destroyed(h);
 
   fio_keystr_destroy(&h->method, fio___http_keystr_free);
@@ -121676,12 +122159,16 @@ Simple Property Set / Get
 #define FIO___HTTP_MAKE_GET_SET(property)                                      \
   SFUNC fio_str_info_s fio_http_##property(fio_http_s *h) {                    \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    if (!h)                                                                    \
+      return FIO_STR_INFO0;                                                    \
     return fio_keystr_info(&h->property);                                      \
   }                                                                            \
                                                                                \
   SFUNC fio_str_info_s fio_http_##property##_set(fio_http_s *h,                \
                                                  fio_str_info_s value) {       \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    if (!h)                                                                    \
+      return FIO_STR_INFO0;                                                    \
     fio_keystr_s old = h->property; /* delay destroy in case of copy/edit. */  \
     h->property = fio_keystr_init(value, fio___http_keystr_alloc);             \
     fio_keystr_destroy(&old, fio___http_keystr_free);                          \
@@ -121717,32 +122204,43 @@ Controller / User Flags Set / Test / Flip
 
 #define FIO___HTTP_MAKE_GET_SET(flags)                                         \
   /** Returns all set flags */                                                 \
-  FIO_IFUNC uint16_t fio_http_##flags(fio_http_s *h) {                         \
+  FIO_IFUNC uint16_t fio___http_##flags(fio_http_s *h) {                       \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     return h->flags;                                                           \
   }                                                                            \
-  FIO_IFUNC uint16_t fio_http_##flags##_flip(fio_http_s *h, uint16_t flg) {    \
+  FIO_IFUNC uint16_t fio___http_##flags##_flip(fio_http_s *h, uint16_t flg) {  \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     h->flags ^= flg;                                                           \
     return h->flags & flg;                                                     \
   }                                                                            \
-  FIO_IFUNC uint16_t fio_http_##flags##_set(fio_http_s *h, uint16_t flg) {     \
+  FIO_IFUNC uint16_t fio___http_##flags##_set(fio_http_s *h, uint16_t flg) {   \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     h->flags |= flg;                                                           \
     return h->flags & flg;                                                     \
   }                                                                            \
-  FIO_IFUNC uint16_t fio_http_##flags##_unset(fio_http_s *h, uint16_t flg) {   \
+  FIO_IFUNC uint16_t fio___http_##flags##_unset(fio_http_s *h, uint16_t flg) { \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     h->flags &= ~flg;                                                          \
     return h->flags & flg;                                                     \
   }                                                                            \
-  FIO_IFUNC uint16_t fio_http_##flags##_is_set(fio_http_s *h, uint16_t flg) {  \
+  FIO_IFUNC uint16_t fio___http_##flags##_is_set(fio_http_s *h,                \
+                                                 uint16_t flg) {               \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     return h->flags & flg;                                                     \
   }
 
 FIO___HTTP_MAKE_GET_SET(cflags)
-FIO___HTTP_MAKE_GET_SET(uflags)
+
+/* Test-only seam for detached handles: production callers configure
+ * compression via listener/route settings, not controller flags. */
+#if defined(FIO_HTTP_TEST_COMPRESSION_FLAGS)
+FIO_IFUNC void fio___http_test_enable_compression(fio_http_s *h,
+                                                  int is_static) {
+  fio___http_cflags_set(h,
+                        is_static ? FIO___HTTP_CFLAG_COMPRESS_STATIC
+                                  : FIO___HTTP_CFLAG_COMPRESS_DYNAMIC);
+}
+#endif
 
 #undef FIO___HTTP_MAKE_GET_SET
 /* *****************************************************************************
@@ -121751,44 +122249,146 @@ Handler State
 
 SFUNC int fio_http_is_clean(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return !(h->state & (~FIO_HTTP_STATE_COOKIES_PARSED));
+  return !(h->state & (~FIO___HTTP_STATE_COOKIES_PARSED));
 }
 
 /** Returns true if the HTTP handle's response was sent. */
 SFUNC int fio_http_is_finished(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_FINISHED));
+  return (!!(h->state & FIO___HTTP_STATE_FINISHED));
 }
 
 /** Returns true if handle is in the process of freeing itself. */
 SFUNC int fio_http_is_freeing(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_FREEING));
+  return (!!(h->state & FIO___HTTP_STATE_FREEING));
 }
 
 /** Returns true if the HTTP handle's response is streaming. */
 SFUNC int fio_http_is_streaming(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_STREAMING));
+  return (!!(h->state & FIO___HTTP_STATE_STREAMING));
 }
 
 /** Returns true if the HTTP connection was (or should have been) upgraded. */
 SFUNC int fio_http_is_upgraded(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_UPGRADED));
+  return (!!(h->state & FIO___HTTP_STATE_UPGRADED));
 }
 
 /** Returns true if the HTTP handle establishes a WebSocket Upgrade. */
 SFUNC int fio_http_is_websocket(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_WEBSOCKET));
+  return (!!(h->state & FIO___HTTP_STATE_WEBSOCKET));
 }
 
 /** Returns true if the HTTP handle establishes an EventSource connection. */
 SFUNC int fio_http_is_sse(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
-  return (!!(h->state & FIO_HTTP_STATE_SSE));
+  return (!!(h->state & FIO___HTTP_STATE_SSE));
 }
+
+/* *****************************************************************************
+Method Name Matching
+***************************************************************************** */
+
+SFUNC int fio_http_method_is_get(fio_http_s *h);  /* IDE Marker*/
+SFUNC int fio_http_method_is_post(fio_http_s *h); /* IDE Marker*/
+SFUNC int fio_http_method_is_head(fio_http_s *h); /* IDE Marker*/
+SFUNC int fio_http_method_is_put(fio_http_s *h);  /* IDE Marker*/
+
+/* Define test for lengths 3 and 4 */
+#define FIO___HTTP_DEF_METHOD_TEST(m, l)                                       \
+  /** Tests if fio_http_method is m (case insensitive). */                     \
+  SFUNC int fio_http_method_is_##m(fio_http_s *h) {                            \
+    FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    fio_str_info_s method = fio_http_method(h);                                \
+    if (method.len != l)                                                       \
+      return 0;                                                                \
+    const uint32_t tst = fio_buf2u32u(#m) | 0x20202020U;                       \
+    const uint32_t is = fio_buf2u32u(method.buf) | 0x20202020U;                \
+    return (tst == is);                                                        \
+  }
+
+FIO___HTTP_DEF_METHOD_TEST(copy, 4)
+FIO___HTTP_DEF_METHOD_TEST(get, 3)
+FIO___HTTP_DEF_METHOD_TEST(head, 4)
+FIO___HTTP_DEF_METHOD_TEST(lock, 4)
+FIO___HTTP_DEF_METHOD_TEST(move, 4)
+FIO___HTTP_DEF_METHOD_TEST(post, 4)
+FIO___HTTP_DEF_METHOD_TEST(put, 3)
+
+#undef FIO___HTTP_DEF_METHOD_TEST
+
+/* Define test for length 5 */
+#define FIO___HTTP_DEF_METHOD_TEST(m, l)                                       \
+  /** Returns 1 if fio_http_method is m (case insensitive). */                 \
+  SFUNC int fio_http_method_is_##m(fio_http_s *h) {                            \
+    static const char *name = #m;                                              \
+    FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    fio_str_info_s method = fio_http_method(h);                                \
+    if (method.len != l)                                                       \
+      return 0;                                                                \
+    if ((method.buf[0] | 0x20) != name[0])                                     \
+      return 0;                                                                \
+    const uint32_t tst = fio_buf2u32u(name + 1) | 0x20202020U;                 \
+    const uint32_t is = fio_buf2u32u(method.buf + 1) | 0x20202020U;            \
+    return (tst == is);                                                        \
+  }
+
+FIO___HTTP_DEF_METHOD_TEST(patch, 5)
+FIO___HTTP_DEF_METHOD_TEST(query, 5)
+FIO___HTTP_DEF_METHOD_TEST(trace, 5)
+FIO___HTTP_DEF_METHOD_TEST(mkcol, 5)
+
+#undef FIO___HTTP_DEF_METHOD_TEST
+
+/* Define test for lengths 5-8 */
+#define FIO___HTTP_DEF_METHOD_TEST(m, l)                                       \
+  /** Returns 1 if fio_http_method is m (case insensitive). */                 \
+  SFUNC int fio_http_method_is_##m(fio_http_s *h) {                            \
+    static const char *name = #m;                                              \
+    FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    fio_str_info_s method = fio_http_method(h);                                \
+    if (method.len != l)                                                       \
+      return 0;                                                                \
+    const uint32_t tst1 = fio_buf2u32u(name) | 0x20202020U;                    \
+    const uint32_t is1 = fio_buf2u32u(method.buf) | 0x20202020U;               \
+    const uint32_t tst2 = fio_buf2u32u(name + (l - 4)) | 0x20202020U;          \
+    const uint32_t is2 = fio_buf2u32u(method.buf + (l - 4)) | 0x20202020U;     \
+    return !((tst1 ^ is1) | (tst2 ^ is2));                                     \
+  }
+
+FIO___HTTP_DEF_METHOD_TEST(search, 6)
+FIO___HTTP_DEF_METHOD_TEST(delete, 6)
+FIO___HTTP_DEF_METHOD_TEST(options, 7)
+FIO___HTTP_DEF_METHOD_TEST(connect, 7)
+FIO___HTTP_DEF_METHOD_TEST(unlock, 6)
+FIO___HTTP_DEF_METHOD_TEST(propfind, 8)
+
+#undef FIO___HTTP_DEF_METHOD_TEST
+
+/* Define test for lengths 9-16 */
+#define FIO___HTTP_DEF_METHOD_TEST(m, l)                                       \
+  /** Returns 1 if fio_http_method is m (case insensitive). */                 \
+  SFUNC int fio_http_method_is_##m(fio_http_s *h) {                            \
+    static const char *name = #m;                                              \
+    FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
+    fio_str_info_s method = fio_http_method(h);                                \
+    if (method.len != l)                                                       \
+      return 0;                                                                \
+    const uint64_t tst1 =                                                      \
+        fio_buf2u64u(name) | (uint64_t)0x2020202020202020ULL;                  \
+    const uint64_t is1 =                                                       \
+        fio_buf2u64u(method.buf) | (uint64_t)0x2020202020202020ULL;            \
+    const uint32_t tst2 = fio_buf2u32u(name + (l - 8)) | 0x20202020U;          \
+    const uint32_t is2 = fio_buf2u32u(method.buf + (l - 8)) | 0x20202020U;     \
+    return !((tst1 ^ is1) | (uint64_t)(tst2 ^ is2));                           \
+  }
+
+FIO___HTTP_DEF_METHOD_TEST(proppatch, 9)
+
+#undef FIO___HTTP_DEF_METHOD_TEST
 
 /* *****************************************************************************
 Header Data Management
@@ -122017,8 +122617,9 @@ int fio_http_cookie_set___(void); /* IDE Marker */
 SFUNC int fio_http_cookie_set FIO_NOOP(fio_http_s *h,
                                        fio_http_cookie_args_s cookie) {
   FIO_ASSERT_DEBUG(h, "Can't set cookie for NULL HTTP handler!");
-  if (!h || ((h->state & (FIO_HTTP_STATE_FINISHED | FIO_HTTP_STATE_STREAMING)) |
-             (h->writer != fio____http_write_start)))
+  if (!h ||
+      ((h->state & (FIO___HTTP_STATE_FINISHED | FIO___HTTP_STATE_STREAMING)) |
+       (h->writer != fio____http_write_start)))
     return -1;
   /* promises that some warnings print only once. */
   static unsigned int warn_illegal = 0;
@@ -122219,8 +122820,8 @@ SFUNC int fio_http_cookie_set FIO_NOOP(fio_http_s *h,
 SFUNC fio_str_info_s fio_http_cookie(fio_http_s *h,
                                      const char *name,
                                      size_t name_len) {
-  if (!(fio_atomic_or(&h->state, FIO_HTTP_STATE_COOKIES_PARSED) &
-        FIO_HTTP_STATE_COOKIES_PARSED))
+  if (!(fio_atomic_or(&h->state, FIO___HTTP_STATE_COOKIES_PARSED) &
+        FIO___HTTP_STATE_COOKIES_PARSED))
     fio___http_cookie_collect(h);
   fio_str_info_s r =
       fio___http_cmap_get(h->cookies, FIO_STR_INFO2((char *)name, name_len));
@@ -122234,8 +122835,8 @@ SFUNC size_t fio_http_cookie_each(fio_http_s *h,
                                                   fio_str_info_s value,
                                                   void *udata),
                                   void *udata) {
-  if (!(fio_atomic_or(&h->state, FIO_HTTP_STATE_COOKIES_PARSED) &
-        FIO_HTTP_STATE_COOKIES_PARSED))
+  if (!(fio_atomic_or(&h->state, FIO___HTTP_STATE_COOKIES_PARSED) &
+        FIO___HTTP_STATE_COOKIES_PARSED))
     fio___http_cookie_collect(h);
   size_t i = 0;
   FIO_MAP_EACH(fio___http_cmap, h->cookies, pos) {
@@ -122485,7 +123086,7 @@ SFUNC fio_str_info_s fio_http_body_read(fio_http_s *h, size_t length) {
   fio_str_info_s r = {0};
   if (h->body.pos == h->body.len)
     return r;
-  if (h->body.pos + length > h->body.len)
+  if (length > h->body.len - h->body.pos)
     length = h->body.len - h->body.pos;
   r = ((h->body.fd == -1) ? fio___http_body_read_buf
                           : fio___http_body_read_fd)(h, length);
@@ -122616,7 +123217,8 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
   }
 #if 1
   if (args->finish &&
-      FIO_LIKELY(fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_DYNAMIC)) &&
+      FIO_LIKELY(
+          fio___http_cflags_is_set(h, FIO___HTTP_CFLAG_COMPRESS_DYNAMIC)) &&
       args->len > 1024 && args->buf) {
     /* Never double-compress: the application already encoded this response. */
     if (fio___http_hmap_get_ptr(hdrs,
@@ -122735,7 +123337,7 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
       fio_ltoa10u(v.buf, args->len, v.len);
       fio___http_hmap_set2(hdrs, k, v, -1);
     } else if (!(h->state & FIO___HTTP_STATE_NO_CONTENT)) {
-      h->state |= FIO_HTTP_STATE_STREAMING;
+      h->state |= FIO___HTTP_STATE_STREAMING;
     }
   }
 send_headers:
@@ -122752,8 +123354,8 @@ FIO_SFUNC int fio____http_write_cont(fio_http_s *h,
     h->sent += args->len;
   }
   if (args->finish) {
-    h->state |= FIO_HTTP_STATE_FINISHED;
-    h->writer = (h->state & FIO_HTTP_STATE_UPGRADED)
+    h->state |= FIO___HTTP_STATE_FINISHED;
+    h->writer = (h->state & FIO___HTTP_STATE_UPGRADED)
                     ? fio____http_write_upgraded
                     : fio____http_write_done;
     h->controller->on_finish(h);
@@ -122791,7 +123393,7 @@ FIO_IFUNC int fio___http_response_etag_if_none_match(fio_http_s *h) {
                        -1);
 
   h->controller->send_headers(h);
-  h->state |= FIO_HTTP_STATE_FINISHED;
+  h->state |= FIO___HTTP_STATE_FINISHED;
   h->writer = fio____http_write_done;
   h->controller->on_finish(h);
   return -1;
@@ -122881,7 +123483,7 @@ SFUNC void fio_http_upgrade_websocket(fio_http_s *h) {
         accept_val);
   }
   { /* finish up */
-    h->state |= FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_WEBSOCKET;
+    h->state |= FIO___HTTP_STATE_UPGRADED | FIO___HTTP_STATE_WEBSOCKET;
     fio_http_write_args_s args = {.finish = 1};
     fio_http_write FIO_NOOP(h, args);
   }
@@ -122983,8 +123585,8 @@ SFUNC int fio_http_websocket_accepted(fio_http_s *h) {
       return 0;
     }
   }
-  h->state |= (FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_WEBSOCKET |
-               FIO_HTTP_STATE_FINISHED);
+  h->state |= (FIO___HTTP_STATE_UPGRADED | FIO___HTTP_STATE_WEBSOCKET |
+               FIO___HTTP_STATE_FINISHED);
   h->writer = fio____http_write_upgraded;
   return 1;
 }
@@ -123027,8 +123629,8 @@ SFUNC int fio_http_sse_accepted(fio_http_s *h) {
                                    FIO_STR_INFO2((char *)"content-type", 12),
                                    0);
   }
-  h->state |=
-      (FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_SSE | FIO_HTTP_STATE_FINISHED);
+  h->state |= (FIO___HTTP_STATE_UPGRADED | FIO___HTTP_STATE_SSE |
+               FIO___HTTP_STATE_FINISHED);
   h->writer = fio____http_write_upgraded;
   FIO_LOG_DDEBUG2("EventSource connection accepted.");
   return 1;
@@ -123047,8 +123649,8 @@ SFUNC void fio_http_upgrade_sse(fio_http_s *h) {
   fio___http_hmap_remove(HTTP_HDR_RESPONSE(h),
                          FIO_STR_INFO2((char *)"content-length", 14),
                          NULL);
-  h->state |=
-      FIO_HTTP_STATE_FINISHED | FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_SSE;
+  h->state |= FIO___HTTP_STATE_FINISHED | FIO___HTTP_STATE_UPGRADED |
+              FIO___HTTP_STATE_SSE;
   h->controller->send_headers(h);
   h->writer = fio____http_write_upgraded;
   h->controller->on_finish(h);
@@ -124454,7 +125056,7 @@ FIO_SFUNC void fio___http_static_compress_note_result(
  * EACCES, EROFS, EDQUOT — `value = 0`). Once 0, creation stays disabled
  * until the settings are re-applied. Routes inherit the value from the
  * listener settings at route-creation. Detached handles (no settings)
- * gate on the `FIO_HTTP_CFLAG_COMPRESS_STATIC` cflag instead, with no
+ * gate on the `FIO___HTTP_CFLAG_COMPRESS_STATIC` cflag instead, with no
  * memoization state.
  */
 SFUNC int fio_http_static_file_response(fio_http_s *h,
@@ -124577,7 +125179,7 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
     int can_create =
         have_orig_st &&
         (st ? settings_may_compress
-            : fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_STATIC)) &&
+            : fio___http_cflags_is_set(h, FIO___HTTP_CFLAG_COMPRESS_STATIC)) &&
         fio___http_mime_is_compressible(mime_type) &&
         (size_t)orig_st.st_size >= 1024 &&
         (size_t)orig_st.st_size <= FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT;
@@ -125591,9 +126193,9 @@ FIO_IFUNC void fio_http1_attach_handle(fio___http_connection_s *c) {
   fio_http_udata_set(c->h, c->udata);
   fio_http_cdata_set(c->h, fio___http_connection_dup(c));
   if (c->settings->compress_dynamic)
-    fio_http_cflags_set(c->h, FIO_HTTP_CFLAG_COMPRESS_DYNAMIC);
+    fio___http_cflags_set(c->h, FIO___HTTP_CFLAG_COMPRESS_DYNAMIC);
   if (c->settings->compress_ws)
-    fio_http_cflags_set(c->h, FIO_HTTP_CFLAG_COMPRESS_WS);
+    fio___http_cflags_set(c->h, FIO___HTTP_CFLAG_COMPRESS_WS);
 }
 
 /** called when a request method is parsed. */
@@ -125940,7 +126542,7 @@ FIO_SFUNC void fio___http1_send_request(fio_http_s *h) {
     fio_io_write2(c->io,
                   .buf = (char *)fio_http_dup(h),
                   .len = buf.len,
-                  .offset = (size_t)((char *)h - buf.buf),
+                  .offset = (size_t)(buf.buf - (char *)h),
                   .dealloc = (void (*)(void *))fio_http_free);
   } else {
     fio_io_write2(c->io,
@@ -126028,10 +126630,7 @@ FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
                                      FIO_STR_INFO2((char *)"connection", 10),
                                      0)
                 .buf)
-    fio_string_write(&buf,
-                     FIO_STRING_REALLOC,
-                     "connection:keep-alive\r\n",
-                     23);
+    fio_string_write(&buf, FIO_STRING_REALLOC, "connection:keep-alive\r\n", 23);
   fio_string_write(&buf, FIO_STRING_REALLOC, "\r\n", 2);
   /* send data (move memory ownership)? */
   c->state.http.buf = buf;
@@ -126677,7 +127276,7 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
   if (c->h) /* request after WebSocket Upgrade? an attack vector? */
     goto refuse_upgrade;
   /* RFC 7692: permessage-deflate extension negotiation (no-takeover only) */
-  if (FIO_LIKELY(fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_WS))) {
+  if (FIO_LIKELY(fio___http_cflags_is_set(h, FIO___HTTP_CFLAG_COMPRESS_WS))) {
     FIO_HTTP_HEADER_EACH_VALUE(
         h,
         1,
@@ -126686,9 +127285,8 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
       FIO_LOG_DDEBUG2("WebSocket extension requested: %.*s",
                       (int)val.value.len,
                       val.value.buf);
-      if (!FIO_BUF_INFO_IS_EQ(
-              val.value,
-              FIO_BUF_INFO2((char *)"permessage-deflate", 18)))
+      if (!FIO_BUF_INFO_IS_EQ(val.value,
+                              FIO_BUF_INFO2((char *)"permessage-deflate", 18)))
         continue;
       /* Negotiate: ALWAYS force both no_context_takeover flags (persistent
        * compression state stays ~0 per connection); honor
@@ -126698,8 +127296,8 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
       size_t ext_len = fio___http_ws_deflate_negotiate(
           FIO_STR_INFO2(val.value.buf, val.value.len),
           ext_resp,
-                                                       sizeof(ext_resp),
-                                                       &server_bits);
+          sizeof(ext_resp),
+          &server_bits);
       if (!ext_len)
         continue;
       fio_http_response_header_set(
@@ -127305,34 +127903,36 @@ FIO_SFUNC void fio___http_controller_ws_write_body(fio_http_s *h,
     const size_t framed_len = fio_websocket_write_len(args.len, 1);
     char *frame = NULL;
     if (args.len <= SIZE_MAX - args.offset && framed_len <= UINT32_MAX &&
-        (args.buf ||
-         ((off_t)args.offset >= 0 &&
-          (uintmax_t)(off_t)args.offset == (uintmax_t)args.offset &&
-          (off_t)(args.offset + args.len) >= 0 &&
-          (uintmax_t)(off_t)(args.offset + args.len) ==
-              (uintmax_t)(args.offset + args.len))))
+        (args.buf || ((off_t)args.offset >= 0 &&
+                      (uintmax_t)(off_t)args.offset == (uintmax_t)args.offset &&
+                      (off_t)(args.offset + args.len) >= 0 &&
+                      (uintmax_t)(off_t)(args.offset + args.len) ==
+                          (uintmax_t)(args.offset + args.len))))
       frame = fio_bstr_reserve(NULL, framed_len);
     if (!frame)
       goto client_write_error;
     if (args.buf) {
       fio_websocket_write_message_client(
-          frame, FIO_BUF_INFO2((char *)args.buf + args.offset, args.len), 0, 0, 0);
+          frame,
+          FIO_BUF_INFO2((char *)args.buf + args.offset, args.len),
+          0,
+          0,
+          0);
     } else {
       uint32_t mask = (uint32_t)(fio_rand64() | 0x01020408U);
       size_t head = fio___websocket_hdr((uint8_t *)frame,
-                                       args.len,
-                                       mask,
-                                       FIO_WEBSOCKET_OP_BINARY,
-                                       0);
+                                        args.len,
+                                        mask,
+                                        FIO_WEBSOCKET_OP_BINARY,
+                                        0);
       if (fio_fd_read(args.fd, frame + head, args.len, (off_t)args.offset) !=
           args.len) {
         fio_bstr_free(frame);
         goto client_write_error;
       }
-      fio_xmask_cpy(frame + head,
-                    frame + head,
-                    args.len,
-                    ((uint64_t)mask << 32) | (uint64_t)mask);
+      fio_xmask(frame + head,
+                args.len,
+                ((uint64_t)mask << 32) | (uint64_t)mask);
     }
     if (!args.buf && (unsigned)(args.fd + 1) > 1)
       close(args.fd);
@@ -127981,6 +128581,17 @@ once per template instantiation pass.
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
 #if !defined(FIO___RECURSIVE_INCLUDE) && defined(FIO_HTTP)
+#undef FIO___HTTP_STATE_STREAMING
+#undef FIO___HTTP_STATE_FINISHED
+#undef FIO___HTTP_STATE_UPGRADED
+#undef FIO___HTTP_STATE_WEBSOCKET
+#undef FIO___HTTP_STATE_SSE
+#undef FIO___HTTP_STATE_COOKIES_PARSED
+#undef FIO___HTTP_STATE_FREEING
+#undef FIO___HTTP_STATE_NO_CONTENT
+#undef FIO___HTTP_CFLAG_COMPRESS_DYNAMIC
+#undef FIO___HTTP_CFLAG_COMPRESS_WS
+#undef FIO___HTTP_CFLAG_COMPRESS_STATIC
 #undef FIO_HTTP
 #endif
 /* *****************************************************************************
