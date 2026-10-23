@@ -1603,6 +1603,60 @@ module Iodine
     # @return [String, nil]
     attr_accessor :query
 
+    # (HTTP Only) Returns a parsed parameter Hash for the request, following the NeoRack `params` extension (version 0.0.1).
+    #
+    # The returned Hash is memoized (repeated calls return the same object) and merges:
+    #
+    # 1. the URL query string; and
+    # 2. the request body, when its content type is `application/x-www-form-urlencoded`,
+    #    `multipart/form-data`, `application/json`, `text/json`, `application/x-json`,
+    #    or an `application/*+json` media type (matching is case-insensitive and ignores parameters).
+    #
+    # Nested paths such as `user[name]` build nested Hashes and `tags[]` builds Arrays.
+    # Invalid path segments are treated as literal String keys. Repeated scalar names
+    # become Arrays (`?a=1&a=2` => `{"a" => ["1", "2"]}`). When a scalar and a nested
+    # path conflict, the nested path wins; two containers of different types are merged
+    # into an Array preserving both.
+    #
+    # File uploads (multipart) are represented by {Iodine::Base::Upload} objects: readable
+    # binary streams (`read` / `rewind` / `size` / `save` / `close` / `closed?`) with
+    # `filename` / `type` / `name` / `headers` metadata readers and Rack-style `[]` access
+    # (`upload[:tempfile]` returns the upload itself). Uploads count as scalar values during
+    # conflict resolution.
+    #
+    # Bodies with other or missing content types are not parsed. Malformed input is not an
+    # error: the request proceeds with whatever partial structure could be retained.
+    #
+    # Exceeding the parser's resource limits (by default 4,096 fields or 128 levels of
+    # nesting) raises a RangeError; an unhandled exception in a handler
+    # results in a 500 response, per the core NeoRack specification.
+    #
+    # The body is parsed without consuming it: {#read} and `rack.input` remain unaffected.
+    #
+    # @return [Hash] the merged parameter Hash (memoized).
+    # @raise [RangeError] when a resource limit is exceeded.
+    def params; end
+
+    # (HTTP Only) Parses only the URL query string into the memoized parameter Hash and returns it.
+    #
+    # Later body parsing ({#body2params} / {#params}) will merge into the same Hash using the
+    # extension's conflict-resolution rules, so query parameters take precedence over conflicting
+    # body parameters (body values are appended to Arrays on scalar conflicts).
+    #
+    # @return [Hash] the memoized parameter Hash, containing the query parameters.
+    # @raise [RangeError] when a resource limit is exceeded.
+    def query2params; end
+
+    # (HTTP Only) Parses only the request body (when its content type is a supported parameters
+    # or JSON media type) into the memoized parameter Hash and returns it.
+    #
+    # Query parameters parsed later or earlier merge into the same Hash; when the query is parsed
+    # first (see {#query2params}), its values take precedence over conflicting body parameters.
+    #
+    # @return [Hash] the memoized parameter Hash, containing the body parameters.
+    # @raise [RangeError] when a resource limit is exceeded.
+    def body2params; end
+
     # For HTTP connections, the `version` String value stated by the HTTP client.
     # @return [String]
     attr_accessor :version
@@ -2259,6 +2313,73 @@ module Iodine
 
   # Used internally by Iodine.
   class Base
+    # A multipart file upload: metadata plus a readable binary stream.
+    #
+    # Implements the NeoRack `params` extension Upload interface (see
+    # {Iodine::Connection#params}). This is an internal class and its details
+    # may change; applications SHOULD NOT rely on the class itself, only on
+    # the interface.
+    #
+    # The data may be stored in memory or spilled to a temporary file. The
+    # upload is closed automatically (removing any temporary storage) when the
+    # request ends or when it is garbage collected, after which reading
+    # raises an IOError.
+    class Upload
+      # @return [String, nil] the client-provided basename (path components stripped).
+      def filename; end
+    
+      # @return [String, nil] the declared media type of the uploaded part.
+      def type; end
+    
+      # @return [String, nil] the form field name.
+      def name; end
+    
+      # @return [String, nil] the raw part headers (excluding the separator blank line).
+      def headers; end
+    
+      # Behaves like IO#read on a binary-mode IO.
+      #
+      # @param length [Integer, nil] nil reads all remaining bytes ("" at EOF);
+      #   0 returns ""; a positive Integer reads up to that many bytes (nil at EOF).
+      # @param out_string [String, nil] if supplied, receives and is the result
+      #   (left unchanged at EOF).
+      # @return [String, nil] an ASCII-8BIT String, or nil at EOF when length > 0.
+      # @raise [IOError] if the upload was closed.
+      def read(length = nil, out_string = nil); end
+    
+      # Moves to byte zero.
+      # @return [Integer] 0
+      # @raise [IOError] if the upload was closed.
+      def rewind; end
+    
+      # @return [Integer] the total byte count (never changes the read position).
+      def size; end
+    
+      # Atomically saves all the data to `path` (created or replaced; the read
+      # position is unchanged). For uploads of 256KiB or more the disk I/O runs
+      # outside the GVL.
+      # @param path [String] the destination path.
+      # @return [Integer] the number of bytes written.
+      # @raise [IOError] if the upload was closed.
+      # @raise [SystemCallError] if the save failed.
+      def save(path); end
+    
+      # Releases the stream and any temporary storage. Idempotent.
+      # @return [nil]
+      def close; end
+    
+      # @return [Boolean] true after close; false while readable.
+      def closed?; end
+    
+      # Rack compatibility access: `upload[:tempfile]` returns the upload
+      # itself; `:filename`, `:type`, `:name` and `:head` return the
+      # corresponding metadata (`:head` is the raw part headers).
+      def [](key); end
+    
+      # Rack compatibility access; changes only the compatibility view.
+      def []=(key, value); end
+    end
+        
     # Prints the number of object withheld from the GC (for debugging).
     def self.print_debug; end
 

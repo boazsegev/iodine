@@ -33,7 +33,268 @@ Ruby API (Iodine::JSON):
 JSON Stringifier - Ruby to JSON String Conversion
 ***************************************************************************** */
 
-static char *iodine_json_stringify_key(char *dest, VALUE tmp) {
+/** Minimal-overhead fio_bstr writer for the JSON stringifier.
+ *
+ * Mirrors the bstr's len/capa, so the hot path is an inline capacity check
+ * followed by a raw write - avoiding the per-call overhead of the generic
+ * fio_bstr_write API (which validates capacity on every single write).
+ * Growth goes through fio_bstr_reserve with added slack (capa/4) for
+ * geometric, amortized O(1) appends.
+ *
+ * NOTE: all writes MUST go through these helpers - len/capa are mirrors.
+ */
+typedef struct {
+  char *s;     /* the fio_bstr (may be NULL) */
+  size_t len;  /* mirrors fio_bstr_len(s) */
+  size_t capa; /* mirrors fio_bstr_info(s).capa (0 when s is NULL) */
+} iodine_json_w_s;
+
+/** Ensures room for `add` more bytes (plus the NUL terminator).
+ *  Returns non-zero on success, zero on allocation failure (write skipped,
+ *  truncating the output - same semantics as fio_bstr_write). */
+FIO_IFUNC int iodine_json_w_need(iodine_json_w_s *w, size_t add) {
+  if (FIO_LIKELY(w->capa - w->len > add))
+    return 1;
+  /* sync the bstr metadata (our len is a mirror) before reserve reads it */
+  w->s = fio_bstr_len_set(w->s, w->len);
+  /* grow with geometric slack (capa/4) - amortized O(1) appends */
+  char *n = fio_bstr_reserve(w->s, add + (w->capa >> 2) + 1);
+  fio_str_info_s i = fio_bstr_info(n);
+  if (FIO_UNLIKELY(i.capa - i.len <= add))
+    return 0; /* allocation failed */
+  w->s = n;
+  w->capa = i.capa; /* i.len == w->len (mirrors) */
+  return 1;
+}
+
+FIO_IFUNC void iodine_json_w_write(iodine_json_w_s *w,
+                                   const void *src,
+                                   size_t len) {
+  if (FIO_LIKELY(iodine_json_w_need(w, len))) {
+    FIO_MEMCPY(w->s + w->len, src, len);
+    w->len += len;
+  }
+}
+
+FIO_IFUNC void iodine_json_w_ch(iodine_json_w_s *w, const char c) {
+  if (FIO_LIKELY(iodine_json_w_need(w, 1)))
+    w->s[w->len++] = c;
+}
+
+FIO_IFUNC void iodine_json_w_i(iodine_json_w_s *w, int64_t num) {
+  /* write the number directly into the buffer (max 20 digits + sign + NUL) */
+  if (FIO_LIKELY(iodine_json_w_need(w, 24)))
+    w->len += fio_ltoa(w->s + w->len, num, 10);
+}
+
+/** Writes `num` to `dest` (up to 39 bytes + NUL), matching the output of
+ *  fio_ftoa(dest, num, 10) - i.e., snprintf("%g") with the ".0" fixup -
+ *  without the snprintf overhead.
+ *
+ *  Falls back to fio_ftoa for non-finite values, extreme exponents, and
+ *  values landing on a rounding boundary (where the exact snprintf
+ *  half-to-even rounding of the exact decimal expansion is required).
+ *
+ *  NOTE: uses the C STL's internal fio___aton_dec2d for correctly-rounded
+ *  powers of ten. If a future fio-stl.h sync renames it, this breaks loudly
+ *  at compile time (safe). */
+static size_t iodine_json_ftoa(char *dest, double num) {
+  if (FIO_UNLIKELY(!isfinite(num)))
+    return fio_ftoa(dest, num, 10); /* "NaN" / "Infinity" / "-Infinity" */
+  char *p = dest;
+  double a = num;
+  uint64_t bits;
+  memcpy(&bits, &num, 8);
+  if (bits >> 63) {
+    *p++ = '-';
+    a = -a;
+  }
+  if (a == 0) { /* %g prints "0" (or "-0"), fio_ftoa adds ".0" */
+    memcpy(p, "0.0", 4);
+    return (size_t)(p + 3 - dest);
+  }
+  /* decimal exponent estimate: a = m * 2^e2, m in [0.5, 1) */
+  int e2;
+  frexp(a, &e2);
+  int e10 = (int)(((int64_t)e2 * 78913) >> 18); /* ~floor(log10(a)) +/- 1 */
+  if (FIO_UNLIKELY(e10 < -302 || e10 > 302))
+    return fio_ftoa(dest, num, 10); /* pow10 out of table range */
+  /* scale to a 6 digit mantissa (q ~= a * 10^(5-e10) in [1e5, 1e6)) */
+  double q = a * fio___aton_dec2d(1, 5 - e10);
+  if (q >= 1e6 || q < 1e5) { /* correct the estimate (off by one at most) */
+    e10 += (q >= 1e6) ? 1 : -1;
+    q = a * fio___aton_dec2d(1, 5 - e10);
+  }
+  double fl = floor(q);
+  if (FIO_UNLIKELY(q - fl > 0.4999999 && q - fl < 0.5000001))
+    return fio_ftoa(dest, num, 10); /* rounding boundary - exact tie break */
+  uint64_t r = (uint64_t)fl + (q - fl >= 0.5);
+  if (FIO_UNLIKELY(r == 1000000)) { /* rounded up to the next power of 10 */
+    r = 100000;
+    ++e10;
+  }
+  /* the 6 digits of r (d.ddddd * 10^e10) */
+  char dig[6];
+  dig[5] = (char)('0' + (r % 10));
+  r /= 10;
+  dig[4] = (char)('0' + (r % 10));
+  r /= 10;
+  dig[3] = (char)('0' + (r % 10));
+  r /= 10;
+  dig[2] = (char)('0' + (r % 10));
+  r /= 10;
+  dig[1] = (char)('0' + (r % 10));
+  r /= 10;
+  dig[0] = (char)('0' + r);
+  if (e10 >= -4 && e10 < 6) {
+    /* %f style (trimming trailing zeros after the decimal point) */
+    if (e10 >= 0) {
+      const int idig = e10 + 1; /* integer digits (1..6) */
+      memcpy(p, dig, (size_t)idig);
+      p += idig;
+      int f = 5;
+      while (f >= idig && dig[f] == '0')
+        --f;
+      if (f >= idig) {
+        *p++ = '.';
+        memcpy(p, dig + idig, (size_t)(f - idig + 1));
+        p += f - idig + 1;
+      } else {
+        memcpy(p, ".0", 3); /* fio_ftoa's ".0" fixup */
+        p += 2;
+      }
+    } else {
+      memcpy(p, "0.", 2);
+      p += 2;
+      for (int z = -e10 - 1; z--;)
+        *p++ = '0';
+      int f = 5;
+      while (f > 0 && dig[f] == '0')
+        --f;
+      memcpy(p, dig, (size_t)(f + 1));
+      p += f + 1;
+    }
+  } else {
+    /* %e style: d[.ddddd]e+XX (trimming trailing zeros in the mantissa) */
+    *p++ = dig[0];
+    int f = 5;
+    while (f > 0 && dig[f] == '0')
+      --f;
+    if (f) {
+      *p++ = '.';
+      memcpy(p, dig + 1, (size_t)f);
+      p += f;
+    }
+    *p++ = 'e';
+    *p++ = (e10 < 0) ? '-' : '+';
+    int x = (e10 < 0) ? -e10 : e10;
+    if (x >= 100)
+      *p++ = (char)('0' + (x / 100));
+    *p++ = (char)('0' + ((x / 10) % 10));
+    *p++ = (char)('0' + (x % 10));
+  }
+  *p = 0;
+  return (size_t)(p - dest);
+}
+
+FIO_IFUNC void iodine_json_w_f(iodine_json_w_s *w, double num) {
+  /* write the float directly into the buffer (max 39 bytes + NUL) */
+  if (FIO_LIKELY(iodine_json_w_need(w, 40)))
+    w->len += iodine_json_ftoa(w->s + w->len, num);
+}
+
+/** SWAR escape detection: returns non-zero if any byte in the word needs
+ *  escaping (< 0x20, '"', '\\', 0x7F) or UTF-8 validation (>= 0x80).
+ *  Byte-order independent (mask is only tested against zero). */
+FIO_IFUNC uint64_t iodine_json_swar_dirty(uint64_t v) {
+  const uint64_t hi = 0x8080808080808080ULL;
+  uint64_t dirty = (v - 0x2020202020202020ULL) & ~v & hi; /* bytes < 0x20 */
+  uint64_t x = v ^ 0x2222222222222222ULL;                 /* '"' */
+  dirty |= (x - 0x0101010101010101ULL) & ~x & hi;
+  x = v ^ 0x5C5C5C5C5C5C5C5CULL; /* '\\' */
+  dirty |= (x - 0x0101010101010101ULL) & ~x & hi;
+  x = v ^ 0x7F7F7F7F7F7F7F7FULL; /* 0x7F */
+  dirty |= (x - 0x0101010101010101ULL) & ~x & hi;
+  return dirty | (v & hi); /* bytes >= 0x80 */
+}
+
+/** Writes a quoted JSON string, escaping as needed (single pass).
+ *  Escape semantics identical to fio_bstr_write_escape: simple escapes for
+ *  \b \f \n \r \t \\ \", \u00XX for control characters (incl. 0x7F),
+ *  valid UTF-8 sequences copied as-is, invalid bytes escaped as \xXX. */
+static void iodine_json_w_string(iodine_json_w_s *w,
+                                 const char *src,
+                                 size_t len) {
+  const uint8_t *s = (const uint8_t *)src;
+  const uint8_t *e = s + len;
+  const uint8_t *run = s;
+  const uint8_t *p = s;
+  iodine_json_w_ch(w, '"');
+  while (p < e) {
+    /* SWAR fast scan: skip 16 clean bytes at a time */
+    while ((size_t)(e - p) >= 16) {
+      uint64_t v0, v1;
+      memcpy(&v0, p, 8);
+      memcpy(&v1, p + 8, 8);
+      if (iodine_json_swar_dirty(v0) | iodine_json_swar_dirty(v1))
+        break;
+      p += 16;
+    }
+    /* byte-scan the dirty block (or the tail) */
+    const uint8_t *block_end = ((size_t)(e - p) >= 16) ? p + 16 : e;
+    while (p < block_end) {
+      const uint8_t c = *p;
+      /* fast path: printable ASCII (0x20..0x7E), except '"' and '\\' */
+      if (FIO_LIKELY((uint8_t)(c - 0x20) < (uint8_t)0x5F && c != '"' &&
+                     c != '\\')) {
+        ++p;
+        continue;
+      }
+      const size_t utf8_len = fio_utf8_char_len(p);
+      if (utf8_len > 1 && (size_t)(e - p) >= utf8_len) {
+        p += utf8_len; /* valid UTF-8 sequence - copied as-is with the run */
+        continue;
+      }
+      /* (a truncated sequence at the end of the input is escaped, byte-wise) */
+      /* flush the clean run and escape this byte */
+      iodine_json_w_write(w, run, (size_t)(p - run));
+      ++p;
+      run = p;
+      switch (c) {
+      case '\b': iodine_json_w_write(w, "\\b", 2); break;
+      case '\f': iodine_json_w_write(w, "\\f", 2); break;
+      case '\n': iodine_json_w_write(w, "\\n", 2); break;
+      case '\r': iodine_json_w_write(w, "\\r", 2); break;
+      case '\t': iodine_json_w_write(w, "\\t", 2); break;
+      case '\\': iodine_json_w_write(w, "\\\\", 2); break;
+      case '"': iodine_json_w_write(w, "\\\"", 2); break;
+      default: {
+        /* control characters: \u00XX - invalid UTF-8 bytes: \xXX */
+        char buf[6] = {'\\',
+                       'u',
+                       '0',
+                       '0',
+                       (char)fio_i2c((unsigned char)(c >> 4)),
+                       (char)fio_i2c((unsigned char)(c & 15))};
+        if (c & 128) {
+          buf[1] = 'x';
+          buf[2] = buf[4];
+          buf[3] = buf[5];
+          iodine_json_w_write(w, buf, 4);
+        } else {
+          iodine_json_w_write(w, buf, 6);
+        }
+      } break;
+      }
+    }
+  }
+  iodine_json_w_write(w, run, (size_t)(e - run));
+  iodine_json_w_ch(w, '"');
+}
+
+static void iodine_json_w_value(iodine_json_w_s *w, VALUE o);
+
+static void iodine_json_w_key(iodine_json_w_s *w, VALUE tmp) {
   /* Note: keys MUST be Strings  */
   switch (rb_type(tmp)) {
   case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
@@ -42,104 +303,109 @@ static char *iodine_json_stringify_key(char *dest, VALUE tmp) {
   case RUBY_T_SYMBOL: tmp = rb_sym2str(tmp); /* fall through */
   case RUBY_T_STRING:
   string_key:
-    dest = fio_bstr_write(dest, "\"", 1);
-    dest =
-        fio_bstr_write_escape(dest, RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));
-    dest = fio_bstr_write(dest, "\"", 1);
+    iodine_json_w_string(w, RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));
     break;
   case RUBY_T_FIXNUM:
-    dest = fio_bstr_write2(dest,
-                           FIO_STRING_WRITE_STR2("\"", 1),
-                           FIO_STRING_WRITE_NUM(NUM2LL(tmp)),
-                           FIO_STRING_WRITE_STR2("\"", 1));
+    iodine_json_w_ch(w, '"');
+    iodine_json_w_i(w, NUM2LL(tmp));
+    iodine_json_w_ch(w, '"');
     break;
-  case RUBY_T_TRUE: dest = fio_bstr_write(dest, "\"true\"", 6); break;
-  case RUBY_T_FALSE: dest = fio_bstr_write(dest, "\"false\"", 7); break;
-  case RUBY_T_NIL: dest = fio_bstr_write(dest, "\"null\"", 6); break;
+  case RUBY_T_TRUE: iodine_json_w_write(w, "\"true\"", 6); break;
+  case RUBY_T_FALSE: iodine_json_w_write(w, "\"false\"", 7); break;
+  case RUBY_T_NIL: iodine_json_w_write(w, "\"null\"", 6); break;
   default:
     tmp = rb_any_to_s(tmp);
     if (RB_TYPE_P(tmp, RUBY_T_STRING))
       goto string_key;
-    dest = fio_bstr_write(dest, "\"error\"", 7);
+    iodine_json_w_write(w, "\"error\"", 7);
   }
-  return dest;
 }
 
-static char *iodine_json_stringify2bstr(char *dest, VALUE o);
-
-static int iodine_json_hash_each_callback(VALUE k, VALUE v, VALUE dest_) {
-  char **pdest = (char **)dest_;
-  *pdest = iodine_json_stringify_key(*pdest, k);
-  *pdest = fio_bstr_write(*pdest, ":", 1);
-  *pdest = iodine_json_stringify2bstr(*pdest, v);
-  *pdest = fio_bstr_write(*pdest, ",", 1);
+static int iodine_json_hash_each_callback(VALUE k, VALUE v, VALUE w_) {
+  iodine_json_w_s *w = (iodine_json_w_s *)w_;
+  iodine_json_w_key(w, k);
+  iodine_json_w_ch(w, ':');
+  iodine_json_w_value(w, v);
+  iodine_json_w_ch(w, ',');
   return ST_CONTINUE;
 }
 
-/* Converts a VALUE to a fio_bstr */
-static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
+/* Converts a VALUE to JSON, appending to the writer's bstr. */
+static void iodine_json_w_value(iodine_json_w_s *w, VALUE o) {
   size_t tmp;
   switch (rb_type(o)) {
-  case RUBY_T_NIL: return (dest = fio_bstr_write(dest, "null", 4));
-  case RUBY_T_TRUE: return (dest = fio_bstr_write(dest, "true", 4));
-  case RUBY_T_FALSE: return (dest = fio_bstr_write(dest, "false", 5));
+  case RUBY_T_NIL: iodine_json_w_write(w, "null", 4); return;
+  case RUBY_T_TRUE: iodine_json_w_write(w, "true", 4); return;
+  case RUBY_T_FALSE: iodine_json_w_write(w, "false", 5); return;
   case RUBY_T_ARRAY:
     tmp = rb_array_len(o);
     if (!tmp) {
-      dest = fio_bstr_write(dest, "[]", 2);
-      return dest;
+      iodine_json_w_write(w, "[]", 2);
+      return;
     }
-    dest = fio_bstr_write(dest, "[", 1);
+    iodine_json_w_ch(w, '[');
     for (size_t i = 0; i < tmp; ++i) {
-      dest = iodine_json_stringify2bstr(dest, RARRAY_PTR(o)[i]);
-      dest = fio_bstr_write(dest, ",", 1);
+      iodine_json_w_value(w, RARRAY_PTR(o)[i]);
+      iodine_json_w_ch(w, ',');
     }
-    dest[fio_bstr_len(dest) - 1] = ']';
-    return dest;
+    if (FIO_LIKELY(w->len && w->s[w->len - 1] == ','))
+      w->s[w->len - 1] = ']';
+    else
+      iodine_json_w_ch(w, ']');
+    return;
   case RUBY_T_HASH:
     tmp = rb_hash_size_num(o);
     if (!tmp) {
-      dest = fio_bstr_write(dest, "{}", 2);
-      return dest;
+      iodine_json_w_write(w, "{}", 2);
+      return;
     }
-    dest = fio_bstr_write(dest, "{", 1);
-    rb_hash_foreach(o, iodine_json_hash_each_callback, (VALUE)(&dest));
-    dest[fio_bstr_len(dest) - 1] = '}';
-    return dest;
-  case RUBY_T_FIXNUM: return (dest = fio_bstr_write_i(dest, RB_NUM2LL(o)));
+    iodine_json_w_ch(w, '{');
+    rb_hash_foreach(o, iodine_json_hash_each_callback, (VALUE)w);
+    if (FIO_LIKELY(w->len && w->s[w->len - 1] == ','))
+      w->s[w->len - 1] = '}';
+    else
+      iodine_json_w_ch(w, '}');
+    return;
+  case RUBY_T_FIXNUM: iodine_json_w_i(w, RB_NUM2LL(o)); return;
   case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
     o = rb_big2str(o, 10);
-    return (dest =
-                fio_bstr_write(dest, RSTRING_PTR(o), (size_t)RSTRING_LEN(o)));
-  case RUBY_T_FLOAT: {
-    FIO_STR_INFO_TMP_VAR(buf, 232);
-    buf.len = fio_ftoa(buf.buf, RFLOAT_VALUE(o), 10);
-    dest = fio_bstr_write(dest, buf.buf, buf.len);
-    return dest;
-  }
+    iodine_json_w_write(w, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
+    return;
+  case RUBY_T_FLOAT: iodine_json_w_f(w, RFLOAT_VALUE(o)); return;
   case RUBY_T_SYMBOL: o = rb_sym2str(o); /* fall through */
   case RUBY_T_STRING:
   add_string:
-    dest = fio_bstr_write(dest, "\"", 1);
-    dest = fio_bstr_write_escape(dest, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
-    dest = fio_bstr_write(dest, "\"", 1);
-    return dest;
+    iodine_json_w_string(w, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
+    return;
   default:
     if (1) {
       VALUE tmp = rb_check_funcall(o, IODINE_TO_JSON_ID, 0, NULL);
-      if (tmp != RUBY_Qundef && RB_TYPE_P(tmp, RUBY_T_STRING))
-        return (dest = fio_bstr_write(dest,
-                                      RSTRING_PTR(tmp),
-                                      (size_t)RSTRING_LEN(tmp)));
+      if (tmp != RUBY_Qundef && RB_TYPE_P(tmp, RUBY_T_STRING)) {
+        iodine_json_w_write(w, RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));
+        return;
+      }
       o = rb_funcallv(o, IODINE_TO_S_ID, 0, NULL);
     }
     if (!RB_TYPE_P(o, RUBY_T_STRING)) {
       FIO_LOG_ERROR("Iodine::JSON.stringify called with an object that doesn't "
                     "respond to #to_s.");
-      return (dest = fio_bstr_write(dest, "null", 4));
+      iodine_json_w_write(w, "null", 4);
+      return;
     }
     goto add_string;
   }
+}
+
+/* Converts a VALUE to a fio_bstr */
+static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
+  iodine_json_w_s w = {.s = dest, .len = 0, .capa = 0};
+  if (dest) {
+    fio_str_info_s i = fio_bstr_info(dest);
+    w.len = i.len;
+    w.capa = i.capa;
+  }
+  iodine_json_w_value(&w, o);
+  return fio_bstr_len_set(w.s, w.len);
 }
 
 /* *****************************************************************************
@@ -147,21 +413,20 @@ JSON Beautifier - Pretty-Printed JSON Output
 ***************************************************************************** */
 
 typedef struct {
-  char *o;
+  iodine_json_w_s w;
   size_t t;
 } iodine_json_beautify2bstr_s;
 
-static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *dest,
-                                       VALUE o);
+static void iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d, VALUE o);
 
 FIO_IFUNC void iodine_json_beautify2bstr_pad(iodine_json_beautify2bstr_s *d) {
   if (!d->t)
     return;
-  size_t len = fio_bstr_len(d->o);
-  d->o = fio_bstr_len_set(d->o, len + d->t + 1);
-  char *tmp = d->o + len;
-  *tmp++ = '\n';
-  FIO_MEMSET(tmp, '\t', d->t);
+  iodine_json_w_ch(&d->w, '\n');
+  if (iodine_json_w_need(&d->w, d->t)) {
+    FIO_MEMSET(d->w.s + d->w.len, '\t', d->t);
+    d->w.len += d->t;
+  }
 }
 
 static int iodine_json_hash_each_beautify_callback(VALUE k,
@@ -169,85 +434,81 @@ static int iodine_json_hash_each_beautify_callback(VALUE k,
                                                    VALUE dest_) {
   iodine_json_beautify2bstr_s *d = (iodine_json_beautify2bstr_s *)dest_;
   iodine_json_beautify2bstr_pad(d);
-  d->o = iodine_json_stringify_key(d->o, k);
-  d->o = fio_bstr_write(d->o, ": ", 2);
+  iodine_json_w_key(&d->w, k);
+  iodine_json_w_write(&d->w, ": ", 2);
   iodine_json_beautify2bstr(d, v);
-  d->o = fio_bstr_write(d->o, ",", 1);
+  iodine_json_w_ch(&d->w, ',');
   return ST_CONTINUE;
 }
 
 /* Converts a VALUE to a fio_bstr */
-static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d,
-                                       VALUE o) {
+static void iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d, VALUE o) {
+  iodine_json_w_s *w = &d->w;
   size_t tmp;
   switch (rb_type(o)) {
-  case RUBY_T_NIL: return (d->o = fio_bstr_write(d->o, "null", 4));
-  case RUBY_T_TRUE: return (d->o = fio_bstr_write(d->o, "true", 4));
-  case RUBY_T_FALSE: return (d->o = fio_bstr_write(d->o, "false", 5));
+  case RUBY_T_NIL: iodine_json_w_write(w, "null", 4); return;
+  case RUBY_T_TRUE: iodine_json_w_write(w, "true", 4); return;
+  case RUBY_T_FALSE: iodine_json_w_write(w, "false", 5); return;
   case RUBY_T_ARRAY:
     tmp = rb_array_len(o);
     if (!tmp) {
-      d->o = fio_bstr_write(d->o, "[]", 2);
-      return d->o;
+      iodine_json_w_write(w, "[]", 2);
+      return;
     }
-    d->o = fio_bstr_write(d->o, "[", 1);
+    iodine_json_w_ch(w, '[');
     ++d->t;
     for (size_t i = 0; i < tmp; ++i) {
       iodine_json_beautify2bstr_pad(d);
       iodine_json_beautify2bstr(d, RARRAY_PTR(o)[i]);
-      d->o = fio_bstr_write(d->o, ",", 1);
+      iodine_json_w_ch(w, ',');
     }
-    d->o[fio_bstr_len(d->o) - 1] = '\n';
+    if (FIO_LIKELY(w->len && w->s[w->len - 1] == ','))
+      w->s[w->len - 1] = '\n';
     --d->t;
     iodine_json_beautify2bstr_pad(d);
-    d->o = fio_bstr_write(d->o, "]", 1);
-    return d->o;
+    iodine_json_w_ch(w, ']');
+    return;
   case RUBY_T_HASH:
     tmp = rb_hash_size_num(o);
     if (!tmp) {
-      d->o = fio_bstr_write(d->o, "{}", 2);
-      return d->o;
+      iodine_json_w_write(w, "{}", 2);
+      return;
     }
-    d->o = fio_bstr_write(d->o, "{", 1);
+    iodine_json_w_ch(w, '{');
     ++d->t;
-    rb_hash_foreach(o, iodine_json_hash_each_beautify_callback, (VALUE)(d));
-    d->o[fio_bstr_len(d->o) - 1] = '\n';
+    rb_hash_foreach(o, iodine_json_hash_each_beautify_callback, (VALUE)d);
+    if (FIO_LIKELY(w->len && w->s[w->len - 1] == ','))
+      w->s[w->len - 1] = '\n';
     --d->t;
     iodine_json_beautify2bstr_pad(d);
-    d->o = fio_bstr_write(d->o, "}", 1);
-    return d->o;
-  case RUBY_T_FIXNUM: return (d->o = fio_bstr_write_i(d->o, RB_NUM2LL(o)));
+    iodine_json_w_ch(w, '}');
+    return;
+  case RUBY_T_FIXNUM: iodine_json_w_i(w, RB_NUM2LL(o)); return;
   case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
     o = rb_big2str(o, 10);
-    return (d->o =
-                fio_bstr_write(d->o, RSTRING_PTR(o), (size_t)RSTRING_LEN(o)));
-  case RUBY_T_FLOAT: {
-    FIO_STR_INFO_TMP_VAR(buf, 232);
-    buf.len = fio_ftoa(buf.buf, RFLOAT_VALUE(o), 10);
-    d->o = fio_bstr_write(d->o, buf.buf, buf.len);
-    return d->o;
-  }
+    iodine_json_w_write(w, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
+    return;
+  case RUBY_T_FLOAT: iodine_json_w_f(w, RFLOAT_VALUE(o)); return;
   case RUBY_T_SYMBOL: o = rb_sym2str(o); /* fall through */
   case RUBY_T_STRING:
   add_string:
-    d->o = fio_bstr_write(d->o, "\"", 1);
-    d->o = fio_bstr_write_escape(d->o, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
-    d->o = fio_bstr_write(d->o, "\"", 1);
-    return d->o;
+    iodine_json_w_string(w, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
+    return;
   default:
     if (1) {
       VALUE tmp = rb_check_funcall(o, IODINE_TO_JSON_ID, 0, NULL);
-      if (tmp != RUBY_Qundef && RB_TYPE_P(tmp, RUBY_T_STRING))
-        return (d->o = fio_bstr_write(d->o,
-                                      RSTRING_PTR(tmp),
-                                      (size_t)RSTRING_LEN(tmp)));
+      if (tmp != RUBY_Qundef && RB_TYPE_P(tmp, RUBY_T_STRING)) {
+        iodine_json_w_write(w, RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));
+        return;
+      }
       o = rb_funcallv(o, IODINE_TO_S_ID, 0, NULL);
       if (RB_TYPE_P(o, RUBY_T_STRING))
         goto add_string;
     }
     FIO_LOG_ERROR("Iodine::JSON.stringify called with an object that doesn't "
                   "respond to neither #to_json nor #to_s.");
-    return (d->o = fio_bstr_write(d->o, "null", 4));
+    iodine_json_w_write(w, "null", 4);
+    return;
   }
 }
 
@@ -440,35 +701,37 @@ This is the faster parsing path used by Iodine::JSON.parse().
 
 /** JSON parser callback implementations for direct Ruby object creation */
 /** NULL object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_null(void *udata) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_null(void *udata) {
   (void)udata;
-  return (void *)Qnil;
+  return (fio_json_obj_result_s){.obj = (void *)Qnil};
 }
 /** TRUE object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_true(void *udata) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_true(void *udata) {
   (void)udata;
-  return (void *)Qtrue;
+  return (fio_json_obj_result_s){.obj = (void *)Qtrue};
 }
 /** FALSE object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_false(void *udata) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_false(void *udata) {
   (void)udata;
-  return (void *)Qfalse;
+  return (fio_json_obj_result_s){.obj = (void *)Qfalse};
 }
 /** Number was detected (long long). Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_number(void *udata, int64_t i) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_number(void *udata,
+                                                        int64_t i) {
   (void)udata;
-  return (void *)(LL2NUM(((long long)i)));
+  return (fio_json_obj_result_s){.obj = (void *)LL2NUM(((long long)i))};
 }
 /** Float was detected (double).Returns new object as `void *`.  */
-FIO_SFUNC void *iodine___json_on_float(void *udata, double f) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_float(void *udata, double f) {
   (void)udata;
-  return (void *)DBL2NUM(f);
+  return (fio_json_obj_result_s){.obj = (void *)DBL2NUM(f)};
 }
 /** String was detected (int / float). update `pos` to point at ending */
-FIO_SFUNC void *iodine___json_on_string(void *udata,
-                                        const void *start,
-                                        size_t len) {
+FIO_SFUNC fio_json_obj_result_s iodine___json_on_string(void *udata,
+                                                        fio_buf_info_s input) {
   (void)udata;
+  const void *start = input.buf;
+  size_t len = input.len;
   VALUE str;
   if (len < 4096) {
     FIO_STR_INFO_TMP_VAR(buf, 4096);
@@ -479,35 +742,72 @@ FIO_SFUNC void *iodine___json_on_string(void *udata,
     str = rb_str_new(tmp, fio_bstr_len(tmp));
     fio_bstr_free(tmp);
   }
-  return (void *)str;
+  return (fio_json_obj_result_s){.obj = (void *)str};
 }
-FIO_SFUNC void *iodine___json_on_string_simple(void *udata,
-                                               const void *start,
-                                               size_t len) {
+FIO_SFUNC fio_json_obj_result_s
+iodine___json_on_string_simple(void *udata, fio_buf_info_s input) {
   (void)udata;
-  VALUE str = rb_str_new((const char *)start, len);
-  return (void *)str;
+  VALUE str = rb_str_new(input.buf, input.len);
+  return (fio_json_obj_result_s){.obj = (void *)str};
 }
-/** Dictionary was detected. Returns ctx to hash map or NULL on error. */
-FIO_SFUNC void *iodine___json_on_map(void *udata, void *ctx, void *at) {
-  (void)udata, (void)ctx, (void)at;
-  VALUE map = rb_hash_new();
-  return (void *)map;
-}
-/** Array was detected. Returns ctx to array or NULL on error. */
-FIO_SFUNC void *iodine___json_on_array(void *udata, void *ctx, void *at) {
-  (void)udata, (void)ctx, (void)at;
-  VALUE ary = rb_ary_new();
-  return (void *)ary;
-}
-/** Map entry detected. Returns non-zero on error. */
-FIO_SFUNC int iodine___json_map_push(void *udata,
-                                     void *ctx,
-                                     void *key,
-                                     void *val) {
+/** Dictionary opens at `key` in `ctx` (NULL ctx = owned root). Places the
+ * map in its parent, reusing an existing Hash at `key` when present
+ * (duplicate map keys merge, matching the FIOBJ parser). JSON parsing keeps
+ * last-wins semantics: replaced values are NOT reported through `old` -
+ * conflict resolution is reserved for the HTTP params layer. */
+FIO_SFUNC fio_json_push_result_s iodine___json_on_map(void *udata,
+                                                      void *ctx,
+                                                      fio_buf_info_s key) {
   (void)udata;
-  rb_hash_aset((VALUE)ctx, (VALUE)key, (VALUE)val);
-  return 0;
+  VALUE map;
+  if (!ctx)
+    return (fio_json_push_result_s){.obj = (void *)rb_hash_new()};
+  if (!key.buf) { /* array parent: append */
+    map = rb_hash_new();
+    rb_ary_push((VALUE)ctx, map);
+    return (fio_json_push_result_s){.obj = (void *)map};
+  }
+  VALUE k = rb_str_new(key.buf, (long)key.len);
+  VALUE cur = rb_hash_lookup2((VALUE)ctx, k, Qundef);
+  if (cur != Qundef && RB_TYPE_P(cur, RUBY_T_HASH))
+    return (fio_json_push_result_s){
+        .obj = (void *)cur}; /* reuse matching map (merge) */
+  map = rb_hash_new();
+  rb_hash_aset((VALUE)ctx, k, map);
+  return (fio_json_push_result_s){.obj = (void *)map};
+}
+/** Array opens at `key` in `ctx` (NULL ctx = owned root). Same placement
+ * and reuse contract as iodine___json_on_map (last-wins, `old` unused). */
+FIO_SFUNC fio_json_push_result_s iodine___json_on_array(void *udata,
+                                                        void *ctx,
+                                                        fio_buf_info_s key) {
+  (void)udata;
+  VALUE ary;
+  if (!ctx)
+    return (fio_json_push_result_s){.obj = (void *)rb_ary_new()};
+  if (!key.buf) { /* array parent: append */
+    ary = rb_ary_new();
+    rb_ary_push((VALUE)ctx, ary);
+    return (fio_json_push_result_s){.obj = (void *)ary};
+  }
+  VALUE k = rb_str_new(key.buf, (long)key.len);
+  VALUE cur = rb_hash_lookup2((VALUE)ctx, k, Qundef);
+  if (cur != Qundef && RB_TYPE_P(cur, RUBY_T_ARRAY))
+    return (fio_json_push_result_s){.obj =
+                                        (void *)cur}; /* reuse matching array */
+  ary = rb_ary_new();
+  rb_hash_aset((VALUE)ctx, k, ary);
+  return (fio_json_push_result_s){.obj = (void *)ary};
+}
+/** Map entry detected (`key` is borrowed). Last value wins, matching the
+ * FIOBJ parser. Returns no replaced object to the parser. */
+FIO_SFUNC fio_json_obj_result_s iodine___json_map_push(void *udata,
+                                                       void *map,
+                                                       fio_buf_info_s key,
+                                                       void *val) {
+  (void)udata;
+  rb_hash_aset((VALUE)map, rb_str_new(key.buf, (long)key.len), (VALUE)val);
+  return (fio_json_obj_result_s){0};
 }
 /** Array entry detected. Returns non-zero on error. */
 FIO_SFUNC int iodine___json_array_push(void *udata, void *ctx, void *val) {
@@ -515,16 +815,19 @@ FIO_SFUNC int iodine___json_array_push(void *udata, void *ctx, void *val) {
   rb_ary_push((VALUE)ctx, (VALUE)val);
   return 0;
 }
-/** Called for the `key` element in case of error or NULL value. */
+/** Conflict-resolution type checks (values are Ruby objects). */
+FIO_SFUNC int iodine___json_is_array(void *udata, void *ctx) {
+  (void)udata;
+  return RB_TYPE_P((VALUE)ctx, RUBY_T_ARRAY);
+}
+FIO_SFUNC int iodine___json_is_map(void *udata, void *ctx) {
+  (void)udata;
+  return RB_TYPE_P((VALUE)ctx, RUBY_T_HASH);
+}
+/** Ruby owns values; no manual cleanup is required on parser errors. */
 FIO_SFUNC void iodine___json_free_unused_object(void *udata, void *ctx) {
-  (void)udata, (void)ctx;
+  (void)udata, (void)ctx; /* Ruby objects are GC managed */
 }
-/** the JSON parsing encountered an error - what to do with ctx? */
-FIO_SFUNC void *iodine___json_on_error(void *udata, void *ctx) {
-  (void)udata, (void)ctx;
-  return (void *)Qnil;
-}
-
 static fio_json_parser_callbacks_s IODINE_JSON_PARSER_CALLBACKS = {
     .on_null = iodine___json_on_null,
     .on_true = iodine___json_on_true,
@@ -537,8 +840,9 @@ static fio_json_parser_callbacks_s IODINE_JSON_PARSER_CALLBACKS = {
     .on_array = iodine___json_on_array,
     .map_push = iodine___json_map_push,
     .array_push = iodine___json_array_push,
+    .is_array = iodine___json_is_array,
+    .is_map = iodine___json_is_map,
     .free_unused_object = iodine___json_free_unused_object,
-    .on_error = iodine___json_on_error,
 };
 
 /* *****************************************************************************
@@ -563,10 +867,11 @@ static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
   STORE.gc_stop();
   fio_json_result_s result = fio_json_parse(&IODINE_JSON_PARSER_CALLBACKS,
                                             NULL,
+                                            NULL,
                                             RSTRING_PTR(rstr),
                                             RSTRING_LEN(rstr));
   STORE.gc_start();
-  r = (VALUE)(result.ctx);
+  r = result.err ? Qnil : (VALUE)result.ctx;
   STORE.cache(r);
   rb_str_buf_new(1); /* force GC to run if Ruby needs it */
   return r;
@@ -630,12 +935,16 @@ static VALUE iodine_json_pretty(VALUE self, VALUE object) {
  */
 static VALUE iodine_json_beautify(VALUE self, VALUE object) {
   VALUE r = Qnil;
-  iodine_json_beautify2bstr_s dest = {
-      .o = fio_bstr_reserve(NULL, ((size_t)1 << 12) - 64),
-  };
+  iodine_json_beautify2bstr_s dest = {.w = {.s = NULL, .len = 0, .capa = 0},
+                                      .t = 0};
+  dest.w.s = fio_bstr_reserve(NULL, ((size_t)1 << 12) - 64);
+  fio_str_info_s i = fio_bstr_info(dest.w.s);
+  dest.w.len = i.len;
+  dest.w.capa = i.capa;
   iodine_json_beautify2bstr(&dest, object);
-  r = rb_str_new(dest.o, (long)fio_bstr_len(dest.o));
-  fio_bstr_free(dest.o);
+  dest.w.s = fio_bstr_len_set(dest.w.s, dest.w.len);
+  r = rb_str_new(dest.w.s, (long)fio_bstr_len(dest.w.s));
+  fio_bstr_free(dest.w.s);
   return r;
 }
 

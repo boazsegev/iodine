@@ -149,7 +149,11 @@ typedef enum {
   IODINE_CONNECTION_STORE_opath,  /**< Cached original path string */
   IODINE_CONNECTION_STORE_query,  /**< Cached query string */
   IODINE_CONNECTION_STORE_version, /**< Cached HTTP version string */
-  IODINE_CONNECTION_STORE_tmp, /**< Temporary storage during GC-sensitive ops */
+  IODINE_CONNECTION_STORE_tmp, /**< Active upload / temporary GC root */
+  IODINE_CONNECTION_STORE_params, /**< Memoized params Hash (iodine_params.h) */
+  IODINE_CONNECTION_STORE_params_stage, /**< Body parse staging Hash */
+  IODINE_CONNECTION_STORE_params_input, /**< Guarded JSON input copy */
+  IODINE_CONNECTION_STORE_params_exception, /**< Pending parser exception */
   IODINE_CONNECTION_STORE_FINISH, /**< Sentinel value (array size) */
 } iodine_connection_store_e;
 
@@ -164,6 +168,9 @@ typedef enum {
   IODINE_CONNECTION_UPGRADE = (2 | 4),  /**< Any upgrade (SSE or WS) */
   IODINE_CONNECTION_CLOSED = 8,         /**< Connection close scheduled */
   IODINE_CONNECTION_CLIENT = 16,        /**< This is a client connection */
+  IODINE_CONNECTION_PARAMS_QUERY = 32, /**< Query merged into params Hash */
+  IODINE_CONNECTION_PARAMS_BODY = 64,  /**< Body merged into params Hash */
+  IODINE_CONNECTION_PARAMS_HAS_UPLOAD = 128, /**< Upload cleanup may be needed */
 } iodine_connection_flags_e;
 
 /**
@@ -181,8 +188,13 @@ typedef struct iodine_connection_s {
   fio_http_s *http;                            /**< facil.io HTTP handle */
   VALUE store[IODINE_CONNECTION_STORE_FINISH]; /**< Cached Ruby objects */
   iodine_minimap_s map;                        /**< Header storage map */
+  struct iodine_upload_s *open_uploads;        /**< Params cleanup list */
   iodine_connection_flags_e flags;             /**< Connection state flags */
+  size_t params_spent; /**< Params field budget spent (iodine_params.h) */
 } iodine_connection_s;
+
+/* Implemented in iodine_params.h (included after this header). */
+static void iodine_params_on_connection_free(iodine_connection_s *c);
 
 static size_t iodine_connection_data_size(const void *ptr_) {
   iodine_connection_s *c = (iodine_connection_s *)ptr_;
@@ -192,6 +204,7 @@ static size_t iodine_connection_data_size(const void *ptr_) {
 
 static void iodine_connection_free(void *ptr_) {
   iodine_connection_s *c = (iodine_connection_s *)ptr_;
+  iodine_params_on_connection_free(c);
   fio_http_free(c->http);
   iodine_hmap_destroy(&c->map.map);
   FIO_LEAK_COUNTER_ON_FREE(iodine_connection);
@@ -251,6 +264,9 @@ static iodine_connection_s *iodine_connection_ptr(VALUE self) {
                        c);
   return c;
 }
+
+/* Defined in iodine_params.h (included after this header). */
+static void iodine_params_on_finish(iodine_connection_s *c);
 
 /** Creates (and allocates) a new Iodine::Connection object. */
 static VALUE iodine_connection_create_from_io(fio_io_s *io) {
@@ -1927,6 +1943,7 @@ static void iodine_io_http_on_http(fio_http_s *h) {
                                 IODINE_ON_FINISH_ID,                           \
                                 1,                                             \
                                 &connection);                                  \
+      iodine_params_on_finish(c);                                             \
       fio_http_free(c->http);                                                  \
       c->http = NULL;                                                          \
       c->io = NULL;                                                            \
@@ -1965,6 +1982,7 @@ IODINE_CONNECTION_DEF_CB(on_close, IODINE_ON_CLOSE_ID, 1);
                             IODINE_ON_FINISH_ID,                               \
                             1,                                                 \
                             &connection);                                      \
+    iodine_params_on_finish(c);                                                \
     fio_http_free(c->http);                                                    \
     c->http = NULL;                                                            \
     c->io = NULL;                                                              \
@@ -2113,6 +2131,7 @@ static void iodine_io_http_on_finish(fio_http_s *h) {
     }
     fio_http_free(h);
   }
+  iodine_params_on_finish(c);
   c->http = NULL;
   c->io = NULL;
   STORE.release(connection);

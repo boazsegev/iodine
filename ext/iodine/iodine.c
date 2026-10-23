@@ -240,6 +240,7 @@ void Init_iodine(void) {
   Init_Iodine_PubSub_Message();
   Init_Iodine_TLS();
   Init_Iodine_Connection();
+  Init_Iodine_Params();
   /* make sure the Iodine.run / async methods are available pre-start */
   fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)fio_cli_get_i("-t"));
 #ifdef SIGUSR1

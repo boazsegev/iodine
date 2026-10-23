@@ -3439,16 +3439,11 @@ For core types and everyday helpers, see [`./000 core.md`](./000%20core.md). Thi
 
 facil.io follows [semantic versioning](https://semver.org). These macros are defined in [`./000 core.h`](./000%20core.h) and can be used to detect the library version at compile time.
 
-- **`FIO_VERSION_MAJOR`** — Major version. API/ABI breaking changes bump this.  
-  Default: `0`
-- **`FIO_VERSION_MINOR`** — Minor version. Significant features or deprecations. May break ABI.  
-  Default: `8`
-- **`FIO_VERSION_PATCH`** — Patch version. Bug fixes and small additions.  
-  Default: `0`
-- **`FIO_VERSION_BUILD`** — Optional build metadata, such as `"rc.02"`.  
-  Default: `"rc.02"`
-- **`FIO_VERSION_STRING`** — Full version as a string literal, built from the macros above. The guard is `#ifdef FIO_VERSION_BUILD`, so the build metadata is included whenever `FIO_VERSION_BUILD` is defined, including when defined as an empty string: `"0.8.0-rc.02"`. If `FIO_VERSION_BUILD` is undefined, the string reads `"0.8.0"`.  
-  Because [`./000 core.h`](./000%20core.h) unconditionally `#define`s `FIO_VERSION_BUILD "rc.02"` before the `#ifdef` guard, omitting the suffix requires `#undef FIO_VERSION_BUILD` before inclusion, not merely leaving it undefined.
+- **`FIO_VERSION_MAJOR`** — Major version. API/ABI breaking changes bump this.
+- **`FIO_VERSION_MINOR`** — Minor version. Significant features or deprecations. May break ABI.
+- **`FIO_VERSION_PATCH`** — Patch version. Bug fixes and small additions.
+- **`FIO_VERSION_BUILD`** — Optional build metadata, such as `"rc.02"`.
+- **`FIO_VERSION_STRING`** — Full version as a string literal, built from the macros above. The guard is `#ifdef FIO_VERSION_BUILD`, so the build metadata is included whenever `FIO_VERSION_BUILD` is defined, including when defined as an empty string. For example: `"0.8.0"` or `"0.8.0-rc.02"`.
 
 Override these only when you are vendoring a fork or need to report a custom build string.
 
@@ -3591,9 +3586,11 @@ Result container for `fio_aton`. Read the union member that matches `is_float`, 
 FIO_SFUNC fio_aton_s fio_aton(char **pstr);
 ```
 
-Auto-detects integers and floats. Skips leading whitespace, recognizes `0x` / `0b` / octal prefixes, and accepts `inf`, `infinity`, and `nan`. Updates `*pstr` to the first unconverted character. Sets `.err` on overflow or bad format.
+Auto-detects integers and floats. Skips leading whitespace, recognizes `0x` / `0b` / octal prefixes (`x` / `b` without the zero also work), and accepts `inf`, `infinity`, and `nan`. Updates `*pstr` to the first unconverted character. Sets `.err` on overflow or bad format; input with no digits (such as `-`, `.` or `e5`) sets `.err` and leaves `*pstr` unchanged. An exponent marker without digits (the `e` in `1e`) isn't consumed, as with `strtod`.
 
-**Note:** not an exact `strtod` replacement; rounding differences are possible.
+Binary followed by `f` (`0b...f`) is read as a float's raw IEEE 754 bits, which is exact and keeps the sign and NaN payload; `fio_ftoa(dest, num, 2)` writes this format. Without the `f`, binary is an integer. A leading `-` negates binary integers and flips the sign bit of `0b...f` floats. `nan` returns the standard quiet NaN (`0x7FF8000000000000`, or `0xFFF8000000000000` for `-nan`); C's `nan(...)` payload syntax isn't supported, so use `0b...f` to carry a payload.
+
+Decimal floats are correctly rounded, matching `strtod` bit for bit (Clinger fast path + Eisel-Lemire; inputs with over 19 significant digits that could round either way defer to `strtod`). A leading zero followed by a fraction or exponent is decimal, not octal (`012.5` is `12.5`, as in C). Hex floats (`0x1.8p1`) are supported but not guaranteed correctly rounded beyond 64 mantissa bits.
 
 ### Strict, Bounded Parsing (wire-safe)
 
@@ -3633,7 +3630,7 @@ Parses an unsigned `uint64_t`, hex digits only - unlike `fio_atol16u`, a `0x` pr
 SFUNC int64_t fio_atol(char **pstr);
 ```
 
-Parses a signed `int64_t`. Accepts base 10, octal (`0...`), hex (`0x...` or `x...`), and binary (`0b...` or `b...`). Updates `*pstr` past the number.
+Parses a signed `int64_t`. Accepts base 10, octal (`0...`), hex (`0x...` or `x...`), and binary (`0b...` or `b...`). A prefix counts only when a valid digit follows it, so `"0x"` reads as `0` and stops at the `x`. Updates `*pstr` past the number.
 
 #### `fio_atof`
 
@@ -3641,7 +3638,7 @@ Parses a signed `int64_t`. Accepts base 10, octal (`0...`), hex (`0x...` or `x..
 SFUNC double fio_atof(char **pstr);
 ```
 
-Parses a double. Wraps `strtod` for most inputs. The source also attempts to accept a raw `0b...` binary bit-pattern, but the detection condition looks fragile.
+Parses a double using `fio_aton`, so results are correctly rounded and don't depend on the C locale. Unlike `fio_aton`, leading zeros are decimal (`"0123"` is `123.0`), and binary (`0b...`, with or without the `f` suffix, after an optional sign) is always read as raw IEEE 754 bits. Integers are converted to `double`. On a format error it returns `0` without moving `*pstr`, like `strtod`. Unlike `strtod`, it doesn't set `errno` to `ERANGE` and doesn't accept `nan(...)`.
 
 #### `fio_ftoa`
 
@@ -3649,7 +3646,7 @@ Parses a double. Wraps `strtod` for most inputs. The source also attempts to acc
 SFUNC size_t fio_ftoa(char *dest, double num, uint8_t base);
 ```
 
-Writes `num` to `dest` in `base` (2, 10, or 16; unsupported bases silently fall back to 10). No prefixes are added. Returns bytes written excluding NUL.
+Writes `num` to `dest` in `base` (2, 10, or 16; unsupported bases silently fall back to 10). Base 2 writes the raw IEEE 754 bits as `0b...f`, which `fio_aton` and `fio_atof` read back exactly. Base 16 writes a C99 `%a` hex float (such as `-0x1.8p+0`, or `0x0.0000000000001p-1022` for the smallest subnormal), which `strtod`, `fio_aton` and `fio_atof` read back exactly. `inf` and `nan` print as `Infinity` and `NaN` in bases 10 and 16. Returns bytes written excluding NUL.
 
 **Note:** provide at least 130 bytes for base 2. Special values `inf` and `nan` produce `"Infinity"` / `"NaN"`.
 
@@ -5477,21 +5474,27 @@ Opens `filename` with POSIX `open` semantics. If `filename` starts with `"~/"` (
 SFUNC int fio_filename_tmp(void);
 ```
 
-Creates a temporary file and returns its descriptor. Tries `TMPDIR`, `TMP`, `TEMP`, `P_tmpdir`, then the current directory. On Linux it attempts `O_TMPFILE` first; otherwise it builds a name prefixed with `facil_io_tmp_` and opens with `O_CREAT | O_EXCL`.
+Creates an anonymous temporary file and returns its descriptor. Tries `TMPDIR`, `TMP`, `TEMP`, `P_tmpdir`, then the current directory. On Linux it attempts `O_TMPFILE` first; otherwise it builds a name prefixed with `facil_io_tmp_` and opens with `O_CREAT | O_EXCL`. On POSIX systems the name is unlinked right after the file is opened; on Windows the file is opened with delete-on-close (`O_TEMPORARY`). Either way, the file is removed once the descriptor is closed (or the process exits), so no temporary files are left behind.
 
 **Returns:** file descriptor on success, `-1` on error.
 
 #### `fio_filename_overwrite`
 
 ```c
-FIO_IFUNC int fio_filename_overwrite(const char *filename,
-                                     const void *buf,
-                                     size_t len);
+SFUNC int fio_filename_overwrite(const char *filename,
+                                 const void *buf,
+                                 size_t len);
 ```
 
-Opens `filename` with `O_RDWR | O_CREAT | O_TRUNC`, writes `len` bytes from `buf`, and closes the file.
+Overwrites `filename` with `len` bytes from `buf`, atomically replacing any existing file: readers see either the old file or the complete new one.
 
-**Returns:** `0` on success, `-1` on error. On error the file state is undefined.
+The data is written to a new sibling file in the target's folder (`<filename>.fio-tmp-<random>`, opened with `O_CREAT | O_EXCL`, mode `0666` minus the `umask`), flushed to storage (`fsync`; `_commit` on Windows) and renamed over `filename` (`rename`; `MoveFileExA` with `MOVEFILE_REPLACE_EXISTING` on Windows). A leading `"~/"` (or `"~\\"` on Windows) is expanded exactly as by `fio_filename_open`. An empty buffer (`len == 0`) creates an empty file.
+
+**Durability:** exactly one `fsync` per save, on the new file before the rename. This makes the replace atomic across crashes: after a crash, `filename` holds either the old or the complete new content, never a partial or empty file. The folder isn't `fsync`ed (it would cost a second blocking call; `syncfs` flushes the whole file system), so the rename itself may not survive a crash (or power loss) right after the save returns: `filename` then still holds the previous version (or doesn't exist, if it was new). Call `fsync` on the folder yourself if you need the rename to be durable.
+
+**Returns:** `0` on success, `-1` on error (`errno` is preserved from the failing call; `EINVAL` for a missing `filename`, or `buf == NULL` with `len > 0`). On error, any existing `filename` is untouched and the sibling file is removed. On Windows, a failed `MoveFileExA` maps `GetLastError()` to `errno`: `ENOENT` (file / path not found), `EACCES` (access denied), `EBUSY` (sharing / lock violation), `EEXIST`, `ENOSPC` (disk full), `EXDEV` (not the same device), otherwise `EIO`.
+
+**Note:** uses fixed size stack buffers (zero allocations); over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`). `fio_fd_save` does the same with a file descriptor as the source.
 
 ### Removing Files and Folders
 
@@ -5580,7 +5583,7 @@ Writes `len` bytes to `fd`, fragmenting the syscall into `write` blocks of up to
 FIO_IFUNC size_t fio_fd_read(int fd, void *buf, size_t len, off_t start_at);
 ```
 
-Reads up to `len` bytes from `fd` starting at `start_at`. On POSIX systems with `pread`, the file offset is preserved; otherwise it seeks. Reads are fragmented to `1 << 27` byte chunks. Retries on `EINTR`.
+Reads up to `len` bytes from `fd` starting at `start_at`. On POSIX systems with `pread`, the file offset is preserved; otherwise it seeks. Reads are fragmented to `1 << 27` byte chunks. Retries on `EINTR`, and keeps reading after partial reads, so fewer than `len` bytes are returned only at EOF or on error (`errno` is set by the failing call on error and left unchanged at EOF - clear it first to tell them apart).
 
 **Parameters:**
 - `fd` - file descriptor
@@ -5589,6 +5592,20 @@ Reads up to `len` bytes from `fd` starting at `start_at`. On POSIX systems with 
 - `start_at` - offset; negative values seek from end
 
 **Returns:** bytes read, or `0` on error / EOF. Sets `errno = ENOENT` if `fd == -1`, `buf == NULL`, or `len == 0`.
+
+#### `fio_fd_save`
+
+```c
+SFUNC int fio_fd_save(int fd, const char *filename, size_t len);
+```
+
+Saves the first `len` bytes of the file `fd` (`[0, len)`) to `filename`, with the same atomic replace semantics, `"~/"` expansion and cleanup guarantees as `fio_filename_overwrite` (both use the same internal routine).
+
+On Linux the copy is done by the kernel (`copy_file_range`, which may share storage - reflink - on copy-on-write file systems). If the kernel copy isn't available or stops (for example `EXDEV`, `ENOSYS`, `EINVAL`, `EOPNOTSUPP`, or an early `0`), the copy continues from where it stopped with positional block reads (`fio_fd_read`) and writes, which report any real error. Elsewhere only the block copy is used.
+
+`fd` must be readable; its content isn't changed (its file offset may move on systems without `pread`). A source shorter than `len` fails with `errno == EIO` (or the read error's `errno`), never saving truncated data.
+
+**Returns:** `0` on success, `-1` on error (`EBADF` if `fd == -1`).
 
 ### File Information
 
@@ -6247,201 +6264,6 @@ size_t parse_some_http(char *data, size_t len, void *udata) {
 For real incremental parsing, keep `fio_http1_parser_s` with the connection and
 preserve / retry unconsumed bytes when `fio_http1_parse` returns less than the
 available buffer length.
-# JSON Parser
-
-```c
-#define FIO_JSON
-#include "fio-stl.h"
-```
-
-A non-strict, streaming, callback-based JSON parser. It does not build a tree for you; it calls your callbacks for each value and lets you decide what to construct. Implemented in [`./004 json.h`](./004%20json.h). Depends on `FIO_ATOL`, which is included automatically.
-
-The parser tolerates trailing commas, comments (`//`, `/* */`, `#`), newlines inside strings, hex/octal/binary numbers, `NaN`, and `Infinity`.
-
-### Configuration Macros
-
-#### `FIO_JSON_MAX_DEPTH`
-
-```c
-#ifndef FIO_JSON_MAX_DEPTH
-#define FIO_JSON_MAX_DEPTH 128
-#endif
-```
-
-Maximum JSON nesting depth. Must be less than `65536`. Deeper input aborts with an error.
-
-#### `FIO_JSON_USE_FIO_ATON`
-
-```c
-#ifndef FIO_JSON_USE_FIO_ATON
-#define FIO_JSON_USE_FIO_ATON 0
-#endif
-```
-
-Set to `1` to use `fio_aton` for number parsing instead of the built-in logic.
-
-### Types
-
-#### `fio_json_parser_callbacks_s`
-
-```c
-typedef struct {
-  void *(*on_null)(void *udata);
-  void *(*on_true)(void *udata);
-  void *(*on_false)(void *udata);
-  void *(*on_number)(void *udata, int64_t i);
-  void *(*on_float)(void *udata, double f);
-  void *(*on_string)(void *udata, const void *start, size_t len);
-  void *(*on_string_simple)(void *udata, const void *start, size_t len);
-  void *(*on_map)(void *udata, void *ctx, void *at);
-  void *(*on_array)(void *udata, void *ctx, void *at);
-  int (*map_push)(void *udata, void *ctx, void *key, void *value);
-  int (*array_push)(void *udata, void *ctx, void *value);
-  int (*array_finished)(void *udata, void *ctx);
-  int (*map_finished)(void *udata, void *ctx);
-  int (*is_array)(void *udata, void *ctx);
-  int (*is_map)(void *udata, void *ctx);
-  void (*free_unused_object)(void *udata, void *ctx);
-  void *(*on_error)(void *udata, void *ctx);
-} fio_json_parser_callbacks_s;
-```
-
-Callback table for the parser. All callbacks receive `udata` as their first argument, so the same `static const` table can be shared across concurrent calls.
-
-**Required callbacks:** `on_null`, `on_true`, `on_false`, `on_number`, `on_float`, `on_string` (or `on_string_simple`), `on_map`, `on_array`, `map_push`, `array_push`, `free_unused_object`.
-
-**Optional callbacks:** `on_string_simple`, `array_finished`, `map_finished`, `is_array`, `is_map`, `on_error`. Missing optional callbacks default to no-ops. If only one of `on_string` / `on_string_simple` is provided, the other uses it as a fallback.
-
-**Ownership:** callbacks that return `void *` transfer ownership to the parser. The parser passes objects to `map_push` / `array_push` or calls `free_unused_object` for discarded objects. `on_error` receives ownership of any partial result.
-
-#### `fio_json_result_s`
-
-```c
-typedef struct {
-  void *ctx;
-  size_t stop_pos;
-  int err;
-} fio_json_result_s;
-```
-
-Parse result.
-
-**Members:**
-- `ctx` - root object returned by callbacks, or `NULL`
-- `stop_pos` - number of bytes consumed from the input
-- `err` - non-zero if parsing stopped because of an error
-
-### API Functions
-
-#### `fio_json_parse`
-
-```c
-SFUNC fio_json_result_s fio_json_parse(fio_json_parser_callbacks_s *settings,
-                                       void *udata,
-                                       const char *json_string,
-                                       const size_t len);
-```
-
-Parses `json_string` up to `len` bytes. Stops as soon as a complete top-level value is consumed or an error occurs.
-
-**Parameters:**
-- `settings` - callback table
-- `udata` - per-call user data threaded through every callback
-- `json_string` - input buffer
-- `len` - input length in bytes
-
-**Returns:** `fio_json_result_s` with the root context, bytes consumed, and error flag.
-
-**Note:** a UTF-8 BOM at the start of the buffer is skipped automatically.
-
-**Guard-byte contract:** number and quote-less key scanning may read the byte at `json_string[len]` while deciding a token ended (see the `fio_atol*` guard-byte contract). Callers MUST keep that byte readable and non-numeric - pass a NUL-terminated string (any `fio_bstr` string qualifies) or append a non-numeric guard byte. Exact-size buffers with no readable byte past `len` violate the contract and will trigger AddressSanitizer.
-
-#### `fio_json_parse_update`
-
-```c
-SFUNC fio_json_result_s fio_json_parse_update(fio_json_parser_callbacks_s *s,
-                                              void *udata,
-                                              void *ctx,
-                                              const char *start,
-                                              const size_t len);
-```
-
-Merges JSON data into an existing object (`ctx`). The input must be wrapped in an aggregate of the same type as `ctx`. Requires `is_array` and `is_map` callbacks.
-
-**Parameters:**
-- `s` - callback table
-- `udata` - per-call user data
-- `ctx` - existing object to update
-- `start` - input buffer
-- `len` - input length
-
-**Returns:** parse result with the (possibly updated) context.
-
-### Example
-
-```c
-#define FIO_JSON
-#define FIO_LOG
-#include "fio-stl.h"
-
-typedef enum { T_NULL, T_TRUE, T_FALSE, T_NUM, T_STR, T_ARR, T_MAP } type_e;
-
-typedef struct obj_s {
-  type_e type;
-  union {
-    int64_t i;
-    struct { char *buf; size_t len; } s;
-    struct { struct obj_s **items; size_t len; } a;
-    struct { struct obj_s **keys; struct obj_s **vals; size_t len; } m;
-  };
-} obj_s;
-
-static obj_s *mk(type_e t) {
-  obj_s *o = calloc(1, sizeof(*o));
-  o->type = t;
-  return o;
-}
-
-static void *on_null(void *u) { (void)u; return mk(T_NULL); }
-static void *on_true(void *u) { (void)u; return mk(T_TRUE); }
-static void *on_false(void *u) { (void)u; return mk(T_FALSE); }
-static void *on_number(void *u, int64_t i) { (void)u; obj_s *o = mk(T_NUM); o->i = i; return o; }
-static void *on_string(void *u, const void *s, size_t l) {
-  (void)u; obj_s *o = mk(T_STR); o->s.buf = malloc(l+1); memcpy(o->s.buf, s, l); o->s.buf[l] = 0; o->s.len = l; return o;
-}
-static void *on_array(void *u, void *c, void *a) { (void)u; (void)c; (void)a; return mk(T_ARR); }
-static void *on_map(void *u, void *c, void *a) { (void)u; (void)c; (void)a; return mk(T_MAP); }
-static int array_push(void *u, void *c, void *v) {
-  (void)u; obj_s *a = c; a->a.items = realloc(a->a.items, (a->a.len+1)*sizeof(*a->a.items)); a->a.items[a->a.len++] = v; return 0;
-}
-static int map_push(void *u, void *c, void *k, void *v) {
-  (void)u; obj_s *m = c;
-  m->m.keys = realloc(m->m.keys, (m->m.len+1)*sizeof(*m->m.keys));
-  m->m.vals = realloc(m->m.vals, (m->m.len+1)*sizeof(*m->m.vals));
-  m->m.keys[m->m.len] = k; m->m.vals[m->m.len] = v; m->m.len++; return 0;
-}
-static void free_obj(void *u, void *c) { (void)u; free(c); }
-
-int main(void) {
-  static const fio_json_parser_callbacks_s cb = {
-    .on_null = on_null, .on_true = on_true, .on_false = on_false,
-    .on_number = on_number, .on_string = on_string, .on_string_simple = on_string,
-    .on_array = on_array, .on_map = on_map,
-    .array_push = array_push, .map_push = map_push,
-    .free_unused_object = free_obj,
-  };
-  const char *json = "{ \"n\": 42, \"s\": \"hi\", \"a\": [1, 2] }";
-  fio_json_result_s r = fio_json_parse(&cb, NULL, json, strlen(json));
-  if (r.err) {
-    FIO_LOG_ERROR("parse error at %zu", r.stop_pos);
-    return 1;
-  }
-  printf("parsed %zu bytes, root ctx %p\n", r.stop_pos, r.ctx);
-  return 0;
-}
-```
-
-------------------------------------------------------------
 # MIME Multipart Parser
 
 ```c
@@ -6471,7 +6293,8 @@ typedef struct {
   void *(*on_file_start)(void *udata,
                          fio_buf_info_s name,
                          fio_buf_info_s filename,
-                         fio_buf_info_s content_type);
+                         fio_buf_info_s content_type,
+                         fio_buf_info_s headers);
   int (*on_file_data)(void *udata, void *file_ctx, fio_buf_info_s data);
   void (*on_file_end)(void *udata, void *file_ctx);
   void (*on_error)(void *udata);
@@ -6485,7 +6308,12 @@ Callback table. All callbacks are optional; unset ones become no-ops.
 - `on_field_start` - optional streaming field start. If set, `on_field` is ignored and `on_field_data` / `on_field_end` are used instead.
 - `on_field_data` - called with a field data chunk. Return non-zero to abort.
 - `on_field_end` - called when a streaming field ends.
-- `on_file_start` - called when a file upload starts. Returns a context pointer for this file.
+- `on_file_start` - called for any part with a `filename` attribute,
+  including `filename=""` (non-NULL `filename.buf`, zero `filename.len`).
+  `headers` borrows the raw part headers, excluding the terminating
+  `\r\n\r\n`; it is valid only during the call. Returns a context pointer
+  for this file. An empty filename is never a field; consumers may skip it
+  by returning `NULL`.
 - `on_file_data` - called with a file data chunk. Return non-zero to abort.
 - `on_file_end` - called when a file upload ends.
 - `on_error` - called on parse error (optional).
@@ -6538,6 +6366,36 @@ Parses `data` as MIME multipart input. `boundary` is the boundary string **witho
 - `err == -2` - need more data. Keep `data + result.consumed ... data + len` and append new data before calling again.
 - `err == -1` - unrecoverable parse error or callback abort.
 
+Each part must fit in the buffer, because a part is only reported once its closing delimiter is found. Use `fio_multipart_stream_parse` to stream large file uploads.
+
+#### `fio_multipart_stream_parse`
+
+```c
+typedef struct { /* private */ } fio_multipart_stream_s;
+
+SFUNC fio_multipart_result_s
+fio_multipart_stream_parse(fio_multipart_stream_s *stream,
+                           const fio_multipart_parser_callbacks_s *callbacks,
+                           void *udata,
+                           fio_buf_info_s boundary,
+                           const char *data,
+                           size_t len);
+
+SFUNC int fio_multipart_stream_close(
+    fio_multipart_stream_s *stream,
+    const fio_multipart_parser_callbacks_s *callbacks,
+    void *udata);
+```
+
+Works like `fio_multipart_parse`, but streams file contents. `on_file_start` is called once a file part's headers arrive, `on_file_data` is called with each chunk as it arrives, and `on_file_end` is called when the file's closing delimiter is found. A file part doesn't need to fit in the buffer, so large uploads can be parsed in bounded memory. Regular fields still need to fit.
+
+- Zero-initialize `stream` (`fio_multipart_stream_s s = {0};`) and pass the same `stream` to every call.
+- On `err == -2`, keep `data + result.consumed ... data + len`, append more data, and call again. While streaming a file, a few trailing bytes (up to the delimiter length) are held back in case they start a delimiter.
+- If the input ends early (while `err == -2`), call `fio_multipart_stream_close`. It calls `on_file_end` for any open file and returns `-1` if a file was left incomplete.
+- If `on_file_data` returns non-zero, `on_file_end` is called and parsing stops with `err == -1`.
+
+`field_count` and `file_count` count the parts completed during each call.
+
 ### Examples
 
 #### Basic field and file parsing
@@ -6551,8 +6409,9 @@ static void *on_field(void *u, fio_buf_info_s n, fio_buf_info_s v, fio_buf_info_
   printf("field %.*s = %.*s\n", (int)n.len, n.buf, (int)v.len, v.buf);
   return NULL;
 }
-static void *on_file_start(void *u, fio_buf_info_s n, fio_buf_info_s fn, fio_buf_info_s ct) {
-  (void)u; (void)ct;
+static void *on_file_start(void *u, fio_buf_info_s n, fio_buf_info_s fn,
+                           fio_buf_info_s ct, fio_buf_info_s headers) {
+  (void)u; (void)ct; (void)headers;
   printf("file %.*s / %.*s\n", (int)n.len, n.buf, (int)fn.len, fn.buf);
   return NULL;
 }
@@ -6860,9 +6719,7 @@ Default target used by `fio_sock_maximize_limits(0)`.
 #define FIO_SOCK_AVOID_UMASK
 ```
 
-If defined before including the implementation, Unix socket creation avoids the temporary `umask` call used when making public Unix sockets. This avoids `umask`'s process-global race, but may affect permissions on systems where `chmod` on Unix socket files is not enough.
-
-Windows behaves as if this concern does not apply.
+Deprecated, has no effect. Unix socket creation never changes the process-global `umask`: public Unix sockets are opened up (`0777`) with `chmod` after `bind`.
 
 ### Types and Flags
 
@@ -6925,8 +6782,8 @@ Flags for `fio_sock_open`, `fio_sock_open2`, and `fio_sock_open_unix`.
 - `FIO_SOCK_NONBLOCK` - set non-blocking mode
 - `FIO_SOCK_TCP` - stream socket
 - `FIO_SOCK_UDP` - datagram socket
-- `FIO_SOCK_UNIX` - Unix domain socket where supported, otherwise `0`
-- `FIO_SOCK_UNIX_PRIVATE` - Unix socket with private permissions where supported, otherwise `0`
+- `FIO_SOCK_UNIX` - Unix domain socket where supported, otherwise `0`. Server sockets are public (mode `0777`): any local process or user may connect.
+- `FIO_SOCK_UNIX_PRIVATE` - Unix socket with private permissions where supported, otherwise `0`. Server sockets keep the process `umask` (connecting needs write permission, so a `umask` of `022` or `077` keeps other users out).
 
 `FIO_SOCK_TCP` and `FIO_SOCK_UDP` are exclusive. If neither is set, network sockets default to TCP.
 
@@ -7222,7 +7079,7 @@ SFUNC fio_buf_info_s fio_sock_peer_addr(fio_socket_i s);
 
 Returns a numeric, human-readable peer address.
 
-On error, returns `{NULL, 0}`. The returned buffer is internal static storage, limited to 63 bytes. Thread-safety is limited to 128 threads / calls.
+On error, returns `{NULL, 0}`. The result points into a shared ring of 128 static 64-byte slots (63 bytes plus a NUL). Each call takes the next slot, so the 129th call reuses the first. Copy the result if you need to keep it.
 
 ### Windows Notes
 
@@ -7234,7 +7091,7 @@ The `fio___sock_wsa*` helpers are internal implementation details, not regular a
 
 Socket handles are owned by the caller and should be closed with `fio_sock_close`. `fio_sock_address_new` results are owned by the caller and should be freed with `fio_sock_address_free`.
 
-Socket operations are as thread-safe as the operating system calls they wrap. `fio_sock_peer_addr` uses shared static buffers and has the 128-call/thread caveat described above. Unix socket creation may touch process-global `umask` unless `FIO_SOCK_AVOID_UMASK` is defined.
+Socket operations are as thread-safe as the operating system calls they wrap. `fio_sock_peer_addr` uses shared static buffers and has the 128-call/thread caveat described above. Unix socket creation never touches the process-global `umask`.
 
 ### Example
 
@@ -7625,110 +7482,6 @@ int main(void) {
   printf("http date: %s\n", date);
 
   return 0;
-}
-```
-
----
-# URL-Encoded Parser
-
-```c
-#define FIO_URL_ENCODED
-#include "fio-stl.h"
-```
-
-A non-allocating parser for `application/x-www-form-urlencoded` data. It splits `name=value&...` pairs and leaves decoding to you. No copies, no drama. Implemented in [`./004 urlencoded.h`](./004%20urlencoded.h).
-
-### Types
-
-#### `fio_url_encoded_parser_callbacks_s`
-
-```c
-typedef struct {
-  void *(*on_pair)(void *udata, fio_buf_info_s name, fio_buf_info_s value);
-  void (*on_error)(void *udata);
-} fio_url_encoded_parser_callbacks_s;
-```
-
-Parser callbacks. `udata` is passed to callbacks and updated from `on_pair`'s return value.
-
-**Members:**
-- `on_pair` - called for each pair. `name` and `value` point into the original input and are **not decoded**. Return non-NULL to continue, or `NULL` to stop.
-- `on_error` - optional and currently unused; reserved because parsers enjoy having a rainy-day pocket.
-
-If `callbacks` or a member is `NULL`, an internal no-op callback is used.
-
-#### `fio_url_encoded_result_s`
-
-```c
-typedef struct {
-  size_t consumed;
-  size_t count;
-  int err;
-} fio_url_encoded_result_s;
-```
-
-Parse result.
-
-**Members:**
-- `consumed` - number of input bytes consumed
-- `count` - number of non-empty pairs reported
-- `err` - non-zero when parsing stopped because `on_pair` returned `NULL`
-
-### Parsing
-
-#### `fio_url_encoded_parse`
-
-```c
-SFUNC fio_url_encoded_result_s
-fio_url_encoded_parse(const fio_url_encoded_parser_callbacks_s *callbacks,
-                      void *udata,
-                      const char *data,
-                      size_t len);
-```
-
-Parses `data[0..len)` as URL-encoded form data.
-
-Rules from the implementation:
-- pairs are separated by `&`
-- the first `=` in a pair separates name and value
-- `name=` is valid and has an empty value
-- `name` is valid and has an empty value
-- `=value` is valid and has an empty name
-- empty pairs such as leading `&` or `&&` are skipped
-- percent escapes are not decoded
-
-Use a string helper such as `fio_string_write_url_dec` when you need decoded values.
-
-**Ownership:** callback buffers borrow the original `data`; keep `data` alive while parsing and copy anything you need later.
-
-**Thread-safety:** parsing uses only caller-provided state and stack locals.
-
-### Example
-
-```c
-#define FIO_URL_ENCODED
-#include "fio-stl.h"
-#include <stdio.h>
-#include <string.h>
-
-static void *on_pair(void *udata, fio_buf_info_s name, fio_buf_info_s value) {
-  printf("%.*s = %.*s\n",
-         (int)name.len, name.buf,
-         (int)value.len, value.buf);
-  return udata;
-}
-
-int main(void) {
-  const char form[] = "name=Bo&empty=&encoded=a%20b&&solo";
-  static const fio_url_encoded_parser_callbacks_s cb = {
-      .on_pair = on_pair,
-  };
-
-  fio_url_encoded_result_s r =
-      fio_url_encoded_parse(&cb, (void *)1, form, strlen(form));
-
-  printf("pairs=%zu consumed=%zu err=%d\n", r.count, r.consumed, r.err);
-  return r.err;
 }
 ```
 
@@ -9128,6 +8881,40 @@ SFUNC int fio_string_write_bin(fio_str_info_s *dest,
 
 Appends a binary representation.
 
+#### `fio_string2primitive`
+
+```c
+typedef enum {
+  FIO_STRING_PRIMITIVE_STRING = 0,
+  FIO_STRING_PRIMITIVE_NULL,
+  FIO_STRING_PRIMITIVE_TRUE,
+  FIO_STRING_PRIMITIVE_FALSE,
+  FIO_STRING_PRIMITIVE_NUMBER,
+  FIO_STRING_PRIMITIVE_FLOAT,
+} fio_string_primitive_e;
+
+typedef struct {
+  union {
+    int64_t i; /* FIO_STRING_PRIMITIVE_NUMBER */
+    double f;  /* FIO_STRING_PRIMITIVE_FLOAT */
+  };
+  fio_string_primitive_e type;
+  uint8_t base; /* 2, 8, 10 or 16 for numerals, otherwise 0 */
+} fio_string_primitive_s;
+
+SFUNC fio_string_primitive_s fio_string2primitive(fio_str_info_s str);
+```
+
+Identifies the primitive a String represents:
+
+- `null` / `nil`, `true`, and `false` (case-insensitive).
+- Any numeral `fio_aton` accepts (decimal, float, hex, binary, octal, `inf`, `nan`, ...), but only if the whole String is consumed. `base` records the numeral's original base, so `"0x1F"` is `31` with `base == 16` and `"0123"` is `83` with `base == 8`.
+- Anything else, including an empty String, is `FIO_STRING_PRIMITIVE_STRING`.
+
+Useful for values that arrive as text (query strings, form fields). Keep the original String if the conversion must be reversible, since `"007"` and `"7"` both become `7`.
+
+**Note**: numerals are parsed by `fio_aton`, so `str` must be followed by a readable non-numeric guard byte (for example, a NUL terminator).
+
 ---
 
 ## printf Support
@@ -9597,6 +9384,120 @@ int main(void) {
 ```
 
 ------------------------------------------------------------
+## Data Store (`fio_data_s`)
+
+```c
+#define FIO_DATA
+#include FIO_INCLUDE_FILE
+```
+
+> **Requires:** `FIO_STR` and `FIO_FILES`. When using `include.h`, these dependencies are resolved automatically. The HTTP and FIOBJ modules include this module.
+
+A seekable data store that keeps data in RAM until it grows past a limit, then moves it to a temporary file. This is the storage behind HTTP request and response bodies, and it's useful anywhere large payloads (such as file uploads) shouldn't stay in memory.
+
+### Settings
+
+```c
+#define FIO_DATA_RAM_LIMIT  (1UL << 17) /* default RAM limit, in bytes */
+#define FIO_DATA_READ_BLOCK (1UL << 14) /* block size without mmap (spilled) */
+/* #define FIO_DATA_NO_MMAP */          /* never memory map temporary files */
+```
+
+The effective RAM limit is clamped below the `fio_bstr` size limit (about 2GiB), so RAM data never hits that limit. Spilled data has no such limit.
+
+`FIO_DATA_NO_MMAP` (define before including the module) disables memory mapping, forcing the heap read buffer described below. It's always the case on systems without `sys/mman.h` (i.e., Windows).
+
+### Type and lifetime
+
+```c
+typedef struct {
+  char *buf;    /* RAM data (fio_bstr); once spilled, the mapping / read buffer */
+  size_t len;   /* total length (bytes actually stored) */
+  size_t pos;   /* reading position */
+  size_t limit; /* RAM limit (0 = FIO_DATA_RAM_LIMIT) */
+  size_t capa;  /* once spilled: bytes mapped, or read buffer capacity */
+  int fd;       /* temporary file, or -1 while in RAM */
+  int err;      /* sticky error flag (see fio_data_is_error) */
+  int map;      /* once spilled: mapping state */
+} fio_data_s;
+
+#define FIO_DATA_INIT /* all zero, except .fd = -1 */
+
+void fio_data_init(fio_data_s *d, size_t ram_limit);
+void fio_data_destroy(fio_data_s *d);
+```
+
+Initialize with `FIO_DATA_INIT` or `fio_data_init`, and release with `fio_data_destroy`. Destroying unmaps and closes the temporary file (if any), clears the error state and resets the store to empty, so it can be reused. It keeps the RAM limit. Treat the fields as read-only and use the functions below.
+
+Temporary files are anonymous (see `fio_filename_tmp`): they have no name in the file system and disappear when closed, so nothing is left behind, even if the process crashes.
+
+### Writing
+
+```c
+int  fio_data_write(fio_data_s *d, const void *data, size_t len);
+void fio_data_expect(fio_data_s *d, size_t len);
+int  fio_data_is_error(fio_data_s *d);
+```
+
+`fio_data_write` appends data. Once the total would exceed the RAM limit, the data moves to a temporary file (and the RAM buffer is released); later writes go to the file. It returns `0` on success or `-1` on error.
+
+**Write errors are sticky.** Writing to a file (moving the RAM data, or appending) is retried for as long as it makes progress. It fails after two consecutive attempts that write nothing (creating the temporary file is also tried twice). The store then enters an error state:
+
+- `fio_data_len` is the number of bytes actually stored. They are a readable prefix of the data written (on a failed move, the RAM data stays intact).
+- The failing write and all later writes return `-1` without writing.
+- RAM never grows past the RAM limit.
+- `fio_data_is_error` returns `1`, until `fio_data_destroy` clears the state.
+
+Memory allocation failures while writing are fatal (`FIO_ASSERT_ALLOC`); read buffer allocation failures aren't (see below).
+
+`fio_data_expect` prepares for `len` more bytes. It reserves RAM, or moves to a temporary file early if the expected size crosses the limit. It's only a hint: if no temporary file can be created, the data stays in RAM and no error state is set (a later write past the limit will fail).
+
+### Reading
+
+```c
+size_t         fio_data_len(fio_data_s *d);
+size_t         fio_data_pos(fio_data_s *d);
+int            fio_data_fd(fio_data_s *d);
+char *         fio_data_bstr(fio_data_s *d);
+size_t         fio_data_seek(fio_data_s *d, ssize_t pos);
+fio_str_info_s fio_data_read(fio_data_s *d, size_t len);
+fio_str_info_s fio_data_read_until(fio_data_s *d, char token, size_t limit);
+```
+
+- **Reads** start at the reading position and advance it by the number of bytes returned. `fio_data_read` returns up to `len` bytes (`(size_t)-1` reads all the remaining data). `fio_data_read_until` stops after `token` (inclusive), after `limit` bytes (ignored if zero), or at EOF. Both return an empty result at EOF.
+- **Spilled data is memory mapped.** On the first read after the data moved to a temporary file, the whole file is mapped (read-only), and reads return pointers into the mapping, just like RAM reads return pointers into the RAM buffer. Nothing is copied, so reading everything at once is as cheap as reading in chunks.
+- **Without mapping** (`FIO_DATA_NO_MMAP`, Windows, or when `mmap` fails, i.e., a file too big for the address space), reads copy the data into a heap buffer that grows to fit the request (no size cap). `fio_data_read_until` reads the file in `FIO_DATA_READ_BLOCK` blocks and stops at the token, so it never reads past `limit`. Read in bounded chunks to keep memory bounded.
+- **Read failures fail the read, loudly.** If the heap buffer can't be allocated, or the file returns fewer bytes than requested (a short read: an I/O error, or a file truncated by someone else), an error is logged and the read returns an empty result (`buf == NULL`, `len == 0`) without moving the reading position, keeping `errno` (`EIO` for a short read that didn't report an error). Interrupted reads (`EINTR`) are retried by `fio_fd_read`. It never returns a truncated read and never aborts (the size may be controlled by a remote sender). Tell this apart from EOF by `fio_data_pos(d) < fio_data_len(d)`. The stored data is intact and the store is NOT put in an error state, so a later or smaller read may succeed. Whole-content users (FIOBJ `fiobj2cstr`, equality, HTTP body parsers) see such a failure as an empty / unequal / failed read, never as truncated data.
+- **Read buffers** are borrowed: any later `fio_data_*` call on the same store MAY invalidate them (don't rely on any call keeping them valid). In particular, a write to a spilled store unmaps the file (it's mapped again, at its new size, by the next read), and `fio_data_destroy` releases everything.
+- **`fio_data_seek`** sets the position and returns it. Negative values count back from the end: `-n` is `len - n`, so `-1` is the last byte (as with `lseek(fd, -1, SEEK_END)`), and values before the start clamp to `0`. Any position at or past the end is EOF: seek to `fio_data_len(d)` (or `SSIZE_MAX`, which is simply a large value) to reach the end. Writes never move the reading position.
+- **`fio_data_fd`** returns the temporary file descriptor (for example, for `sendfile`), or `-1` while the data is in RAM.
+- **`fio_data_bstr`** is the inverse of `fio_data_fd`: it returns the RAM data, a `fio_bstr` holding `fio_data_len(d)` bytes, or `NULL` once the data is in a temporary file (`fio_data_fd(d) != -1`) or before anything was stored. It's borrowed like a read buffer (any later `fio_data_*` call MAY invalidate it). To keep it, take a reference with `fio_bstr_copy` (no data copy) and release it with `fio_bstr_free`; the reference never changes, since later writes copy the buffer before changing it (copy on write). The HTTP/1.1 client sends RAM bodies this way (zero-copy).
+
+### Saving
+
+```c
+int fio_data_save(fio_data_s *d, const char *filename);
+```
+
+Saves all the data to `filename`, replacing an existing file atomically. Readers see either the old file or the complete new one. RAM data is saved with `fio_filename_overwrite` (from the RAM buffer); spilled data with `fio_fd_save` (from the temporary file: a kernel side copy on Linux, positional block copies elsewhere), so saving never maps or reads the file into memory. See the [File Helpers](./004 files.md): the data is written to a sibling name (`<filename>.fio-tmp-<random>`) in the target's folder, `fsync`ed and renamed over `filename`. A single `fsync` (of the new file, before the rename) guarantees the old or the complete new content after a crash, never a partial file; the folder isn't `fsync`ed, so a crash right after the save may still leave the previous version in place. New files get mode `0666`, minus the `umask`. A leading `"~/"` is the home folder, as with `fio_filename_open`.
+
+Returns `0` on success or `-1` on error (with `errno` set). On error, an existing `filename` is untouched and no sibling file is left behind. A short read of the temporary file fails the save (never saves truncated data). A store in an error state is refused (`-1`, `errno == EIO`), since its data is incomplete.
+
+Saving doesn't change the store: the data, reading position and buffers returned earlier stay the same, and the store stays usable.
+
+### Example
+
+```c
+fio_data_s d = FIO_DATA_INIT;
+fio_data_write(&d, "hello ", 6);
+fio_data_write(&d, "world", 5);
+fio_data_seek(&d, 0);
+for (fio_str_info_s s; (s = fio_data_read(&d, 4096)).len;)
+  fwrite(s.buf, 1, s.len, stdout);
+if (fio_data_save(&d, "hello.txt"))
+  perror("couldn't save");
+fio_data_destroy(&d);
+```
 # GFM Markdown Parser
 
 ```c
@@ -9848,6 +9749,545 @@ int main(void) {
 ```
 
 ------------------------------------------------------------
+# JSON Parser
+
+```c
+#define FIO_JSON
+#include "fio-stl.h"
+```
+
+A non-strict, streaming, callback-based JSON parser. It does not build a tree for you; it calls your callbacks for each value and lets you decide what to construct. Implemented in [`./012 json.h`](./012%20json.h). Depends on `FIO_ATOL` and `FIO_STR` (string core, used to decode object keys); both are included automatically.
+
+The parser tolerates trailing commas, comments (`//`, `/* */`, `#`), newlines inside strings, hex/octal/binary numbers, `NaN`, and `Infinity`. Numbers are parsed with `fio_aton`: floats are correctly rounded and locale independent, and `0b...f` spells a float's raw IEEE 754 bits.
+
+### Configuration Macros
+
+#### `FIO_JSON_MAX_DEPTH`
+
+```c
+#if !defined(FIO_JSON_MAX_DEPTH) || (FIO_JSON_MAX_DEPTH + 0) == 0
+#undef FIO_JSON_MAX_DEPTH
+#define FIO_JSON_MAX_DEPTH 128
+#endif
+```
+
+Allows up to `FIO_JSON_MAX_DEPTH` open containers, counting the root as level 1 (default 128). Zero selects the default; scalar roots are allowed at any setting. Must be less than `65536`.
+
+The limit sizes per-parse state (one pointer plus one byte per level); deeper input aborts with an error.
+
+### Error Codes
+
+```c
+/** Malformed JSON and Generic Errors */
+#define FIO_JSON_ERROR_GENERIC (-1)
+/** Nesting level too deep error */
+#define FIO_JSON_ERROR_NESTING (-2)
+```
+
+Errors returned by the parser itself. Any other non-zero value is a callback error, returned unchanged. Callbacks may return these values too; the parser doesn't rewrite them, so their origin is not distinguished.
+
+### Types
+
+#### `fio_json_obj_result_s`
+
+```c
+typedef struct {
+  void *obj;
+  int err;
+} fio_json_obj_result_s;
+```
+
+Returned by the value callbacks, by `map_push` and by the `fio_json_resolve_on_*` helpers. `obj` is the produced object (for `map_push`, the replaced value). `err` is `0` on success or any non-zero value on failure; on failure `obj` is ignored.
+
+#### `fio_json_push_result_s`
+
+```c
+typedef struct {
+  void *obj;
+  void *old;
+  int err;
+} fio_json_push_result_s;
+```
+
+Returned by `on_map` and `on_array`. `obj` is the opened container, `old` is a value the callback replaced and hands back for conflict resolution (or NULL), and `err` is `0` or any non-zero error. On failure `obj` and `old` are ignored.
+
+#### `fio_json_parser_callbacks_s`
+
+```c
+typedef struct FIO_ALIGN(64) {
+  fio_json_obj_result_s (*on_null)(void *udata);
+  fio_json_obj_result_s (*on_true)(void *udata);
+  fio_json_obj_result_s (*on_false)(void *udata);
+  fio_json_obj_result_s (*on_number)(void *udata, int64_t i);
+  fio_json_obj_result_s (*on_float)(void *udata, double f);
+  fio_json_obj_result_s (*on_string)(void *udata, fio_buf_info_s str);
+  fio_json_obj_result_s (*on_string_simple)(void *udata, fio_buf_info_s str);
+  fio_json_push_result_s (*on_map)(void *udata, void *parent, fio_buf_info_s key);
+  fio_json_push_result_s (*on_array)(void *udata, void *parent, fio_buf_info_s key);
+  fio_json_obj_result_s (*map_push)(void *udata, void *map, fio_buf_info_s key,
+                                    void *value);
+  int (*array_push)(void *udata, void *array, void *value);
+  int (*is_array)(void *udata, void *obj);
+  int (*is_map)(void *udata, void *obj);
+  void (*free_unused_object)(void *udata, void *obj);
+} fio_json_parser_callbacks_s;
+```
+
+The parser's callback table. Each callback receives the per-call `udata`. The parser never writes to the table, so it can be `static const`; it copies the table and fills defaults in its private copy.
+
+**Required callbacks:** `on_null`, `on_true`, `on_false`, `on_number`, `on_float`, at least one of `on_string` and `on_string_simple`, `on_map`, `on_array`, `map_push`, `array_push`, and `free_unused_object`. A missing required callback fails the parse before any input is read.
+
+**Optional callbacks:** a missing string callback is replaced by the other one, which must then handle both forms. A missing `is_map` / `is_array` always returns false; both are needed to update an existing root and to resolve conflicts with existing containers.
+
+**Strings and keys:** string *values* are passed undecoded: `on_string` receives bytes that contain escapes, and `on_string_simple` receives bytes without escapes. Decoding is up to the callback, so a value is allocated only once. Object keys don't call the string callbacks; the parser decodes them into a borrowed `key`, valid only during the callback. Copy the bytes to keep them. A non-NULL `key.buf` with zero length is the empty key `""`.
+
+**Containers:** `on_map(udata, parent, key)` and `on_array(udata, parent, key)` open a container at `parent[key]`:
+- `key.buf == NULL` appends to an array `parent`.
+- `parent == NULL` creates an owned root.
+- Otherwise the callback places the container at `parent[key]` and returns it borrowed.
+
+The callback picks the strategy (for example a lookup, or a "set if missing"). Returning an existing container of the same type merges maps and appends to arrays. A value the callback replaces is either freed by the callback (overwrite), returned in `old` (the default rules below apply), or handled by any custom policy.
+
+**Ownership:** value callbacks return owned objects. Ownership always transfers: `map_push` and `array_push` take `value` even when they fail, and the parser never frees a value after passing it to a callback. `map_push` frees a replaced value itself or returns it in `obj` ("the object to keep if possible") for conflict resolution. `free_unused_object` frees owned, unused values (never keys) and may receive NULL.
+
+**NULL values:** a native NULL `obj` / `old` means "nothing". A value callback may return NULL as a value (for example, from `on_null`), and the parser stores it: `map_push` and `array_push` receive it. A key with no value (`{"a":}`) also stores NULL, while the empty slot after a trailing comma (`[1,]`) adds nothing. A replaced NULL never triggers conflict resolution. To resolve null conflicts by the rules, return a dedicated null object (FIOBJ uses `fiobj_null()`).
+
+**Errors:** any non-zero `err` (or `array_push` return value) stops the parse and is returned unchanged in `fio_json_result_s.err`.
+
+**Conflict rules:** when a callback hands a replaced value back (in `old`, or in the `obj` of `map_push`), the parser applies these rules (an upload or any other non-map, non-array object counts as a scalar):
+
+| Incoming | Existing | Result |
+|---|---|---|
+| map | map | merge (when `on_map` reuses the existing map) |
+| array | array | append (when `on_array` reuses the existing array) |
+| map | scalar or array | new map with the existing value at the empty key `""` |
+| array | scalar | new array with the existing value first |
+| array | map | keep the map; put the incoming array at its `""` key, by the same rules |
+| scalar | scalar | array of `[existing, incoming]` |
+| scalar | array | append the incoming value |
+| scalar | map | keep the map; put the incoming value at its `""` key, by the same rules |
+
+#### `fio_json_result_s`
+
+```c
+typedef struct {
+  void *ctx;
+  size_t stop_pos;
+  int err;
+} fio_json_result_s;
+```
+
+The parse result.
+
+**Members:**
+- `ctx` - the root object, owned by the caller: the complete root on success, the partial root on failure, or the `root` passed to `fio_json_parse`.
+- `stop_pos` - byte offset where parsing stopped (zero when callback validation fails).
+- `err` - `0` on success, `FIO_JSON_ERROR_GENERIC`, `FIO_JSON_ERROR_NESTING`, or an unchanged callback error.
+
+### API Functions
+
+#### `fio_json_parse`
+
+```c
+SFUNC fio_json_result_s fio_json_parse(const fio_json_parser_callbacks_s *cb,
+                                       void *udata,
+                                       void *root,
+                                       const char *json_string,
+                                       const size_t len);
+```
+
+Parses one JSON value from `json_string` (up to `len` bytes) and stops once the value is complete or an error occurs.
+
+**Parameters:**
+- `cb` - the callback table (never written).
+- `udata` - per-call user data passed to every callback.
+- `root` - NULL, or an existing map / array to update in place.
+- `json_string` - the input buffer.
+- `len` - the input length in bytes.
+
+When `root` is NULL, the parser creates the root through `on_map` / `on_array` with `parent == NULL`, or returns a scalar root.
+
+When `root` is set, the JSON root must be a container of the same type, checked with `is_map` / `is_array`. On a mismatch (including a scalar JSON root, which is freed with `free_unused_object`) nothing changes and `err` is `FIO_JSON_ERROR_GENERIC`. Values in the JSON then go into `root` without calling `on_map` / `on_array` for it.
+
+**Returns:** a `fio_json_result_s`. The caller owns `result.ctx` on success and on failure (see above). When a required callback is missing, `err` is `FIO_JSON_ERROR_GENERIC`, `ctx` is `root` and `stop_pos` is zero.
+
+**Note:** a UTF-8 BOM at the start of the buffer is skipped.
+
+**Guard-byte contract:** number and quote-less key scanning may read the byte at `json_string[len]` while deciding a token ended (see the `fio_atol*` guard-byte contract). Callers MUST keep that byte readable and non-numeric: pass a NUL-terminated string (any `fio_bstr` string qualifies) or append a non-numeric guard byte. Exact-size buffers with no readable byte past `len` violate the contract and will trigger AddressSanitizer.
+
+#### `fio_json_resolve_on_map`
+
+```c
+SFUNC fio_json_obj_result_s fio_json_resolve_on_map(
+    const fio_json_parser_callbacks_s *cb,
+    void *udata,
+    void *parent,
+    fio_buf_info_s key);
+```
+
+Opens a map through `cb->on_map` and resolves a returned `old` value with the default conflict rules. The parser uses it; other parsers (such as the HTTP form parsers) can call it to apply the same rules.
+
+**Parameters:** `cb` - the callback table; `udata` - callback user data; `parent` - the borrowed parent, or NULL for a root; `key` - the borrowed key, or a NULL buffer to append to a parent array.
+
+**Requires:** `on_map`, `on_array`, `map_push`, `array_push`, `free_unused_object`. A NULL `is_map` / `is_array` counts as false.
+
+**Returns:** the map in `obj` (borrowed from `parent`, or owned when `parent` is NULL), or a non-zero `err`: the unchanged callback error, or `FIO_JSON_ERROR_GENERIC` when `on_map` returns no map.
+
+#### `fio_json_resolve_on_array`
+
+```c
+SFUNC fio_json_obj_result_s fio_json_resolve_on_array(
+    const fio_json_parser_callbacks_s *cb,
+    void *udata,
+    void *parent,
+    fio_buf_info_s key);
+```
+
+Opens an array through `cb->on_array`, resolving a returned `old` value like `fio_json_resolve_on_map`. Same parameters, requirements and return values.
+
+#### `fio_json_resolve_map_push`
+
+```c
+SFUNC int fio_json_resolve_map_push(const fio_json_parser_callbacks_s *cb,
+                                    void *udata,
+                                    void *map,
+                                    fio_buf_info_s key,
+                                    void *value);
+```
+
+Stores `value` at `map[key]` through `cb->map_push` and resolves a returned replaced value with the default conflict rules.
+
+**Parameters:** `cb` - the callback table; `udata` - callback user data; `map` - the borrowed map; `key` - the borrowed key; `value` - an owned value, taken even on failure.
+
+**Requires:** `map_push`, `on_array`, `array_push`, `free_unused_object`. A NULL `is_map` / `is_array` counts as false.
+
+**Returns:** `0` on success, the unchanged callback error, or `FIO_JSON_ERROR_GENERIC` when `on_array` returns no array.
+
+#### `fio_json_callbacks_validate`
+
+```c
+SFUNC int fio_json_callbacks_validate(const fio_json_parser_callbacks_s *cb);
+```
+
+Checks that every required callback is set (see **Required callbacks** above). It never writes to the table. `fio_json_parse` calls it itself; other parsers call it before using the `fio_json_resolve_*` helpers.
+
+**Returns:** `0` if the table is valid, or `-1` if a required callback is missing (or `cb` is NULL).
+
+### Example
+
+The callbacks below hand replaced values back, so duplicate scalar keys become arrays. They copy keys before returning, and push callbacks free the value when they fail. The second `fio_json_parse` call updates the existing root, appending to its `items` array. The example uses `assert` to keep allocation handling short; production callbacks should report allocation failures with a non-zero `err`.
+
+```c
+#define FIO_JSON
+#include "fio-stl.h"
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef enum { V_NULL, V_BOOL, V_NUM, V_FLOAT, V_STR, V_MAP, V_ARRAY } kind_e;
+typedef struct value_s value_s;
+struct value_s {
+  kind_e kind;
+  union {
+    int64_t number;
+    double floating;
+    int boolean;
+    struct { char *buf; size_t len; } str;
+    struct { value_s **items; size_t len; } array;
+    struct { char **keys; size_t *lengths; value_s **values; size_t len; } map;
+  } as;
+};
+#define OK(v) ((fio_json_obj_result_s){.obj = (v)})
+#define FAIL(e) ((fio_json_obj_result_s){.err = (e)})
+static value_s *make(kind_e kind) {
+  value_s *v = calloc(1, sizeof(*v));
+  assert(v);
+  v->kind = kind;
+  return v;
+}
+static void release(value_s *v) {
+  if (!v) return;
+  if (v->kind == V_STR) free(v->as.str.buf);
+  if (v->kind == V_ARRAY) {
+    for (size_t i = 0; i < v->as.array.len; ++i) release(v->as.array.items[i]);
+    free(v->as.array.items);
+  }
+  if (v->kind == V_MAP) {
+    for (size_t i = 0; i < v->as.map.len; ++i) {
+      free(v->as.map.keys[i]);
+      release(v->as.map.values[i]);
+    }
+    free(v->as.map.keys);
+    free(v->as.map.lengths);
+    free(v->as.map.values);
+  }
+  free(v);
+}
+static size_t find(value_s *map, fio_buf_info_s key) {
+  for (size_t i = 0; i < map->as.map.len; ++i)
+    if (map->as.map.lengths[i] == key.len &&
+        !memcmp(map->as.map.keys[i], key.buf, key.len)) return i;
+  return map->as.map.len;
+}
+/* Takes `item`, even on failure. */
+static int array_push(void *u, void *ctx, void *item) {
+  (void)u;
+  value_s *v = ctx;
+  size_t n = v->as.array.len;
+  value_s **p = realloc(v->as.array.items, (n + 1) * sizeof(*p));
+  if (!p) { release(item); return -1; }
+  v->as.array.items = p;
+  v->as.array.items[n] = item;
+  v->as.array.len = n + 1;
+  return 0;
+}
+/* Takes `item`, even on failure; hands a replaced value back in `obj`. */
+static fio_json_obj_result_s map_push(void *u, void *ctx,
+                                      fio_buf_info_s key, void *item) {
+  (void)u;
+  value_s *v = ctx;
+  size_t n = find(v, key);
+  if (n != v->as.map.len) {
+    value_s *old = v->as.map.values[n];
+    v->as.map.values[n] = item;
+    return OK(old); /* the parser resolves the conflict */
+  }
+  char *copy = malloc(key.len + 1); /* keys are borrowed: copy them */
+  if (!copy) { release(item); return FAIL(-1); }
+  if (key.len) memcpy(copy, key.buf, key.len);
+  copy[key.len] = 0;
+  char **keys = realloc(v->as.map.keys, (n + 1) * sizeof(*keys));
+  assert(keys);
+  v->as.map.keys = keys;
+  size_t *lengths = realloc(v->as.map.lengths, (n + 1) * sizeof(*lengths));
+  assert(lengths);
+  v->as.map.lengths = lengths;
+  value_s **values = realloc(v->as.map.values, (n + 1) * sizeof(*values));
+  assert(values);
+  v->as.map.values = values;
+  v->as.map.keys[n] = copy;
+  v->as.map.lengths[n] = key.len;
+  v->as.map.values[n] = item;
+  v->as.map.len = n + 1;
+  return OK(NULL);
+}
+static fio_json_push_result_s open_container(void *udata, void *ctx,
+                                             fio_buf_info_s key, kind_e kind) {
+  fio_json_push_result_s r = {0};
+  value_s *parent = ctx;
+  if (parent && key.buf) {
+    size_t i = find(parent, key);
+    if (i != parent->as.map.len && parent->as.map.values[i]->kind == kind) {
+      r.obj = parent->as.map.values[i]; /* reuse: merge / append */
+      return r;
+    }
+  }
+  value_s *v = make(kind);
+  if (!parent) { /* an owned root */
+    r.obj = v;
+  } else if (!key.buf) { /* append to a parent array */
+    r.err = array_push(udata, parent, v);
+    r.obj = v;
+  } else { /* a replaced value is handed back in `old` */
+    fio_json_obj_result_s p = map_push(udata, parent, key, v);
+    r.err = p.err;
+    r.obj = v;
+    r.old = p.obj;
+  }
+  return r;
+}
+static fio_json_push_result_s on_map(void *u, void *ctx, fio_buf_info_s key) {
+  return open_container(u, ctx, key, V_MAP);
+}
+static fio_json_push_result_s on_array(void *u, void *ctx, fio_buf_info_s key) {
+  return open_container(u, ctx, key, V_ARRAY);
+}
+static fio_json_obj_result_s on_null(void *u) { (void)u; return OK(make(V_NULL)); }
+static fio_json_obj_result_s on_bool(int b) {
+  value_s *v = make(V_BOOL);
+  v->as.boolean = b;
+  return OK(v);
+}
+static fio_json_obj_result_s on_true(void *u) { (void)u; return on_bool(1); }
+static fio_json_obj_result_s on_false(void *u) { (void)u; return on_bool(0); }
+static fio_json_obj_result_s on_number(void *u, int64_t n) {
+  (void)u; value_s *v = make(V_NUM); v->as.number = n; return OK(v);
+}
+static fio_json_obj_result_s on_float(void *u, double n) {
+  (void)u; value_s *v = make(V_FLOAT); v->as.floating = n; return OK(v);
+}
+/* Also serves as `on_string_simple`: unescaping is a copy without escapes. */
+static fio_json_obj_result_s on_string(void *u, fio_buf_info_s s) {
+  (void)u;
+  value_s *v = make(V_STR);
+  fio_str_info_s out = FIO_STR_INFO3(malloc(s.len + 1), 0, s.len + 1);
+  assert(out.buf);
+  fio_string_write_unescape(&out, NULL, s.buf, s.len);
+  v->as.str.buf = out.buf;
+  v->as.str.len = out.len;
+  return OK(v);
+}
+static int is_map(void *u, void *ctx) { (void)u; return ((value_s *)ctx)->kind == V_MAP; }
+static int is_array(void *u, void *ctx) { (void)u; return ((value_s *)ctx)->kind == V_ARRAY; }
+static void free_unused(void *u, void *ctx) { (void)u; release(ctx); }
+
+static const fio_json_parser_callbacks_s CALLBACKS = {
+    .on_null = on_null, .on_true = on_true, .on_false = on_false,
+    .on_number = on_number, .on_float = on_float, .on_string = on_string,
+    .on_map = on_map, .on_array = on_array, .map_push = map_push,
+    .array_push = array_push, .is_map = is_map, .is_array = is_array,
+    .free_unused_object = free_unused,
+};
+
+int main(void) {
+  const char *json = "{\"a\\u0062\":1,\"ab\":2,\"items\":[3]}";
+  fio_json_result_s r = fio_json_parse(&CALLBACKS, NULL, NULL, json, strlen(json));
+  if (r.err) {
+    fprintf(stderr, "parse failed (%d) at %zu\n", r.err, r.stop_pos);
+    release(r.ctx); /* the caller owns the partial root */
+    return 1;
+  }
+  value_s *root = r.ctx;
+  int ok = 1;
+  value_s *pair = root->as.map.values[find(root, FIO_BUF_INFO1("ab"))];
+  ok &= pair->kind == V_ARRAY && pair->as.array.len == 2; /* [1, 2] */
+  /* update the existing root in place */
+  const char *update = "{\"items\":[4]}";
+  r = fio_json_parse(&CALLBACKS, NULL, root, update, strlen(update));
+  ok &= !r.err && r.ctx == root;
+  value_s *list = root->as.map.values[find(root, FIO_BUF_INFO1("items"))];
+  ok &= list->kind == V_ARRAY && list->as.array.len == 2; /* [3, 4] */
+  /* the JSON root must match the existing root's type: nothing changes */
+  r = fio_json_parse(&CALLBACKS, NULL, root, "[5]", 3);
+  ok &= r.err == FIO_JSON_ERROR_GENERIC && r.ctx == root;
+  release(root);
+  return !ok;
+}
+#ifndef FIO_EXTERN_COMPLETE
+#define FIO_EXTERN_COMPLETE
+#include "fio-stl.h"
+#endif
+```
+
+------------------------------------------------------------
+## URL-Encoded Parser
+
+```c
+#define FIO_URL_ENCODED
+#include "fio-stl.h"
+```
+
+A callback-based parser for `application/x-www-form-urlencoded` data. It splits `name=value&...` pairs and decodes each name and value before invoking the callback, without modifying the input. Temporary buffers use stack storage with heap fallback for long fields. Implemented in [`./012 urlencoded.h`](./012%20urlencoded.h).
+
+### Types
+
+#### `fio_url_encoded_parser_callbacks_s`
+
+```c
+typedef struct {
+  int (*on_pair)(void *udata, fio_buf_info_s name, fio_buf_info_s value);
+} fio_url_encoded_parser_callbacks_s;
+```
+
+Parser callbacks.
+
+**Members:**
+- `on_pair` - called for each non-empty pair with the decoded `name` and `value`. Buffers are borrowed and valid **only during the callback**; copy anything needed later and do not free them. Lengths are in bytes and may include embedded NUL bytes. Return `0` to continue. Any other value stops parsing and is returned unchanged in `result.err`.
+
+If `callbacks` or `on_pair` is `NULL`, the parser only counts pairs: nothing is decoded and nothing is allocated.
+
+#### `fio_url_encoded_result_s`
+
+```c
+typedef struct {
+  size_t consumed;
+  size_t count;
+  int err;
+} fio_url_encoded_result_s;
+```
+
+Parse result. On error, `consumed` and `count` cover only the pairs processed without error; the failed pair is excluded from both.
+
+**Members:**
+- `consumed` - number of input bytes processed without error, including skipped empty pairs and separators. On success this equals `len`. On error, it is the offset where the failed pair starts.
+- `count` - number of non-empty pairs processed without error.
+- `err` - `0` on success, `-1` if a temporary buffer could not be allocated, or the non-zero value returned by `on_pair`.
+
+### Parsing
+
+#### `fio_url_encoded_parse`
+
+```c
+SFUNC fio_url_encoded_result_s
+fio_url_encoded_parse(const fio_url_encoded_parser_callbacks_s *callbacks,
+                      void *udata,
+                      const char *data,
+                      size_t len);
+```
+
+Parses `data[0..len)` as URL-encoded form data, decoding each name and value exactly once using `fio_string_write_url_dec`.
+
+**Parameters:**
+- `callbacks` - borrowed callback table, valid for the call. `NULL` (or a `NULL` `on_pair`) selects counting-only mode.
+- `udata` - caller-owned context passed unchanged to `on_pair`; may be `NULL`.
+- `data` - borrowed readable buffer containing at least `len` bytes; not modified. A trailing NUL is not required.
+- `len` - number of input bytes to parse; may be zero.
+
+**Returns:** the bytes consumed, the pairs processed, and the error. An error stops parsing before the failed pair, so `data + result.consumed` is where that pair starts. Retrying from the beginning repeats earlier callback side effects.
+
+Rules from the implementation:
+- pairs are separated by `&`
+- the first `=` in a pair separates name and value
+- `name=` is valid and has an empty value
+- `name` is valid and has an empty value
+- `=value` is valid and has an empty name
+- empty pairs such as leading `&` or `&&` are skipped
+- pair boundaries are determined before decoding, so encoded `&` and `=` remain part of their fields
+- percent escapes are decoded and `+` becomes a space in both names and values
+- `%2B` decodes to a literal `+`, not a space; `%2526` decodes to `%26`, not `&`
+- invalid or incomplete percent escapes remain literal, following `fio_string_write_url_dec` (including its `%uXXXX` extension)
+
+**Ownership:** the caller retains `data`, `callbacks`, and `udata`. The parser owns temporary decoded buffers and releases any heap fallback using `FIO_STRING_FREE2` after the callback returns, including when the callback stops parsing. No buffer ownership is transferred to callbacks.
+
+**Thread-safety:** independent calls are reentrant and share no parser state; callback state and any configured allocator must support the caller's concurrency requirements. Work is linear in the input length, with temporary space proportional to the largest pair.
+
+### Example
+
+```c
+#define FIO_URL_ENCODED
+#include "fio-stl.h"
+#include <stdio.h>
+#include <string.h>
+
+static int on_pair(void *udata, fio_buf_info_s name, fio_buf_info_s value) {
+  printf("%.*s = %.*s\n",
+         (int)name.len, name.buf,
+         (int)value.len, value.buf);
+  (void)udata;
+  return 0; /* non-zero stops parsing and becomes r.err */
+}
+
+int main(void) {
+  const char form[] = "name=Bo&empty=&encoded=a%20b&&solo";
+  static const fio_url_encoded_parser_callbacks_s cb = {
+      .on_pair = on_pair,
+  };
+
+  fio_url_encoded_result_s r =
+      fio_url_encoded_parse(&cb, NULL, form, strlen(form));
+
+  /* The callback sees encoded=a b, not encoded=a%20b. */
+  if (r.err) {
+    fprintf(stderr, "Parsing stopped after %zu bytes\n", r.consumed);
+    return 1;
+  }
+  printf("pairs=%zu consumed=%zu\n", r.count, r.consumed);
+  return 0;
+}
+```
+
+---
 # POSIX Portable Polling API
 
 ```c
@@ -16558,6 +16998,46 @@ void           fiobj_float_free(FIOBJ i);    /* type-specific free */
 
 ---
 
+## Data — `fiobj_data_*`
+
+A `FIOBJ_T_OTHER` class (`FIOBJ_TYPE(o) == FIOBJ_T_DATA`) wrapping a [Data Store](./012%20data.md) (`fio_data_s`). It keeps data in RAM until it exceeds a limit, then moves it to a temporary file. This suits large payloads such as file uploads (`fio_http_params2FIOBJ` stores uploads this way).
+
+```c
+#define FIOBJ_T_DATA 40
+
+FIOBJ       fiobj_data_new(size_t ram_limit); /* 0 = FIO_DATA_RAM_LIMIT */
+fio_data_s *fiobj_data_ptr(FIOBJ o);          /* NULL if not a Data object */
+
+fio_str_info_s fiobj_data_filename(FIOBJ data);
+fio_str_info_s fiobj_data_type(FIOBJ data);
+fio_str_info_s fiobj_data_headers(FIOBJ data);
+void fiobj_data_filename_set(FIOBJ data, fio_str_info_s filename);
+void fiobj_data_type_set(FIOBJ data, fio_str_info_s type);
+void fiobj_data_headers_set(FIOBJ data, fio_str_info_s headers);
+```
+
+Upload metadata belongs to the FIOBJ Data object, not its `fio_data_s` store.
+The three getters return NUL-terminated borrowed views, valid until the next
+setter for that property or until `fiobj_free(data)`. A getter returns a NULL
+`buf` for an unset property or a non-Data object; a set empty value has a
+non-NULL `buf` and `len == 0`. Each setter copies its input bytes; passing a
+NULL `buf` clears the property, and passing a non-Data object does nothing.
+On allocation failure the affected property is unset. Metadata is released by
+`fiobj_free`.
+
+Read and write through the store's API, for example `fio_data_write(fiobj_data_ptr(o), buf, len)` or `fio_data_read(fiobj_data_ptr(o), 65536)`. Save the content to a file with `fio_data_save(fiobj_data_ptr(o), filename)` (for example, to keep a file upload). Free with `fiobj_free`, which also closes any temporary file.
+
+Generic conversions:
+
+- `fiobj2cstr` (and JSON output) returns the whole content. A spilled store is memory mapped (no copy); where mapping isn't available the content is read into a heap buffer, and if that buffer can't be allocated an error is logged and the result is empty.
+- `fiobj2cstr`, JSON output and equality tests use the store's read buffer: they MAY invalidate buffers previously returned by `fio_data_*` (and `fiobj2cstr` results of the same object). They preserve the reading position.
+- `fiobj2i` / `fiobj2f` return the length.
+- Two Data objects are equal when their content is equal.
+
+The FIOBJ module includes the Data Store module automatically.
+
+---
+
 ## Strings — `fiobj_str_*`
 
 FIOBJ strings wrap the [Dynamic String module (201)](./201 string.md). The full `fiobj_str_*` API mirrors the `STR_*` API — write, concat, printf, base64, JSON-escape, UTF-8 helpers, freeze, etc.
@@ -16780,7 +17260,9 @@ size_t fiobj_hash_update_json(FIOBJ hash, fio_str_info_s str);
 size_t fiobj_hash_update_json2(FIOBJ hash, char *ptr, size_t len);
 ```
 
-Parses JSON and merges the resulting key-value pairs into an existing hash map. Silently skips non-object JSON data. Returns bytes consumed (0 on error).
+Parses a JSON object and merges its members into an existing hash map. Nested objects merge into existing Hash members and nested arrays append to existing Array members; any other conflicting value is overwritten (new wins).
+
+On a parsing error, or when the JSON root isn't an object, members merged before the error remain and nothing else changes. Returns the number of bytes consumed before parsing stopped (0 if `hash` is `FIOBJ_INVALID`). The hash is never freed.
 
 ### JavaScript-style path lookup
 
@@ -17528,6 +18010,11 @@ contain TLS hints. `timeout` defaults to 30 seconds. `on_failed` is the cleanup
 hook for failed connection attempts; established connections use the protocol
 callbacks.
 
+For TLS URLs (`https`, `wss`, `tls`, or explicit TLS hints), the URL's host
+name is automatically set as the SNI (Server Name Indication) host name sent
+during the TLS handshake (see `fio_io_tls_sni_set`). IP literals are excluded,
+as required by RFC 6066.
+
 ---
 
 ## IO Handles and Operations
@@ -17703,6 +18190,9 @@ int fio_io_tls_alpn_select(fio_io_tls_s *tls,
                            fio_io_s *io);
 fio_io_tls_s *fio_io_tls_trust_add(fio_io_tls_s *tls,
                                    const char *public_cert_file);
+fio_io_tls_s *fio_io_tls_sni_set(fio_io_tls_s *tls,
+                                 const char *hostname,
+                                 size_t hostname_len);
 uintptr_t fio_io_tls_cert_count(fio_io_tls_s *tls);
 uintptr_t fio_io_tls_alpn_count(fio_io_tls_s *tls);
 uintptr_t fio_io_tls_trust_count(fio_io_tls_s *tls);
@@ -17713,6 +18203,12 @@ SNI, ALPN protocol callbacks, and trusted certificates / CA stores. Passing
 `NULL` certificate paths can request a backend-provided self-signed certificate;
 passing `NULL` to `fio_io_tls_trust_add` asks the backend to use system trust.
 Backend behavior is documented in the TLS backend docs.
+
+`fio_io_tls_sni_set` sets the SNI (Server Name Indication) host name a TLS
+client sends during the handshake. `fio_io_connect` sets it automatically from
+the URL's host name, so manual calls are rarely needed. `NULL` / empty host
+names and IP literals (IPv4 / IPv6) are silently ignored, as SNI carries DNS
+host names only (RFC 6066).
 
 `fio_io_tls_alpn_add` silently ignores a `NULL` protocol name and replaces a
 `NULL` callback with a no-op. The first ALPN protocol added is the default.
@@ -18526,6 +19022,16 @@ CA-issued certificate (e.g. Let's Encrypt) in production.
 
 ---
 
+## SNI (Server Name Indication)
+
+Client connections send the SNI host name stored in the `fio_io_tls_s` object
+(`fio_io_tls_sni_set`, or the URL host name set automatically by
+`fio_io_connect`) via `SSL_set_tlsext_host_name` before the handshake starts.
+No SNI extension is sent when no host name is set (e.g., when connecting to an
+IP literal, which RFC 6066 forbids as an SNI value).
+
+---
+
 ## ALPN
 
 Register protocols with `fio_io_tls_alpn_add` before listen/connect. The first
@@ -19031,8 +19537,9 @@ static fio_io_protocol_s CLIENT_PROTO = {
 
 int main(void) {
   fio_io_tls_s *tls = fio_io_tls_new();
-  /* SNI hostname — system CA store is used automatically for verification */
-  fio_io_tls_cert_add(tls, "example.com", NULL, NULL, NULL);
+  /* fio_io_connect sets the SNI host name automatically from the URL.
+   * Manual override: fio_io_tls_sni_set(tls, "example.com", 11);
+   * System CA store is used automatically for verification. */
 
   fio_io_connect(.url      = "example.com:443",
                  .protocol = &CLIENT_PROTO,
@@ -19042,6 +19549,17 @@ int main(void) {
   fio_io_start(0);
 }
 ```
+
+### SNI resolution for client connections
+
+The client SNI host name is resolved when the TLS context is built:
+
+1. The explicit SNI host name (`fio_io_tls_sni_set`, or the URL host name set
+   automatically by `fio_io_connect`) is preferred. IP literals are never sent
+   as SNI (RFC 6066).
+2. Otherwise, the first certificate name registered with
+   `fio_io_tls_cert_add` is used (legacy behavior).
+3. If neither is set, no SNI extension is sent.
 
 
 ---
@@ -20253,11 +20771,11 @@ FIOBJ objects passed to callbacks are **not** thread-safe. Copy any data you nee
 #include FIO_INCLUDE_FILE
 ```
 
-`FIO_HTTP` adds the higher-level HTTP service built on the facil.io IO layer,
-the HTTP handle, the HTTP/1.x parser, the WebSocket parser, and the SSE /
-WebSocket glue code.
+`FIO_HTTP` adds an HTTP/1.x server and client, with WebSocket and SSE
+(Server-Sent Events) support, built on the facil.io IO reactor. It also pulls
+in the HTTP handle API, the HTTP/1.x parser, and the WebSocket parser.
 
-Nearby context: [IO and HTTP overview](./400 io-overview.md), the
+Related: [IO and HTTP overview](./400 io-overview.md), the
 [HTTP/1.x parser](./004 http1 parser.md), the
 [WebSocket parser](./004 websocket parser.md), and optional compression
 support in [DEFLATE / Gzip](./162 deflate.md).
@@ -20266,163 +20784,236 @@ support in [DEFLATE / Gzip](./162 deflate.md).
 
 ## What Gets Added
 
-`FIO_HTTP` exposes:
+`FIO_HTTP` provides:
 
-- `fio_http_settings_s` and `fio_http_listener_s`.
-- server APIs: `fio_http_listen`, `fio_http_listener_settings`,
-  `fio_http_route`, and `fio_http_route_settings`.
-- client APIs: `fio_http_connect` and the `fio_http_websocket_connect`
-  convenience wrapper.
-- request routing helper: `fio_http_resource_action` and
-  `fio_http_resource_action_e`.
-- upgrade helpers for WebSocket and SSE connections.
-- pub/sub helpers for upgraded connections.
-- handle access helpers: `fio_http_io` and `fio_http_settings`.
-- the HTTP handle API, including request / response fields, headers,
-  cookies, body storage, writing, static-file responses, logging, MIME
-  lookup, and controller hooks.
+- **Settings and listeners**: `fio_http_settings_s`, `fio_http_listener_s`,
+  `fio_http_listen`, and `fio_http_listener_settings`.
+- **Routing**: `fio_http_route`, `fio_http_route_settings`,
+  `fio_http_resource_action`, and `fio_http_resource_action_e`.
+- **Clients**: `fio_http_connect` and `fio_http_websocket_connect`.
+- **Upgrades**: WebSocket and SSE request / response helpers, writers, and
+  pub/sub helpers.
+- **Handle access**: `fio_http_io` and `fio_http_settings`.
+- **The HTTP handle API**: request / response fields, headers, cookies, body
+  storage, writing, static-file responses, logging, MIME lookup, and
+  controller hooks.
 
 Names prefixed with `fio___` are private and not part of the API.
-
-The parsers are separate modules: [`004 http1 parser.h`](./004 http1 parser.md)
-and [`004 websocket parser.h`](./004 websocket parser.md).
 
 ---
 
 ## Connection Model
 
-HTTP/1.x requests and client responses are parsed into `fio_http_s` handles.
-A response line received by a server connection (or an unsolicited response
-received by a client) is logged as a `SECURITY` event and the connection is
-closed.
-Malformed requests receive a `400 Bad Request` response and the connection is
-closed. This includes request framing that could be misread as a pipelined
-(smuggled) request: a `Transfer-Encoding` without a single, final `chunked`
-coding (RFC 9112 §6.3, §7), and an HTTP/1.1 request without exactly one `Host`
-header (RFC 9112 §3.2). Other transfer codings before the final `chunked`
-(i.e., `gzip, chunked`) stay visible to the application as a request
-`transfer-encoding` header (i.e., `gzip`); the body is passed through as
-received, still encoded.
-The HTTP layer suspends the IO object while the user callback is running and
-resumes it after the response is finished or the upgrade is installed.
+Each HTTP/1.x request (server) or response (client) is parsed into a
+`fio_http_s` handle and passed to the callbacks in `fio_http_settings_s`.
 
-Plain HTTP cycles use:
+### Request / response cycle
 
-1. request / response parsing;
-2. optional `pre_http_body` before an `Expect: 100-continue` body is read;
-3. `on_http` for application logic;
-4. `fio_http_write` / `fio_http_finish` to send the response;
-5. `on_finish` when the non-upgraded cycle is complete.
+A plain HTTP cycle runs in this order:
 
-For non-upgraded server HTTP/1 cycles, a request `Connection` field containing
-the case-insensitive `close` token closes after the complete response drains;
-subsequent pipelined requests are not dispatched. HTTP/1.0 requests are not
-persistent unless a request `Connection` field contains `keep-alive` (RFC 9112
-§9.3); the server confirms persistence with a `connection: keep-alive`
-response header (unless the application set a `connection` header). Application-initiated closure
-remains explicit: schedule the complete response, then call `fio_http_close`
-while the handle is valid (i.e., from `on_finish`). Setting only a response
-`Connection: close` header does not itself schedule closure.
+1. The request (server) or response (client) is parsed.
+2. `pre_http_body` runs before an `Expect: 100-continue` body is read.
+3. `on_http` runs the application logic.
+4. `fio_http_write` / `fio_http_finish` send the response.
+5. `on_finish` runs when the cycle is complete.
 
-WebSocket and SSE cycles use the authentication callbacks before upgrade, then
-`on_open`, message / event callbacks, `on_ready`, `on_shutdown`, `on_close`, and
-finally `on_finish` when the upgraded connection closes.
+A connection handles one request at a time. The next pipelined request is
+not read until the current response is finished or the upgrade is complete.
 
-User callbacks are scheduled through the selected HTTP task queue. If
-`fio_http_settings_s.queue` is not supplied, the current IO queue is used.
+For WebSocket and SSE requests, the server calls the matching authentication
+callback instead of `on_http`. After the upgrade, the connection calls
+`on_open`, the message / event callbacks, `on_ready`, `on_shutdown`, and
+`on_close`. `on_finish` runs last, when the upgraded connection closes.
+
+User callbacks run on the HTTP task queue set by `fio_http_settings_s.queue`.
+Without a queue, they run on the IO queue.
+
+### Protocol errors
+
+Malformed requests receive a `400 Bad Request` response, then the connection
+closes. This includes framing that could be misread as a smuggled pipelined
+request:
+
+- a `Transfer-Encoding` without a single, final `chunked` coding (RFC 9112
+  §6.3, §7);
+- an HTTP/1.1 request without exactly one `Host` header (RFC 9112 §3.2);
+- an `Expect` header with a value other than `100-continue`.
+
+Codings before the final `chunked` (e.g., `gzip, chunked`) stay visible as a
+request `transfer-encoding` header (e.g., `gzip`). The body is passed through
+as received, still encoded.
+
+A response line received by a server, or an unsolicited response received by
+a client, is logged as a `SECURITY` event and the connection closes.
+
+### Persistent connections
+
+- **HTTP/1.1** connections stay open. A request `Connection` field with the
+  `close` token (case-insensitive) closes the connection once the response is
+  sent. Later pipelined requests are not handled.
+- **HTTP/1.0** connections close after the response, unless the request
+  `Connection` field has `keep-alive` and no `close` (RFC 9112 §9.3). The
+  server then adds a `connection: keep-alive` response header, unless the
+  application set a `connection` header. Streamed HTTP/1.0 responses always
+  close the connection.
+- **Closing from the application**: send the complete response, then call
+  `fio_http_close` while the handle is still valid (e.g., from `on_finish`).
+  A response `Connection: close` header alone does not close the connection.
 
 ---
 
 ## Settings and Listener API
 
-### `fio_http_settings_s`
+#### `fio_http_settings_s`
 
 ```c
-typedef struct fio_http_settings_s fio_http_settings_s;
+typedef struct fio_http_settings_s {
+  /* request / response callbacks */
+  void (*pre_http_body)(fio_http_s *h);
+  void (*on_http)(fio_http_s *h);
+  void (*on_finish)(fio_http_s *h);
+  /* upgrade authentication: return non-zero to deny */
+  int (*on_authenticate_sse)(fio_http_s *h);
+  int (*on_authenticate_websocket)(fio_http_s *h);
+  /* upgraded (WebSocket / SSE) connection callbacks */
+  void (*on_open)(fio_http_s *h);
+  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
+  void (*on_eventsource)(fio_http_s *h,
+                         fio_buf_info_s id,
+                         fio_buf_info_s event,
+                         fio_buf_info_s data);
+  void (*on_eventsource_reconnect)(fio_http_s *h, fio_buf_info_s id);
+  void (*on_ready)(fio_http_s *h);
+  void (*on_shutdown)(fio_http_s *h);
+  void (*on_close)(fio_http_s *h);
+  /* service lifetime */
+  void (*on_stop)(struct fio_http_settings_s *settings);
+  /* user data, TLS and task queue */
+  void *udata;
+  fio_io_functions_s *tls_io_func;
+  fio_io_tls_s *tls;
+  fio_io_async_s *queue;
+  /* static files */
+  fio_str_info_s public_folder;
+  size_t max_age;
+  /* limits */
+  uint32_t max_header_size;
+  uint32_t max_line_len;
+  size_t max_body_size;
+  size_t max_params;
+  size_t ws_max_msg_size;
+  intptr_t reserved1;
+  intptr_t reserved2;
+  /* timeouts and flags */
+  uint16_t connect_timeout;
+  uint8_t timeout;
+  uint8_t ws_timeout;
+  uint8_t sse_timeout;
+  uint8_t log;
+  uint8_t compress_static;
+  uint8_t compress_dynamic;
+  uint8_t compress_ws;
+} fio_http_settings_s;
 ```
 
-`fio_http_settings_s` is used by server listeners, routes, and client
-connections. The function-style APIs are shadowed by named-argument macros, so
-settings are usually passed as designated initializers.
+Holds the callbacks, limits, and options of a listener, a route, or a client
+connection. The listen, route, and connect functions take it by value through
+named-argument macros, so fields are usually passed as designated
+initializers. Unset (zero) callbacks and limits get defaults when the
+listener, route, or client is created.
 
-Callback fields:
+**Members (callbacks):**
 
-| Field | Used for |
+| Field | Called | Default when unset |
+| --- | --- | --- |
+| `pre_http_body` | Before the body is read, when the request sends `Expect: 100-continue` and has a body. Send a response here (e.g., with `fio_http_send_error_response`) to refuse the body; otherwise `100 Continue` is sent. Bodies over `max_body_size` get `413` before this callback runs. | no-op |
+| `on_http` | For each request (server) or final response (client). | server: `404` response; client: no-op |
+| `on_finish` | When a plain request / response cycle completes. For WebSocket / SSE, after `on_close`. | no-op |
+| `on_authenticate_sse` | Before an SSE upgrade. Return non-zero to deny with `403`. | server: deny; client: allow |
+| `on_authenticate_websocket` | Before a WebSocket upgrade. Return non-zero to deny with `403`. | server: deny; client: allow |
+| `on_open` | Once a WebSocket or SSE upgrade is complete. | no-op |
+| `on_message` | For each complete WebSocket message. | no-op |
+| `on_eventsource` | For each complete SSE event (client). | passes `data` to `on_message` (as text) when `on_message` is set; otherwise no-op |
+| `on_eventsource_reconnect` | When an SSE request carries a `Last-Event-ID` header. | no-op |
+| `on_ready` | When an upgraded connection's outgoing buffer is empty. | no-op |
+| `on_shutdown` | For open upgraded connections during IO shutdown. WebSocket connections then send a `1001` (going away) close frame. | no-op |
+| `on_close` | After an upgraded connection closes (for cleanup). | no-op |
+| `on_stop` | Once per settings object (the listener's and each route's) when the listener stops, and for a route when it is replaced. Routes do not inherit it. | no-op |
+
+**Members (data and options):**
+
+| Field | Meaning |
 | --- | --- |
-| `pre_http_body` | Called before body upload when the request used `Expect`. |
-| `on_http` | Server request callback, or client response callback. |
-| `on_finish` | Called when a plain request / response cycle completes, and after upgraded close cleanup. |
-| `on_authenticate_sse` | Return non-zero to reject an SSE upgrade. |
-| `on_authenticate_websocket` | Return non-zero to reject a WebSocket upgrade. |
-| `on_open` | Called once a WebSocket or SSE upgrade is complete. |
-| `on_message` | Called with complete WebSocket messages. |
-| `on_eventsource` | Called with complete SSE events. |
-| `on_eventsource_reconnect` | Called for SSE requests with `Last-Event-ID`. |
-| `on_ready` | Called when an upgraded connection's outgoing buffer is empty. |
-| `on_shutdown` | Called for open upgraded connections during IO shutdown. |
-| `on_close` | Called after an upgraded connection is closed. |
-| `on_stop` | Called when HTTP service settings are being closed. |
-
-Other settings:
-
-| Field | Used for |
-| --- | --- |
-| `udata` | Default `fio_http_udata(h)` value. |
-| `tls_io_func`, `tls` | Optional TLS support. |
-| `queue` | Optional HTTP task queue. |
-| `public_folder` | Static-file root. Serves pre-compressed `.br`, `.zstd`, `.gz`, `.zip` variants when the client accepts them and the variant is fresh. With `compress_static`, missing `.br`/`.gz` variants are also **created on demand and written into this folder** — the folder must be writable and quota'd (attacker-triggerable disk writes). Prefer pre-generating variants at deploy time. The folder must exist when the listener starts, otherwise the setting is ignored. See *Static File Service* below. |
-| `max_age` | Static-file `Cache-Control` max-age value, in seconds. `0` (default) omits the header. Not inherited by routes. |
-| `max_header_size` | Maximum combined request line and header bytes. |
-| `max_line_len` | Maximum bytes per request / header line. |
-| `max_body_size` | Maximum request body size. |
-| `ws_max_msg_size` | Maximum buffered WebSocket message size. |
+| `udata` | Default value of `fio_http_udata(h)`. Client connections keep a `udata` already set on the handle. |
+| `tls_io_func`, `tls` | Optional TLS support. Ignored by routes. |
+| `queue` | Optional task queue for user callbacks (e.g., for multi-threaded responses). Defaults to the IO queue. |
+| `public_folder` | Static-file root (see *Static File Service*). The folder must exist when `fio_http_listen` or `fio_http_route` is called; otherwise the setting is ignored and an error is logged. |
+| `max_age` | `Cache-Control: max-age` value for static files, in seconds. `0` (default) omits the header. Not inherited by routes. |
+| `max_header_size` | Maximum bytes for the request line and headers combined. Default: `FIO_HTTP_DEFAULT_MAX_HEADER_SIZE` (32768). Raised to `max_line_len` when smaller. Larger requests receive `431`. |
+| `max_line_len` | Maximum bytes per request / header line. Default: `FIO_HTTP_DEFAULT_MAX_LINE_LEN` (8192). |
+| `max_body_size` | Maximum request body size, in bytes. Default: `FIO_HTTP_DEFAULT_MAX_BODY_SIZE` (32 MiB). Larger bodies receive `413`. |
+| `max_params` | Maximum query / form fields per params parsing call. Default: `FIO_HTTP_PARAMS_MAX_FIELDS` (4096). |
+| `ws_max_msg_size` | Maximum WebSocket message size, in bytes. Default: `FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE` (262144). Larger messages close the connection with `1009` (message too big). |
 | `reserved1`, `reserved2` | Reserved for future use. |
-| `timeout` | HTTP/1.x connection timeout, in seconds. |
-| `ws_timeout` | WebSocket timeout; timeout pings are sent. |
-| `sse_timeout` | SSE timeout; timeout pings are sent. |
-| `connect_timeout` | Client connection timeout. |
-| `log` | Enables HTTP request logging. |
-| `compress_static` | Opt-in static-file compression (on-demand `.br`/`.gz` creation). Per-route; routes inherit the listener's root value at route-creation. May drop to 0 when creation is disabled after failures (see *Static File Service*). See the compression security note below. |
-| `compress_dynamic` | Opt-in dynamic response compression. Connection-global; per-route values are ignored. See the compression security note below. |
-| `compress_ws` | Opt-in WebSocket `permessage-deflate`. Connection-global; per-route values are ignored. See the compression security note below. |
+| `timeout` | HTTP/1.x connection timeout, in seconds (up to 255). Default: `FIO_HTTP_DEFAULT_TIMEOUT` (50). |
+| `ws_timeout` | WebSocket timeout, in seconds. A ping is sent each time it expires. Default: `FIO_HTTP_DEFAULT_TIMEOUT_LONG` (50). |
+| `sse_timeout` | SSE timeout, in seconds. A ping is sent each time it expires. Default: the `ws_timeout` value. |
+| `connect_timeout` | Client connection timeout in milliseconds (up to 65535), passed to `fio_io_connect`; `0` selects the IO default (30 seconds). |
+| `log` | Non-zero logs each request. |
+| `compress_static` | Opt-in: create missing `.br` / `.gz` static-file variants on demand (see *Static File Service*). Effective per route. May drop to `0` after repeated failures. |
+| `compress_dynamic` | Opt-in: compress dynamic responses. Connection-global: per-route values are ignored. |
+| `compress_ws` | Opt-in: WebSocket `permessage-deflate`. Connection-global: per-route values are ignored. |
 
-**Compression security note (BREACH/CRIME oracle risk):** compressing
-secrets together with attacker-reflected data enables length-oracle attacks
-(BREACH/CRIME). Do not enable compression for responses that mix secrets
-(CSRF tokens, session data) with attacker-controlled reflections, or emit
-such messages uncompressed: leave `compress_dynamic` / `compress_ws` off
-for listeners serving them, or pre-set a response `content-encoding` header
-(it is always respected) to pass a body through uncompressed.
+**Note**: compression can leak secrets (BREACH / CRIME). When a compressed
+response mixes secrets (e.g., CSRF tokens or session data) with
+attacker-controlled text, its length reveals the secret. For such responses,
+leave `compress_dynamic` / `compress_ws` off, or set a response
+`content-encoding` header to send the body as is. Responses with a
+`content-encoding` header are never re-compressed.
 
-**WebSocket `permessage-deflate` negotiation:** the server ALWAYS responds
-with `permessage-deflate; server_no_context_takeover;
-client_no_context_takeover` (RFC 7692 allows either endpoint to request the
-flags unilaterally), honoring `server_max_window_bits` when offered (the
-compressor clamps its distances accordingly) and never emitting window-bits
-parameters. Cross-message history is never used, keeping per-connection
-compression memory minimal. Under heavy load, a message may be sent
-uncompressed.
+**Note**: `compress_static` makes client requests write files into
+`public_folder`. The folder must be writable and should have a disk quota.
+Prefer generating variants at deploy time.
 
-**Accept-Encoding handling:** `q=0` (in any zero-padded form) forbids an
-encoding (RFC 9110). `Vary: accept-encoding` is set whenever compressed
-variants may exist — including on identity responses. Ranged responses are
-never compressed (ranges over encoded bytes are broken in practice).
+**Note**: `compress_dynamic` only compresses finished, single-buffer
+responses over 1024 bytes with a compressible (text-like) `content-type`.
+`br` is preferred over `gzip`, per the client's `Accept-Encoding`. An encoding
+with `q=0` is never used (RFC 9110).
 
-Unset callbacks and limits are normalized when the listener, route, or client is
-created. Server `on_http` defaults to a 404 response; client `on_http` defaults
-to a no-op. Server upgrade authentication defaults to denial. Client upgrade
-authentication defaults to allow.
+**Note**: with `compress_ws`, when a client offers `permessage-deflate`, the
+server always answers `permessage-deflate; server_no_context_takeover;
+client_no_context_takeover` (RFC 7692 lets either side request these flags). It honors `server_max_window_bits` when offered and
+never sends window-bits parameters. No history is kept between messages, so
+per-connection compression memory stays small. Messages under
+`FIO_HTTP_WEBSOCKET_DEFLATE_MIN` (1024) bytes, and messages that compression
+would not shrink, are sent uncompressed.
 
-### `fio_http_listen`
+**Note**: `Vary: accept-encoding` is added to compressed responses. It is also
+added to uncompressed responses that could have been compressed (static files
+that may get a created variant, and eligible dynamic responses), unless the
+application already set a `vary` header.
+
+#### `fio_http_listener_s`
 
 ```c
-fio_http_listener_s *fio_http_listen(const char *url,
-                                     fio_http_settings_s settings);
+typedef struct fio_http_listener_s fio_http_listener_s;
+```
+
+An opaque listener handle returned by `fio_http_listen`. Pass it to
+`fio_http_route`, `fio_http_route_settings`, and
+`fio_http_listener_settings`.
+
+#### `fio_http_listen`
+
+```c
+SFUNC fio_http_listener_s *fio_http_listen(const char *url,
+                                           fio_http_settings_s settings);
 #define fio_http_listen(url, ...) \
   fio_http_listen(url, (fio_http_settings_s){__VA_ARGS__})
 ```
 
-Starts an HTTP / WebSocket / SSE listener on `url`.
+Listens for HTTP, WebSocket, and SSE connections on `url`. The function is
+shadowed by a macro, so settings are passed as named arguments:
 
 ```c
 fio_http_listener_s *l = fio_http_listen("0.0.0.0:3000",
@@ -20430,95 +21021,167 @@ fio_http_listener_s *l = fio_http_listen("0.0.0.0:3000",
                                          .log = 1);
 ```
 
-The listener is rooted at `/`; a path component in the listen URL is ignored.
-Use `fio_http_route` for per-prefix behavior.
+**Parameters:**
+- `url` - the address to listen on.
 
-### `fio_http_listener_settings`
+**Named Arguments:** any `fio_http_settings_s` field. These become the root
+(`/`) route settings.
 
-```c
-fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l);
-```
+**Returns:** the listener, or `NULL` on error. The listener stays valid until
+it stops.
 
-Returns the listener's root settings object. Prefer `fio_http_route` for
-changing root routing behavior after the listener is created.
+**Note**: the listener always serves the root path (`/`). A path in `url` is
+ignored with a warning. Use `fio_http_route` for per-prefix settings.
 
-### `FIO_HTTP_AUTHENTICATE_ALLOW`
-
-```c
-int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h);
-```
-
-Authentication callback that always allows the upgrade. Use it for
-`.on_authenticate_sse` or `.on_authenticate_websocket` when no gate is needed.
-
-### `fio_http_io` and `fio_http_settings`
+#### `fio_http_listener_settings`
 
 ```c
-fio_io_s *fio_http_io(fio_http_s *h);
-fio_http_settings_s *fio_http_settings(fio_http_s *h);
+SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l);
 ```
 
-`fio_http_io` returns the IO object attached to the handle, when one exists.
-`fio_http_settings` returns the route settings matching the handle's original
-path, when connection data is available.
+Returns a pointer to the listener's root settings. The listener owns them.
+
+**Note**: the route table keeps its own copy of the root route. To change the
+root route after the listener is created, call `fio_http_route(l, "/", ...)`.
+
+#### `FIO_HTTP_AUTHENTICATE_ALLOW`
+
+```c
+SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h);
+```
+
+An authentication callback that allows every upgrade. Set it as
+`.on_authenticate_sse` or `.on_authenticate_websocket` when no check is
+needed.
+
+**Returns:** always `0` (allow).
+
+#### `fio_http_io` / `fio_http_settings`
+
+```c
+SFUNC fio_io_s *fio_http_io(fio_http_s *);
+SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
+```
+
+`fio_http_io` returns the IO object attached to the handle.
+
+`fio_http_settings` returns the route settings that match the handle's
+original (un-routed) path.
+
+**Returns:** a borrowed pointer, or `NULL` when the handle is `NULL` or is not
+attached to a connection (e.g., a handle from `fio_http_new`).
 
 ---
 
 ## Routing
 
-### Prefix routes
+Routes map a path prefix to its own `fio_http_settings_s`.
+
+### Prefix matching
+
+Routes use the best (longest) prefix match:
+
+- `/` matches every path.
+- `/user` matches `/user` and `/user/...`, but not `/user...`.
+- A more specific prefix, such as `/user/new`, wins over `/user`.
+
+Declaration order does not matter. Adding a route with an existing prefix
+replaces it. Percent-encoded path bytes are decoded before matching.
+
+Inside callbacks, `fio_http_path` returns the path with the route prefix
+removed, and `fio_http_opath` returns the original path.
+
+#### `fio_http_route`
 
 ```c
-int fio_http_route(fio_http_listener_s *listener,
-                   const char *url,
-                   fio_http_settings_s settings);
+SFUNC int fio_http_route(fio_http_listener_s *listener,
+                         const char *url,
+                         fio_http_settings_s settings);
 #define fio_http_route(listener, url, ...) \
   fio_http_route(listener, url, (fio_http_settings_s){__VA_ARGS__})
-
-fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
-                                             const char *url);
 ```
 
-Routes are best-prefix matches:
+Adds (or replaces) the route for the prefix `url`. The function is shadowed by
+a macro, so settings are passed as named arguments:
 
-- `/` matches everything.
-- `/user` matches `/user` and `/user/...`, but not `/user...`.
-- More specific prefixes such as `/user/new` win over `/user`.
+```c
+fio_http_route(listener, "/api", .on_http = on_api);
+```
 
-Route declaration order is not significant unless an existing route is replaced.
-Route settings inherit missing listener callbacks and limits, including `udata`,
-`on_finish`, `on_stop`, SSE / WebSocket authentication callbacks,
-header/body/message limits, timeouts, `public_folder`, `compress_static`, and
-`log`. TLS settings are ignored on routes.
+**Parameters:**
+- `listener` - a listener returned by `fio_http_listen`.
+- `url` - the path prefix. `NULL` or `""` selects the root route (`/`).
 
-Only `on_http`, `on_finish`, `udata`, the authentication callbacks,
-`public_folder`, `max_age`, and `compress_static` are effective per route.
-Upgraded-connection callbacks (`on_open`, `on_message`, `on_ready`,
-`on_shutdown`, `on_close`), `queue`, `log`, limits, timeouts,
-`compress_dynamic`, and `compress_ws` are connection-global: they are read
-from the listener's root settings, so per-route values are stored but unused.
-Note that `max_age` is **not** inherited — a route that serves static files
-must set its own.
+**Named Arguments:** any `fio_http_settings_s` field. Unset fields inherit the
+listener's values for: `udata`, `on_finish`, both authentication
+callbacks, `max_header_size`, `max_line_len`, `max_body_size`, `max_params`,
+`ws_max_msg_size`, `timeout`, `ws_timeout`, `sse_timeout`, `log`,
+`compress_static`, and `public_folder`. `on_stop` is never inherited, so
+the listener's cleanup runs once even when routes share its `udata`. Other
+unset callbacks get the
+defaults listed under `fio_http_settings_s`. For example, a route without
+`on_http` responds with `404`.
+
+**Returns:** `0` on success, or `-1` when `listener` is `NULL` or `url`
+contains an invalid (control) character.
+
+**Note**: only `on_http`, `on_finish`, `udata`, the authentication callbacks,
+`public_folder`, `max_age`, and `compress_static` take effect per route. All
+other fields are connection-global and are read from the listener's root
+settings: the upgraded-connection callbacks (`on_open`, `on_message`,
+`on_ready`, `on_shutdown`, `on_close`, ...), `queue`, `log`, limits,
+timeouts, `compress_dynamic`, and `compress_ws`. Per-route values for them are
+stored but unused.
+
+**Note**: `max_age` is **not** inherited. A route that serves static files
+must set its own. TLS settings are ignored.
+
+**Note**: if a route's `public_folder` does not exist, an error is logged and
+the route uses the listener's folder.
+
+#### `fio_http_route_settings`
+
+```c
+SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
+                                                   const char *url);
+```
+
+Returns the settings of the route that best matches `url`, using the same
+prefix rules as requests. When no route matches, it returns the root route.
+
+**Returns:** a pointer owned by the listener, or `NULL` when `l` is `NULL`.
 
 ### Resource action helper
 
+#### `fio_http_resource_action` / `fio_http_resource_action_e`
+
 ```c
 typedef enum {
+  /** No known action (or an error). */
   FIO_HTTP_RESOURCE_NONE,
+  /** `GET /` - list the resources. */
   FIO_HTTP_RESOURCE_INDEX,
+  /** `GET /<id>` - show a resource. */
   FIO_HTTP_RESOURCE_SHOW,
+  /** `GET /new` - a form for a new resource. */
   FIO_HTTP_RESOURCE_NEW,
+  /** `GET /<id>/edit` - a form for editing a resource. */
   FIO_HTTP_RESOURCE_EDIT,
+  /** `PUT`, `POST` or `PATCH` to `/` or `/new` - create a resource. */
   FIO_HTTP_RESOURCE_CREATE,
+  /** `PUT`, `POST` or `PATCH` to `/<id>` - update a resource. */
   FIO_HTTP_RESOURCE_UPDATE,
+  /** `DELETE /<id>` - delete a resource. */
   FIO_HTTP_RESOURCE_DELETE,
+  /** `QUERY` (any path) - query the resources. */
   FIO_HTTP_RESOURCE_QUERY,
 } fio_http_resource_action_e;
 
-fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
+FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
 ```
 
-Maps the current method and routed path to a small REST-style action:
+Maps the request method and the routed path (`fio_http_path`) to a REST-style
+action. Method names are matched case-insensitively.
 
 | Action | Request shape |
 | --- | --- |
@@ -20526,664 +21189,1889 @@ Maps the current method and routed path to a small REST-style action:
 | `FIO_HTTP_RESOURCE_SHOW` | `GET /:id` |
 | `FIO_HTTP_RESOURCE_NEW` | `GET /new` |
 | `FIO_HTTP_RESOURCE_EDIT` | `GET /:id/edit` |
-| `FIO_HTTP_RESOURCE_CREATE` | `PUT`, `POST`, or `PATCH /` |
-| `FIO_HTTP_RESOURCE_UPDATE` | `PUT`, `POST`, or `PATCH /:id` |
+| `FIO_HTTP_RESOURCE_CREATE` | `PUT`, `POST`, or `PATCH` on `/` or `/new` |
+| `FIO_HTTP_RESOURCE_UPDATE` | `PUT`, `POST`, or `PATCH` on `/:id` |
 | `FIO_HTTP_RESOURCE_DELETE` | `DELETE /:id` |
-| `FIO_HTTP_RESOURCE_QUERY` | `QUERY` (any path) |
+| `FIO_HTTP_RESOURCE_QUERY` | `QUERY` on any path |
 
-`FIO_HTTP_RESOURCE_NONE` is returned for unsupported shapes or invalid input.
+**Returns:** the matching action, or `FIO_HTTP_RESOURCE_NONE` for other
+request shapes or a `NULL` handle.
 
 ---
 
 ## Static File Service
 
-When the matching route has a `public_folder`, the module attempts a static
-file response (via `fio_http_static_file_response`) for `GET` and `HEAD`
-requests **before** calling `on_http`. All other methods (`POST`, `PUT`,
-`DELETE`, `OPTIONS`, ...) fall through to `on_http` untouched — a static
-file is not a valid response to them (RFC 9110 §9.3) — as do misses (not
-found or unsafe path), with the status pre-set to 200.
+When the matching route has a `public_folder`, `GET` and `HEAD` requests are
+answered with a static file (using `fio_http_static_file_response`) **before**
+`on_http` is called. Upgrade requests (WebSocket / SSE) are checked first.
 
-For the listener's root `public_folder` the full original path is appended
-to the folder; for a route-level `public_folder` the routed (prefix-trimmed)
-path is appended instead. Applications can also call
-`fio_http_static_file_response` directly from `on_http` — the API is
-method-agnostic (except `OPTIONS`, which it refuses), so the application
-can answer any other method with a file when it chooses to.
+These requests go to `on_http` instead, with the status already set to `200`:
+
+- other methods (`POST`, `PUT`, `DELETE`, `OPTIONS`, ...), since a static file
+  is not a valid response to them (RFC 9110 §9.3);
+- misses (file not found, or an unsafe path).
+
+The listener's root `public_folder` is joined with the original path. A
+route's own `public_folder` is joined with the routed (prefix-trimmed) path.
+
+To answer other methods with a file, call `fio_http_static_file_response`
+from `on_http`. It accepts any method except `OPTIONS`.
 
 ### Path resolution and safety
 
-- The request path is URL-decoded and joined to the root folder; paths
-  folding backwards (`/../`, `//`) are rejected.
-- A path resolving to a folder is retried as the folder's index file
+- The request path is URL-decoded and joined to the folder. Paths with `..`
+  segments or a double slash are rejected.
+- A path to a folder is retried as the folder's index file
   (`FIO_HTTP_DEFAULT_INDEX_FILENAME`, `"index"` by default).
-- With `FIO_HTTP_STATIC_FILE_COMPLETION` (default `1`), unresolved paths are
-  retried with `.html`, `.htm`, `.txt`, and `.md` appended (so a folder
-  resolves to `index.html`, `index.htm`, ...). Only regular files and
+- With `FIO_HTTP_STATIC_FILE_COMPLETION` (default `1`), a missing file is
+  retried with `.html`, `.htm`, `.txt`, and `.md` appended, so a folder
+  resolves to `index.html`, `index.htm`, and so on. Only regular files and
   symlinks are served.
-- The response `Content-Type` comes from the MIME registry
-  (`fio_http_mimetype`); an unregistered extension logs a warning.
+- The `Content-Type` comes from the MIME registry (`fio_http_mimetype`). An
+  unregistered extension logs a warning.
 
 ### Pre-compressed variants
 
-Unless the request is ranged (see below), the `Accept-Encoding` header is
-tested in preference order **`br` → `zstd` → `gzip` → `deflate`**, mapping
-to `<file>.br`, `<file>.zstd`, `<file>.gz`, and `<file>.zip` next to the
-original. The first accepted variant that exists on disk **and** is at
-least as fresh as the original (modification time) is served, with
-`Content-Encoding` set accordingly. Tokens forbidden with `q=0` are never
-selected (RFC 9110 §12.5.3).
+The server can send a compressed copy of a file (a variant) stored next to
+the original. It tests the client's `Accept-Encoding` in this order:
 
-With `compress_static` enabled, missing or stale `.br` / `.gz` variants are
-created on demand and written into the root folder. The value is read from the
-matching route's settings (routes inherit the listener's root value at
-route-creation); handles without settings (created with `fio_http_new`) never
-create variants.
+| Encoding | Variant file | Created on demand |
+| --- | --- | --- |
+| `br` | `<file>.br` | yes, brotli quality 4 |
+| `zstd` | `<file>.zstd` | no |
+| `gzip` | `<file>.gz` | yes, gzip level 6 |
+| `deflate` | `<file>.zip` | no |
 
-- creation is limited to compressible (text-like) MIME types and originals
-  between 1024 bytes and `FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT` (2 MiB);
-- creation is skipped when compression would not shrink the file;
-- `.br` variants are compressed at brotli quality 4 and `.gz` variants at
-  gzip level 6;
-- `zstd` / `deflate` variants are only ever served pre-generated — they are
-  never created on demand;
-- on-demand creation writes into the served folder and is triggered by
-  client requests; the folder must be writable for creation to succeed
-  (repeated failures disable creation, see below). Variants
-  may also be pre-generated at deploy time with any external tool — the
-  server only stats the files.
+The first accepted variant that exists and is at least as new as the original
+(by modification time) is served, with `Content-Encoding` set to match.
+Encodings refused with `q=0` are skipped (RFC 9110 §12.5.3). Ranged requests
+always get the original file.
 
-Any non-zero `compress_static` value enables on-demand creation. The server
-disables creation (setting the value to 0) after repeated consecutive
-failures, or after a single filesystem-full / permission error (`ENOSPC`,
-`EACCES`, `EROFS`, `EDQUOT`). Once disabled, creation stays off until the
-settings are re-applied.
+With `compress_static`, missing or stale `.br` / `.gz` variants are created on
+demand and written into the served folder. Creation:
 
-`Vary: accept-encoding` is set whenever a variant is served, and on
-identity responses whenever variants may be created, so caches key on the
+- reads `compress_static` from the matching route's settings (routes inherit
+  the listener's value when they are created);
+- only applies to compressible (text-like) MIME types and to originals from
+  1024 bytes to `FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT` (2 MiB);
+- is skipped when compression would not shrink the file;
+- needs a writable folder;
+- never happens for handles without settings (e.g., from `fio_http_new`).
+
+You can also generate variants at deploy time with any tool. The server only
+checks that the files exist and are fresh.
+
+**Note**: any non-zero `compress_static` value enables creation. The server
+sets it to `0` (disabled) after repeated consecutive failures, or after a
+single filesystem-full or permission error (`ENOSPC`, `EACCES`, `EROFS`,
+`EDQUOT`). Creation stays off until the settings are applied again.
+
+`Vary: accept-encoding` is set when a variant is served. It is also set on
+uncompressed responses when a variant could be created, so caches key on the
 client's `Accept-Encoding`.
 
 ### Conditional, ranged, and HEAD requests
 
-- The `ETag` is a hash of the served file's `stat` data (it changes when
-  the file changes). A matching `If-None-Match` (GET/HEAD) yields a `304`.
-- `Last-Modified` reflects the file's modification time;
-  `Cache-Control: max-age=<max_age>` is only sent when `max_age` is
-  non-zero.
-- Single `Range: bytes=start-end` requests are supported (`206` with
-  `Content-Range`), including open-ended (`bytes=N-`) and suffix
-  (`bytes=-N`) forms. `If-Range` must equal the current `ETag` or the
-  range is ignored. Unsatisfiable ranges get `416` with
-  `Content-Range: bytes */<length>`. Ranged responses are always identity
-  (no variant selection) and carry no `ETag`. `Accept-Ranges: bytes` is
-  always sent.
-- `HEAD` requests pass through the same logic and finish with headers only.
+- **`ETag`** is a hash of the file's `stat` data, so it changes when the file
+  changes. A matching `If-None-Match` gets a `304` response.
+- **`Last-Modified`** is the file's modification time.
+  `Cache-Control: max-age=<max_age>` is only sent when `max_age` is non-zero.
+- **Ranges**: a single `Range: bytes=start-end` gets a `206` response with
+  `Content-Range`. Open-ended (`bytes=N-`) and suffix (`bytes=-N`) forms work
+  too. An `If-Range` that differs from the current `ETag` disables the range.
+  An unsatisfiable range gets `416` with `Content-Range: bytes */<length>`.
+  Ranged responses are never compressed and carry no `ETag`.
+  `Accept-Ranges: bytes` is always sent.
+- **`HEAD`** requests get the same headers as `GET`, without the body.
 
 ---
 
 ## HTTP Client Connections
 
+#### `fio_http_connect`
+
 ```c
-fio_io_s *fio_http_connect(const char *url,
-                           fio_http_s *h,
-                           fio_http_settings_s settings);
+SFUNC fio_io_s *fio_http_connect(const char *url,
+                                 fio_http_s *h,
+                                 fio_http_settings_s settings);
 #define fio_http_connect(url, h, ...) \
   fio_http_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
 ```
 
-Connects as an HTTP / WebSocket / SSE client. If `h` is `NULL`, a new handle is
-created. Missing method, path, query, and `Host` are filled from `url`.
-
-Recognized upgrade schemes:
-
-- `ws://` and `wss://` call `fio_http_websocket_set_request`.
-- `sse://` and `sses://` call `fio_http_sse_set_request`.
-
-Client `on_http` receives the response handle. If the response accepts a
-WebSocket or SSE upgrade, the connection switches to the upgraded protocol and
-uses the upgraded callbacks instead.
-
-Interim `1xx` responses (i.e., `100 Continue`, `103 Early Hints`) other than
-`101` are skipped (RFC 9110 §15.2): `on_http` runs once, for the final
-response, and interim headers are discarded. Responses to `HEAD` requests, and
-`204` / `304` responses, never read a body, even if they carry
-`content-length` or `transfer-encoding` headers. Those headers stay visible
-as response headers.
-
-### `fio_http_websocket_connect`
+Connects to `url` as an HTTP, WebSocket, or SSE client and sends the request
+in `h`. The function is shadowed by a macro, so settings are passed as named
+arguments:
 
 ```c
-fio_io_s *fio_http_websocket_connect(const char *url,
-                                     fio_http_s *h,
-                                     fio_http_settings_s settings);
+fio_http_connect("http://example.com/", NULL, .on_http = on_response);
+```
+
+**Parameters:**
+- `url` - the server URL. Its scheme selects the protocol:
+  - `http://` / `https://` - a plain HTTP request;
+  - `ws://` / `wss://` - a WebSocket upgrade (calls
+    `fio_http_websocket_set_request` and adds an `Origin` header when
+    missing);
+  - `sse://` / `sses://` - an SSE request (calls `fio_http_sse_set_request`
+    and adds an `Origin` header when missing).
+- `h` - the request handle, or `NULL` to create one. The connection takes
+  ownership of the caller's reference. Unset fields get defaults: the method
+  is `GET`, the path and query come from `url` (path `/` when missing), and a
+  missing `Host` header comes from `url`. A `udata` already set on `h` is
+  kept.
+
+**Named Arguments:** any `fio_http_settings_s` field. `on_http` receives the
+response handle.
+
+**Returns:** the connecting IO object, or `NULL` on error. The reactor owns it.
+The pointer is valid only until the next event is processed. On failure the
+connection frees `h` later, on the IO thread, even when `NULL` is returned. Do
+not use or free `h` after the call.
+
+If the server accepts a WebSocket or SSE upgrade, the connection switches
+protocol and uses the upgraded callbacks (`on_open`, `on_message` /
+`on_eventsource`, `on_close`) instead of `on_http`.
+
+**Note**: interim `1xx` responses other than `101` (e.g., `100 Continue`,
+`103 Early Hints`) are skipped (RFC 9110 §15.2). `on_http` runs once, for
+the final response. Interim headers are discarded.
+
+**Note**: responses to `HEAD` requests, and `204` / `304` responses, never
+read a body, even with `content-length` or `transfer-encoding` headers. Those
+headers stay visible as response headers. The body of a `301` / `302`
+response is not stored.
+
+#### `fio_http_websocket_connect`
+
+```c
+SFUNC fio_io_s *fio_http_websocket_connect(const char *url,
+                                           fio_http_s *h,
+                                           fio_http_settings_s settings);
 #define fio_http_websocket_connect(url, h, ...) \
   fio_http_websocket_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
 ```
 
-Connects to a WebSocket server. A convenience wrapper around
-`fio_http_connect` that normalizes the `url` scheme before connecting:
-`http://` becomes `ws://`, `https://` becomes `wss://`, and a missing scheme
-defaults to `ws://` (`ws://` / `wss://` and any other scheme pass through
-unchanged).
+Connects to a WebSocket server. This wrapper fixes the `url` scheme, then
+calls `fio_http_connect`:
 
-`fio_http_connect` issues the WebSocket upgrade request automatically for
-`ws://` / `wss://` URLs. If the server accepts the upgrade (`101`), the
-connection switches to the WebSocket protocol and the `on_open` /
-`on_message` / `on_close` callbacks are used. Any other response is routed
-to `settings.on_http` with the response handle.
+- `http://` becomes `ws://`, and `https://` becomes `wss://`;
+- a URL without a scheme gets `ws://`;
+- `ws://`, `wss://`, and any other scheme are used as is.
+
+If the server accepts the upgrade (`101`), the connection switches to
+WebSocket and uses `on_open`, `on_message`, and `on_close`. Any other response
+goes to `on_http`.
+
+**Parameters**, **Named Arguments**, and **Returns:** as for
+`fio_http_connect`.
 
 ---
 
 ## WebSocket and SSE Upgrades
 
+Servers upgrade automatically. When a request asks for WebSocket or SSE, the
+server calls `on_authenticate_websocket` or `on_authenticate_sse` instead of
+`on_http`. If the callback returns `0`, the server sends the upgrade response
+and calls `on_open`. Otherwise it responds with `403`.
+
+The helpers below test and set up upgrades by hand, e.g., for custom
+controllers or client handles.
+
 ### Upgrade tests and request / response setup
 
-These helpers are declared by the HTTP handle and used by the HTTP module:
+#### `fio_http_websocket_requested` / `fio_http_sse_requested`
 
 ```c
-int  fio_http_websocket_requested(fio_http_s *h);
-int  fio_http_websocket_accepted(fio_http_s *h);
-void fio_http_upgrade_websocket(fio_http_s *h);
-void fio_http_websocket_set_request(fio_http_s *h);
-
-int  fio_http_sse_requested(fio_http_s *h);
-int  fio_http_sse_accepted(fio_http_s *h);
-void fio_http_upgrade_sse(fio_http_s *h);
-void fio_http_sse_set_request(fio_http_s *h);
+SFUNC int fio_http_websocket_requested(fio_http_s *);
+SFUNC int fio_http_sse_requested(fio_http_s *);
 ```
 
-`*_requested` inspects request headers. `*_accepted` inspects client-side
-response state and marks the handle as upgraded on success. `fio_http_upgrade_*`
-sets the server response state for the upgrade. `*_set_request` prepares a
-client request handle.
+Test the request headers for an upgrade request.
 
-Server listeners normally call the authentication callbacks and then upgrade
-automatically when a request asks for WebSocket or SSE.
+`fio_http_websocket_requested` checks for `Connection: upgrade`,
+`Upgrade: websocket`, and a 24-byte `Sec-WebSocket-Key`.
+`fio_http_sse_requested` checks that `Accept` starts with
+`text/event-stream`.
 
-### WebSocket write and callback override
+**Returns:** `0` when no upgrade is requested, non-zero otherwise.
+`fio_http_websocket_requested` returns `-1` (still non-zero) when the
+`Sec-WebSocket-Version` is not `13`.
+
+#### `fio_http_upgrade_websocket` / `fio_http_upgrade_sse`
 
 ```c
-int fio_http_websocket_write(fio_http_s *h,
-                             const void *buf,
-                             size_t len,
-                             uint8_t is_text);
-
-int fio_http_on_message_set(fio_http_s *h,
-                            void (*on_message)(fio_http_s *,
-                                               fio_buf_info_s,
-                                               uint8_t));
+SFUNC void fio_http_upgrade_websocket(fio_http_s *);
+SFUNC void fio_http_upgrade_sse(fio_http_s *);
 ```
 
-`fio_http_websocket_write` writes one WebSocket message and fails if the handle
-is not an established WebSocket. `is_text` selects text vs. binary.
+Send the server's upgrade response and finish the HTTP cycle. The server calls
+these after a successful authentication callback.
 
-**Serialization:** `fio_http_websocket_write` must be serialized per
-connection — concurrent calls on the same handle (e.g. from pub/sub or queue
-callbacks racing on multiple threads) may interleave frame bytes and must be
-guarded by the caller (mutex, or route all writes through the connection's
-queue). This also protects the per-connection compression context.
+`fio_http_upgrade_websocket` sends `101 Switching Protocols` with the
+`Sec-WebSocket-Accept` header. It sends `400` when `Sec-WebSocket-Version` is
+not `13`, and `403` when `Sec-WebSocket-Key` is invalid.
 
-`fio_http_on_message_set` overrides the `on_message` callback for the current
-WebSocket connection. Passing `NULL` restores the settings callback. It returns
-`-1` when the handle is not ready for this change.
+`fio_http_upgrade_sse` sends the `text/event-stream` response headers. It does
+nothing if the response was already started.
 
-Incoming WebSocket messages are accumulated up to `ws_max_msg_size` and then
-scheduled on the HTTP queue. Control frames are handled by the module.
-
-### SSE write
+#### `fio_http_websocket_set_request` / `fio_http_sse_set_request`
 
 ```c
+SFUNC void fio_http_websocket_set_request(fio_http_s *);
+SFUNC void fio_http_sse_set_request(fio_http_s *);
+```
+
+Set the request headers of a client handle to ask for an upgrade.
+`fio_http_connect` calls them for `ws://` and `sse://` URLs.
+
+`fio_http_websocket_set_request` sets `Connection`, `Upgrade`,
+`Sec-WebSocket-Version: 13`, a random `Sec-WebSocket-Key`, no-cache headers,
+and an `Origin` (from `Host`) when missing. `fio_http_sse_set_request` sets
+`Accept: text/event-stream`, `Connection: keep-alive`, and
+`Cache-Control: no-cache`.
+
+#### `fio_http_websocket_accepted` / `fio_http_sse_accepted`
+
+```c
+SFUNC int fio_http_websocket_accepted(fio_http_s *h);
+SFUNC int fio_http_sse_accepted(fio_http_s *h);
+```
+
+Test a client response for an accepted upgrade. On success, the handle is
+marked as upgraded and finished.
+
+`fio_http_websocket_accepted` requires status `101`, the `Connection` and
+`Upgrade` headers, and a `Sec-WebSocket-Accept` that matches the request key.
+`fio_http_sse_accepted` requires status `200` and a `text/event-stream`
+`content-type`.
+
+**Returns:** non-zero if the upgrade was accepted, `0` otherwise.
+
+### WebSocket messages
+
+Incoming messages are collected up to `ws_max_msg_size` bytes, then
+`on_message` runs on the HTTP task queue. A connection delivers one message
+at a time. The module handles control frames (ping, pong, close).
+
+#### `fio_http_websocket_write`
+
+```c
+SFUNC int fio_http_websocket_write(fio_http_s *h,
+                                   const void *buf,
+                                   size_t len,
+                                   uint8_t is_text);
+```
+
+Writes one WebSocket message. The data is copied.
+
+**Parameters:**
+- `h` - an established WebSocket handle.
+- `buf`, `len` - the message payload.
+- `is_text` - non-zero sends a text message; `0` sends a binary message.
+
+**Returns:** `0` on success, or `-1` when `h` is `NULL` or is not an
+established WebSocket. It may also return `-1` when the connection has
+closed.
+
+**Note**: **NOT** thread-safe per connection. Calls on the same handle share
+the connection's compression state. Serialize them, e.g., with a mutex or by
+sending all writes through one queue.
+
+**Note**: with `compress_ws`, messages of `FIO_HTTP_WEBSOCKET_DEFLATE_MIN`
+(1024) bytes or more are compressed when that makes them smaller.
+
+#### `fio_http_on_message_set`
+
+```c
+SFUNC int fio_http_on_message_set(fio_http_s *h,
+                                  void (*on_message)(fio_http_s *,
+                                                     fio_buf_info_s,
+                                                     uint8_t));
+```
+
+Replaces the `on_message` callback for this WebSocket connection only.
+Passing `NULL` restores the callback from the settings.
+
+**Returns:** `0` on success, or `-1` when `h` is `NULL` or not attached to a
+connection.
+
+**Note**: call it only on an established WebSocket handle (e.g., from
+`on_open`). The function does not check the connection state.
+
+### SSE events
+
+#### `fio_http_sse_write`
+
+```c
+/** Named arguments for fio_http_sse_write. */
 typedef struct {
+  /** The message's `id` data (if any). */
   fio_buf_info_s id;
+  /** The message's `event` data (if any). */
   fio_buf_info_s event;
+  /** The message's `data` (required; empty data fails). */
   fio_buf_info_s data;
 } fio_http_sse_write_args_s;
 
-int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
+SFUNC int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
 #define fio_http_sse_write(h, ...) \
   fio_http_sse_write((h), ((fio_http_sse_write_args_s){__VA_ARGS__}))
 ```
 
-Writes one UTF-8 SSE event. `data` is required. `id` and `event` are optional.
-Multiline data is emitted as repeated `data:` lines. The helper fails if the
-handle is not an established SSE connection.
+Writes one SSE event. The function is shadowed by a macro, so it takes named
+arguments:
+
+```c
+fio_http_sse_write(h, .data = FIO_BUF_INFO1((char *)"hello"));
+```
+
+**Named Arguments:**
+- `id` - the event ID; optional.
+- `event` - the event name; optional.
+- `data` - the event data; required. Each line is sent as its own `data:`
+  line.
+
+**Returns:** `0` on success, or `-1` when `data` is empty, `h` is `NULL` or
+not an established SSE connection, or the connection has closed.
+
+**Note**: SSE is a UTF-8 text format. The data is not validated.
 
 ### Pub/sub helpers
+
+#### `fio_http_subscribe`
 
 ```c
 #define fio_http_subscribe(h, ...) \
   fio_pubsub_subscribe(.io = fio_http_io(h), __VA_ARGS__)
-
-void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
-void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg);
-void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg);
-void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
 ```
 
-`fio_http_subscribe` subscribes using the handle's IO object.
+Subscribes the handle's connection to a pub/sub channel. The arguments are
+`fio_pubsub_subscribe` named arguments, without `.io`.
 
-The direct WebSocket callbacks write published messages to the WebSocket. The
-plain `FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT` helper checks short payloads for
-UTF-8 and selects text or binary; the explicit `_TEXT` and `_BINARY` variants
-skip that guess.
+```c
+fio_http_subscribe(h, .channel = FIO_BUF_INFO1((char *)"chat"));
+```
 
-`FIO_HTTP_SSE_SUBSCRIBE_DIRECT` writes an SSE event whose event name is the
-channel and whose data is the published message.
+Without `.on_message`, each message goes to the connection protocol's
+default: `FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT` for WebSocket connections and
+`FIO_HTTP_SSE_SUBSCRIBE_DIRECT` for SSE connections.
+
+#### `FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT` / `FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT` / `FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY`
+
+```c
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg);
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg);
+```
+
+Subscription callbacks that write each published message to the WebSocket.
+
+- `_TEXT` sends text messages; the payload must be valid UTF-8.
+- `_BINARY` sends binary messages.
+- The plain version sends a text message when the payload is valid UTF-8
+  and shorter than `FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT`; otherwise
+  it sends a binary message.
+
+#### `FIO_HTTP_SSE_SUBSCRIBE_DIRECT`
+
+```c
+SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
+```
+
+A subscription callback that writes each published message as an SSE event.
+The event name is the channel, the data is the message, and the ID is the
+message ID in hex. Messages must be UTF-8.
 
 ---
 
 ## HTTP Handle API Pulled In by `FIO_HTTP`
 
-The HTTP handle is the request / response object exposed to callbacks.
+The HTTP handle (`fio_http_s`) is the request / response object passed to
+HTTP callbacks. The same handle type serves servers and clients.
 
 ### Lifetime
 
+#### `fio_http_s`
+
 ```c
 typedef struct fio_http_s fio_http_s;
-
-fio_http_s *fio_http_new(void);
-fio_http_s *fio_http_new_copy_request(fio_http_s *old);
-void        fio_http_free(fio_http_s *h);
-fio_http_s *fio_http_dup(fio_http_s *h);
-fio_http_s *fio_http_destroy(fio_http_s *h);
-void        fio_http_start_time_set(fio_http_s *h);
-fio_http_s *fio_http_clear_response(fio_http_s *h, bool clear_body);
-void        fio_http_close(fio_http_s *h);
 ```
 
-`fio_http_s` is reference-counted. It is not designed as a thread-safe mutable
-object. `fio_http_close` closes the associated connection, including an ordinary
-HTTP/1 connection. Schedule the complete response before calling it; previously
-scheduled output drains before closure.
+An opaque, reference-counted HTTP handle. Use the functions below to access
+it.
+
+**Note**: the handle is **NOT** thread-safe. Access it from one thread at a
+time.
+
+#### `fio_http_new`
+
+```c
+SFUNC fio_http_s *fio_http_new(void);
+```
+
+Creates a new, empty HTTP handle with a reference count of 1.
+
+A new handle has status `0` and a no-op controller, so writes are discarded.
+The HTTP connection layer sets up the handles it passes to callbacks.
+
+**Returns:** an owned handle (release with `fio_http_free`), or `NULL` on
+allocation failure.
+
+#### `fio_http_new_copy_request`
+
+```c
+SFUNC fio_http_s *fio_http_new_copy_request(fio_http_s *old);
+```
+
+Creates a new handle that copies the request data of `old`: method, original
+path, path, query, version, request headers and received cookies. The body,
+the response data, user data and the controller are not copied.
+
+**Returns:** an owned handle (release with `fio_http_free`). Allocation failure
+is fatal.
+
+#### `fio_http_free` / `fio_http_dup`
+
+```c
+SFUNC void fio_http_free(fio_http_s *);
+SFUNC fio_http_s *fio_http_dup(fio_http_s *);
+```
+
+`fio_http_dup` increases the handle's reference count and returns the same
+handle. `fio_http_free` decreases the reference count and frees the handle
+when it reaches zero.
+
+Take a reference with `fio_http_dup` to keep a handle after the callback that
+received it returns, for example to finish the response later.
+
+#### `fio_http_destroy`
+
+```c
+SFUNC fio_http_s *fio_http_destroy(fio_http_s *h);
+```
+
+Releases all the data held by the handle and resets it to the state of a new
+handle. The handle's own memory is not freed and its reference count is not
+changed.
+
+The controller's `on_destroyed` callback runs first.
+
+**Returns:** `h` (or `NULL` if `h` is `NULL`).
+
+**Note**: `fio_http_free` calls this automatically. Most applications never
+need to call it.
+
+#### `fio_http_clear_response`
+
+```c
+SFUNC fio_http_s *fio_http_clear_response(fio_http_s *h, bool clear_body);
+```
+
+Clears the response, so a new response can be written: removes the response
+headers, resets the response state and the status, and updates the
+`received_at` timestamp. If `clear_body` is true, the body is released too.
+
+**Returns:** `h`.
+
+**Note**: the status is reset to `0`. Set a status before writing a server
+response; with status `0`, `fio_http_write` sends a request.
+
+**Note**: cookies set with `fio_http_cookie_set` are kept.
+
+#### `fio_http_start_time_set`
+
+```c
+SFUNC void fio_http_start_time_set(fio_http_s *);
+```
+
+Sets the handle's `received_at` timestamp to the current time. Request logs
+measure the response time from this timestamp.
+
+#### `fio_http_close`
+
+```c
+SFUNC void fio_http_close(fio_http_s *h);
+```
+
+Closes the connection that the handle belongs to, including an ordinary HTTP/1
+connection. Output that was already scheduled is sent before the connection
+closes.
+
+Schedule the complete response before calling this (for example, in
+`on_finish`). A handle without a connection ignores the call.
 
 ### User data and controller data
 
-```c
-void *fio_http_udata(fio_http_s *h);
-void *fio_http_udata_set(fio_http_s *h, void *udata);
-void *fio_http_udata2(fio_http_s *h);
-void *fio_http_udata2_set(fio_http_s *h, void *udata);
-void *fio_http_cdata(fio_http_s *h);
-void *fio_http_cdata_set(fio_http_s *h, void *cdata);
+#### `fio_http_udata` / `fio_http_udata_set` / `fio_http_udata2` / `fio_http_udata2_set`
 
-fio_http_controller_s *fio_http_controller(fio_http_s *h);
-fio_http_controller_s *fio_http_controller_set(fio_http_s *h,
-                                               fio_http_controller_s *c);
+```c
+FIO_IFUNC void *fio_http_udata(fio_http_s *);
+FIO_IFUNC void *fio_http_udata_set(fio_http_s *, void *);
+FIO_IFUNC void *fio_http_udata2(fio_http_s *);
+FIO_IFUNC void *fio_http_udata2_set(fio_http_s *, void *);
 ```
 
-`udata` and `udata2` are for application state. `cdata` and the controller are
-used by the HTTP layer and custom controllers.
+Get or set two opaque pointers for application state. The handle never uses
+or frees them.
 
-`fio_http_controller` gets the handle's controller; `fio_http_controller_set`
-sets it and returns the controller in use. Passing `NULL` installs a no-op
-controller. Missing callbacks in a custom controller are filled in with no-op
-defaults, so the controller object must be writable and outlive the handle.
+**Returns:** the getters return the stored pointer; the setters return the new
+pointer.
+
+**Note**: `h` must not be `NULL`.
+
+#### `fio_http_cdata` / `fio_http_cdata_set`
+
+```c
+FIO_IFUNC void *fio_http_cdata(fio_http_s *h);
+FIO_IFUNC void *fio_http_cdata_set(fio_http_s *h, void *cdata);
+```
+
+Get or set the controller's opaque pointer. The HTTP connection layer uses it
+for its own connection data; only custom controllers should set it.
+
+**Returns:** the getter returns the stored pointer; the setter returns the new
+pointer.
+
+#### `fio_http_controller` / `fio_http_controller_set`
+
+```c
+FIO_IFUNC fio_http_controller_s *fio_http_controller(fio_http_s *h);
+FIO_IFUNC fio_http_controller_s *fio_http_controller_set(
+    fio_http_s *h,
+    fio_http_controller_s *controller);
+```
+
+Get or set the controller that sends the handle's data (see
+[Controller](#fio_http_controller_s)).
+
+Passing `NULL` installs a no-op controller. Missing callbacks in a custom
+controller are filled in with no-op defaults, so the controller object must be
+writable and must outlive the handle.
+
+**Returns:** the getter returns the current controller; the setter returns the
+controller now in use.
 
 ### Request / response properties
 
+#### `fio_http_status` / `fio_http_status_set`
+
 ```c
-size_t         fio_http_status(fio_http_s *h);
-size_t         fio_http_status_set(fio_http_s *h, size_t status);
-fio_str_info_s fio_http_method(fio_http_s *h);
-int fio_http_method_is_get(fio_http_s *h);
-int fio_http_method_is_head(fio_http_s *h);
-int fio_http_method_is_post(fio_http_s *h);
-int fio_http_method_is_put(fio_http_s *h);
-int fio_http_method_is_delete(fio_http_s *h);
-int fio_http_method_is_connect(fio_http_s *h);
-int fio_http_method_is_options(fio_http_s *h);
-int fio_http_method_is_trace(fio_http_s *h);
-int fio_http_method_is_patch(fio_http_s *h);
-int fio_http_method_is_query(fio_http_s *h);
-int fio_http_method_is_propfind(fio_http_s *h);
-int fio_http_method_is_proppatch(fio_http_s *h);
-int fio_http_method_is_mkcol(fio_http_s *h);
-int fio_http_method_is_copy(fio_http_s *h);
-int fio_http_method_is_move(fio_http_s *h);
-int fio_http_method_is_lock(fio_http_s *h);
-int fio_http_method_is_unlock(fio_http_s *h);
-int fio_http_method_is_search(fio_http_s *h);
-fio_str_info_s fio_http_method_set(fio_http_s *h, fio_str_info_s value);
-fio_str_info_s fio_http_opath(fio_http_s *h);
-fio_str_info_s fio_http_opath_set(fio_http_s *h, fio_str_info_s value);
-fio_str_info_s fio_http_path(fio_http_s *h);
-fio_str_info_s fio_http_path_set(fio_http_s *h, fio_str_info_s value);
-fio_str_info_s fio_http_query(fio_http_s *h);
-fio_str_info_s fio_http_query_set(fio_http_s *h, fio_str_info_s value);
-fio_str_info_s fio_http_version(fio_http_s *h);
-fio_str_info_s fio_http_version_set(fio_http_s *h, fio_str_info_s value);
-int64_t        fio_http_received_at(fio_http_s *h);
-int64_t        fio_http_received_at_set(fio_http_s *h, int64_t value);
+SFUNC size_t fio_http_status(fio_http_s *);
+SFUNC size_t fio_http_status_set(fio_http_s *, size_t status);
 ```
 
-`opath` is the original path before route prefix trimming. `path` is the routed
-path visible to the current callback.
+Get or set the response status.
 
-The `fio_http_method_is_*` helpers test whether the request method matches the
-named method, ignoring ASCII case. They return `1` for a match and `0` otherwise;
-pass a non-`NULL` HTTP handle (`h`). Unlike `fio_http_resource_action`, these
-helpers do not classify paths or combine PUT, POST, and PATCH into a single
-action. The helpers cover the core HTTP methods, PATCH, QUERY, and commonly
-used WebDAV methods (PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, and
-SEARCH).
+The server sets the status to `200` before calling `on_http`. A client handle
+has status `0` until a response arrives. While the status is `0`,
+`fio_http_write` sends a request instead of a response.
 
-`fio_http_status_set(h, 0)` normalizes to `200`; values above `1023` normalize
-to `500`.
+`fio_http_status_set(h, 0)` sets `200`; values above `1023` set `500`.
+
+**Returns:** the current status (the setter returns the stored value).
+
+#### `fio_http_method` / `fio_http_opath` / `fio_http_path` / `fio_http_query` / `fio_http_version`
+
+```c
+SFUNC fio_str_info_s fio_http_method(fio_http_s *);
+SFUNC fio_str_info_s fio_http_method_set(fio_http_s *, fio_str_info_s);
+SFUNC fio_str_info_s fio_http_opath(fio_http_s *);
+SFUNC fio_str_info_s fio_http_opath_set(fio_http_s *, fio_str_info_s);
+SFUNC fio_str_info_s fio_http_path(fio_http_s *);
+SFUNC fio_str_info_s fio_http_path_set(fio_http_s *, fio_str_info_s);
+SFUNC fio_str_info_s fio_http_query(fio_http_s *);
+SFUNC fio_str_info_s fio_http_query_set(fio_http_s *, fio_str_info_s);
+SFUNC fio_str_info_s fio_http_version(fio_http_s *);
+SFUNC fio_str_info_s fio_http_version_set(fio_http_s *, fio_str_info_s);
+```
+
+Get or set the request line properties: the method, the original path
+(`opath`), the routed path (`path`), the query string and the HTTP version.
+
+`opath` is the path as received, before route prefix trimming. `path` is the
+path visible to the current route's callback.
+
+The setters copy `value`.
+
+**Returns:** a view of the stored value, or an empty value if `h` is `NULL`.
+The view is borrowed: it stays valid until the property is set again or the
+handle is destroyed.
+
+#### `fio_http_method_is_*`
+
+```c
+SFUNC int fio_http_method_is_get(fio_http_s *h);
+SFUNC int fio_http_method_is_head(fio_http_s *h);
+SFUNC int fio_http_method_is_post(fio_http_s *h);
+SFUNC int fio_http_method_is_put(fio_http_s *h);
+SFUNC int fio_http_method_is_delete(fio_http_s *h);
+SFUNC int fio_http_method_is_connect(fio_http_s *h);
+SFUNC int fio_http_method_is_options(fio_http_s *h);
+SFUNC int fio_http_method_is_trace(fio_http_s *h);
+SFUNC int fio_http_method_is_patch(fio_http_s *h);
+SFUNC int fio_http_method_is_query(fio_http_s *h);
+SFUNC int fio_http_method_is_propfind(fio_http_s *h);
+SFUNC int fio_http_method_is_proppatch(fio_http_s *h);
+SFUNC int fio_http_method_is_mkcol(fio_http_s *h);
+SFUNC int fio_http_method_is_copy(fio_http_s *h);
+SFUNC int fio_http_method_is_move(fio_http_s *h);
+SFUNC int fio_http_method_is_lock(fio_http_s *h);
+SFUNC int fio_http_method_is_unlock(fio_http_s *h);
+SFUNC int fio_http_method_is_search(fio_http_s *h);
+```
+
+Test whether the request method is the named method, ignoring ASCII case.
+They cover the core HTTP methods, PATCH, QUERY, and common WebDAV methods
+(PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK and SEARCH).
+
+Unlike `fio_http_resource_action`, these helpers only test the method. They
+do not look at the path or group PUT, POST and PATCH into one action.
+
+**Returns:** `1` on a match, `0` otherwise.
+
+**Note**: `h` must not be `NULL`.
+
+#### `fio_http_received_at` / `fio_http_received_at_set`
+
+```c
+SFUNC int64_t fio_http_received_at(fio_http_s *);
+SFUNC int64_t fio_http_received_at_set(fio_http_s *, int64_t);
+```
+
+Get or set the time the request was received. Request logs measure the
+response time from it.
+
+The unit is milliseconds, or microseconds when `FIO_HTTP_EXACT_LOGGING` is
+enabled (see [Compile-Time Knobs](#compile-time-knobs)).
+
+**Returns:** the timestamp (the setter returns the stored value).
 
 ### State checks
 
+#### `fio_http_is_*` state tests
+
 ```c
-int fio_http_is_clean(fio_http_s *h);
-int fio_http_is_finished(fio_http_s *h);
-int fio_http_is_streaming(fio_http_s *h);
-int fio_http_is_upgraded(fio_http_s *h);
-int fio_http_is_websocket(fio_http_s *h);
-int fio_http_is_sse(fio_http_s *h);
-int fio_http_is_freeing(fio_http_s *h);
+SFUNC int fio_http_is_clean(fio_http_s *);
+SFUNC int fio_http_is_finished(fio_http_s *);
+SFUNC int fio_http_is_streaming(fio_http_s *);
+SFUNC int fio_http_is_upgraded(fio_http_s *h);
+SFUNC int fio_http_is_websocket(fio_http_s *);
+SFUNC int fio_http_is_sse(fio_http_s *);
+SFUNC int fio_http_is_freeing(fio_http_s *);
 ```
+
+Test the state of the request / response cycle:
+
+- `fio_http_is_clean` - no headers were sent and nothing was upgraded yet
+  (headers can still be set).
+- `fio_http_is_finished` - the response (or request) is complete.
+- `fio_http_is_streaming` - the response is streamed (no `content-length`).
+- `fio_http_is_upgraded` - the connection was (or should have been) upgraded.
+- `fio_http_is_websocket` - the handle belongs to a WebSocket connection.
+- `fio_http_is_sse` - the handle belongs to an SSE (EventSource) connection.
+- `fio_http_is_freeing` - the handle is being destroyed (useful in controller
+  and `on_finish` callbacks).
+
+**Returns:** non-zero if the state is set, `0` otherwise.
+
+**Note**: `h` must not be `NULL`.
 
 ### Headers
 
+Request and response headers use twin functions: replace `request` with
+`response` in the name. Header names are case-sensitive. Received header names
+are stored in lowercase, so use lowercase names (or enable
+`FIO_HTTP_ENFORCE_LOWERCASE_HEADERS`).
+
+A server receives request headers; a client receives response headers. Use
+the [Cookies](#cookies) functions to read and set cookies.
+
+#### `fio_http_request_header` / `fio_http_response_header`
+
 ```c
-fio_str_info_s fio_http_request_header(fio_http_s *h,
+SFUNC fio_str_info_s fio_http_request_header(fio_http_s *,
+                                             fio_str_info_s name,
+                                             size_t index);
+SFUNC fio_str_info_s fio_http_response_header(fio_http_s *,
+                                              fio_str_info_s name,
+                                              size_t index);
+```
+
+Gets the value at `index` of the header `name`. A header received more than
+once has a value per field: use `index` `0`, `1`, ... to read them in order.
+An `index` of `(size_t)-1` gets the last value.
+
+**Returns:** a borrowed view of the value, or an empty value if the header or
+the index doesn't exist. The view stays valid until the header is changed or
+the handle is destroyed.
+
+#### `fio_http_request_header_count` / `fio_http_response_header_count`
+
+```c
+SFUNC size_t fio_http_request_header_count(fio_http_s *, fio_str_info_s name);
+SFUNC size_t fio_http_response_header_count(fio_http_s *, fio_str_info_s name);
+```
+
+**Returns:** the number of values stored for `name`. If `name.buf` is `NULL`,
+returns the number of unique header names.
+
+#### `fio_http_request_header_set` / `_set_if_missing` / `_add` (and `response` twins)
+
+```c
+SFUNC fio_str_info_s fio_http_request_header_set(fio_http_s *,
+                                                 fio_str_info_s name,
+                                                 fio_str_info_s value);
+SFUNC fio_str_info_s
+fio_http_request_header_set_if_missing(fio_http_s *,
                                        fio_str_info_s name,
-                                       size_t index);
-size_t fio_http_request_header_count(fio_http_s *h, fio_str_info_s name);
-fio_str_info_s fio_http_request_header_set(fio_http_s *h,
-                                           fio_str_info_s name,
-                                           fio_str_info_s value);
-fio_str_info_s fio_http_request_header_set_if_missing(fio_http_s *h,
-                                                      fio_str_info_s name,
-                                                      fio_str_info_s value);
-fio_str_info_s fio_http_request_header_add(fio_http_s *h,
-                                           fio_str_info_s name,
-                                           fio_str_info_s value);
-size_t fio_http_request_header_each(fio_http_s *h,
-                                    int (*callback)(fio_http_s *,
-                                                    fio_str_info_s name,
-                                                    fio_str_info_s value,
-                                                    void *udata),
-                                    void *udata);
+                                       fio_str_info_s value);
+SFUNC fio_str_info_s fio_http_request_header_add(fio_http_s *,
+                                                 fio_str_info_s name,
+                                                 fio_str_info_s value);
+SFUNC fio_str_info_s fio_http_response_header_set(fio_http_s *,
+                                                  fio_str_info_s name,
+                                                  fio_str_info_s value);
+SFUNC fio_str_info_s
+fio_http_response_header_set_if_missing(fio_http_s *,
+                                        fio_str_info_s name,
+                                        fio_str_info_s value);
+SFUNC fio_str_info_s fio_http_response_header_add(fio_http_s *,
+                                                  fio_str_info_s name,
+                                                  fio_str_info_s value);
 ```
 
-Response headers use the same shape with `response` in the function name:
+Change a header. The name and value are copied.
+
+- `*_set` replaces all the values of `name` with `value`.
+- `*_set_if_missing` sets `value` only if `name` has no value yet.
+- `*_add` adds `value` after the existing values of `name`.
+
+An empty `value` removes the header with `*_set`. `*_set_if_missing` ignores
+it and returns the existing value (if any). `*_add` ignores it.
+
+**Returns:** a borrowed view of the stored value. `*_set_if_missing` returns
+the existing (last) value when the header already exists. Returns an empty
+value when the header was removed or the input was rejected.
+
+**Note**: for security, names longer than 4095 bytes, names containing bytes
+the HTTP/1 parser forbids in names (such as whitespace, colon, NUL, CR and
+LF), and values containing NUL, CR or LF are rejected. A rejected call
+changes nothing. With `FIO_HTTP_ENFORCE_LOWERCASE_HEADERS`, names are stored
+in lowercase; the caller's input is not modified.
+
+**Note**: response header changes made after the headers were sent are not
+sent.
+
+#### `fio_http_request_header_each` / `fio_http_response_header_each`
 
 ```c
-fio_http_response_header;
-fio_http_response_header_count;
-fio_http_response_header_set;
-fio_http_response_header_set_if_missing;
-fio_http_response_header_add;
-fio_http_response_header_each;
+SFUNC size_t fio_http_request_header_each(fio_http_s *,
+                                          int (*callback)(fio_http_s *,
+                                                          fio_str_info_s name,
+                                                          fio_str_info_s value,
+                                                          void *udata),
+                                          void *udata);
+SFUNC size_t fio_http_response_header_each(fio_http_s *,
+                                           int (*callback)(fio_http_s *,
+                                                           fio_str_info_s name,
+                                                           fio_str_info_s value,
+                                                           void *udata),
+                                           void *udata);
 ```
 
-`*_header` returns an empty value if the requested value is missing. Use
-`index` for repeated values. If `name.buf == NULL`, `*_header_count` returns
-the number of unique header names.
+Calls `callback` once for each header value, with the header's name and the
+value. Response cookies set with `fio_http_cookie_set` are not included (use
+`fio_http_set_cookie_each`).
 
-Header insertion rejects names longer than 4095 bytes and names containing the
-parser's forbidden name bytes (including whitespace, colon, NUL, CR, and LF).
-Values containing NUL, CR, or LF are rejected. Invalid insertion returns an empty
-value without replacing an existing header. With
-`FIO_HTTP_ENFORCE_LOWERCASE_HEADERS`, names are validated and copied to ASCII
-lowercase in one pass; caller-owned input is not modified.
+**Parameters:**
+- `callback` - called for each value; return `-1` to stop the iteration.
+- `udata` - passed to `callback`.
 
-Response headers cannot be changed after the response headers are sent.
+**Returns:** the number of header names visited. If `callback` is `NULL`,
+returns the number of unique header names.
+
+**Note**: do not change the headers during the iteration.
 
 ### Header value and property iteration
 
+These helpers split header values without copying them. They walk repeated
+header fields, the comma-separated values in each field, and the
+semicolon-separated properties of each value (as in
+`accept: text/html;q=0.9, */*;q=0.8`).
+
+All slices borrow the header storage and are **not** necessarily
+NUL-terminated: use `.buf` and `.len`, not C string functions. Surrounding
+spaces and tabs are trimmed. Quoted strings stay quoted, escapes included.
+Empty list elements and empty property names are skipped. Do not change the
+headers during the iteration.
+
+#### `fio_http_header_each_s`
+
 ```c
+typedef struct fio_http_header_each_s {
+  fio_buf_info_s name;       /* header name, or property name */
+  fio_buf_info_s value;      /* list value, or property value */
+  fio_buf_info_s properties; /* property span; cursor in property iterator */
+  unsigned index;            /* index of the current repeated header field */
+  unsigned is_request;
+} fio_http_header_each_s;
+```
+
+The iteration cursor.
+
+**Members:**
+- `name` - the header name (value iteration) or the property name (property
+  iteration).
+- `value` - the current value or property value. `value.buf == NULL` marks
+  the end. A property without `=` (or with an empty value) has a non-`NULL`
+  `value.buf` and `value.len == 0`.
+- `properties` - the current value's property span (the text after its first
+  `;`, up to the next `,`), or `{0}` if it has none.
+- `index`, `is_request` - iterator state; do not change them.
+
+#### `FIO_HTTP_HEADER_EACH_VALUE` / `FIO_HTTP_HEADER_EACH_PROPERTY`
+
+```c
+#define FIO_HTTP_HEADER_EACH_VALUE(http_handle, is_request, header_name, pos)
+#define FIO_HTTP_HEADER_EACH_PROPERTY(value_, pos)
+```
+
+`FIO_HTTP_HEADER_EACH_VALUE` loops over the values of the request
+(`is_request = 1`) or response (`is_request = 0`) header `header_name`.
+`FIO_HTTP_HEADER_EACH_PROPERTY` loops over the properties of a value cursor.
+
+Both declare a `fio_http_header_each_s` loop variable named `pos`. `break` and
+`continue` work as in any `for` loop. `http_handle` is evaluated on every step.
+
+```c
+/* illustrative */
 FIO_HTTP_HEADER_EACH_VALUE(h, 1, FIO_STR_INFO1("accept"), item) {
-  /* item.name and item.value are length-delimited fio_buf_info_s slices. */
+  /* item.value is the media type, e.g. "text/html" */
   FIO_HTTP_HEADER_EACH_PROPERTY(item, prop) {
-    /* prop.name and prop.value are length-delimited slices. */
+    /* prop.name is "q", prop.value is "0.9" */
   }
 }
 ```
 
-The macros iterate repeated fields, comma-separated values and semicolon-separated
-properties without copying. They trim surrounding spaces and tabs; quoted
-strings remain quoted, including escapes. Slices borrow header storage and are
-not necessarily NUL-terminated: use their `.len` rather than string functions.
-Do not change headers during iteration. `value.buf == NULL` marks the end;
-empty property values may have a non-NULL buffer and zero length. The helpers
-`fio_http_header_each_first` / `fio_http_header_each_next` and
-`fio_http_header_each_property_first` / `fio_http_header_each_property_next`
-can also be used directly.
+#### `fio_http_header_each_first` / `fio_http_header_each_next` / `fio_http_header_each_property_first` / `fio_http_header_each_property_next`
+
+```c
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_first(fio_http_s *http_handle,
+                           int is_request,
+                           fio_str_info_s header_name);
+FIO_IFUNC void fio_http_header_each_next(fio_http_header_each_s *pos,
+                                         fio_http_s *http_handle);
+FIO_IFUNC fio_http_header_each_s
+fio_http_header_each_property_first(const fio_buf_info_s *properties);
+FIO_IFUNC void fio_http_header_each_property_next(fio_http_header_each_s *pos);
+```
+
+The functions behind the macros, for manual iteration.
+
+- `fio_http_header_each_first` returns a cursor at the first value of
+  `header_name` (a borrowed lookup key).
+- `fio_http_header_each_next` moves to the next value; pass the same handle.
+- `fio_http_header_each_property_first` returns a cursor at the first property
+  of a value's `properties` span.
+- `fio_http_header_each_property_next` moves to the next property.
+
+**Returns:** the `*_first` functions return a cursor; its `value.buf` is
+`NULL` if there is no value or property. The `*_next` functions set
+`value.buf` to `NULL` after the last one.
 
 ### Body storage and reads
 
-```c
-size_t         fio_http_body_length(fio_http_s *h);
-size_t         fio_http_body_pos(fio_http_s *h);
-size_t         fio_http_body_seek(fio_http_s *h, ssize_t pos);
-fio_str_info_s fio_http_body_read(fio_http_s *h, size_t length);
-fio_str_info_s fio_http_body_read_until(fio_http_s *h,
-                                        char token,
-                                        size_t limit);
-void           fio_http_body_expect(fio_http_s *h, size_t expected_length);
-void           fio_http_body_write(fio_http_s *h, const void *data, size_t len);
-int            fio_http_body_fd(fio_http_s *h);
-void           fio_http_body_close(fio_http_s *h);
-```
+The handle keeps the body in RAM until it grows past `FIO_HTTP_BODY_RAM_LIMIT`,
+then moves it to an anonymous temporary file. Reading works the same in both
+cases. The [Data Store module](./012 data.md) (`fio_data_s`) provides this
+storage and can be used on its own.
 
-The handle stores body data in RAM until the configured threshold is crossed,
-then uses a temporary file. `fio_http_body_fd` returns that file descriptor or
-`-1`.
-
-`fio_http_body_close` releases the body's RAM buffer and temporary file (if
-any) and resets the body to empty. The body is also released automatically
-when the handle is cleared or destroyed, so calling this is only needed to
-free resources early, once the body has been consumed.
-
-### Body parsing
+#### `fio_http_body_length` / `fio_http_body_pos`
 
 ```c
-typedef struct fio_http_body_parse_callbacks_s fio_http_body_parse_callbacks_s;
-typedef struct fio_http_body_parse_result_s fio_http_body_parse_result_s;
-
-fio_http_body_parse_result_s fio_http_body_parse(
-    fio_http_s *h,
-    const fio_http_body_parse_callbacks_s *callbacks,
-    void *udata);
+SFUNC size_t fio_http_body_length(fio_http_s *);
+SFUNC size_t fio_http_body_pos(fio_http_s *h);
 ```
 
-The body parser auto-detects JSON, URL-encoded, and multipart/form-data input.
-Callbacks build application objects for primitives, arrays, maps, and file
-uploads.
+**Returns:** the body's length in bytes, or the current reading position.
 
-`fio_http_body_parse_callbacks_s` contains primitive callbacks (`on_null`,
-`on_true`, `on_false`, `on_number`, `on_float`, `on_string`), container
-callbacks (`on_array`, `on_map`, `array_push`, `map_set`, `array_done`,
-`map_done`), multipart callbacks (`on_file`, `on_file_data`, `on_file_done`),
-and error / cleanup callbacks (`on_error`, `free_unused`).
+#### `fio_http_body_seek`
 
-`fio_http_body_parse_result_s` reports the top-level result, consumed bytes,
-and error code.
+```c
+SFUNC size_t fio_http_body_seek(fio_http_s *, ssize_t pos);
+```
+
+Sets the body's reading position.
+
+Negative values count back from the end: `-n` is `length - n`, so `-1` is the
+last byte (as with `lseek(fd, -1, SEEK_END)`). Values before the start clamp to
+`0`. Any position at or past the end is EOF, so
+`fio_http_body_seek(h, fio_http_body_length(h))` (or `SSIZE_MAX`) seeks to the
+end.
+
+**Returns:** the new reading position.
+
+#### `fio_http_body_read` / `fio_http_body_read_until`
+
+```c
+SFUNC fio_str_info_s fio_http_body_read(fio_http_s *, size_t length);
+SFUNC fio_str_info_s fio_http_body_read_until(fio_http_s *,
+                                              char token,
+                                              size_t limit);
+```
+
+Read from the reading position and advance it by the number of bytes returned.
+`fio_http_body_read` reads up to `length` bytes. `fio_http_body_read_until`
+stops after `token` (inclusive), after `limit` bytes (ignored if `0`), or at
+EOF.
+
+**Returns:** a borrowed view of the data, or an empty result at EOF. Any later
+`fio_http_body_*` call on the same handle MAY invalidate the view.
+
+**Note**: a body in a temporary file is memory mapped, so
+`fio_http_body_read(h, fio_http_body_length(h))` returns the whole body
+without copying it. Without mapping, the data is copied to a heap buffer. If
+that buffer can't be allocated (or the file read is short), an error is logged
+and the read returns an empty result without moving the position. Use
+`fio_http_body_pos(h) < fio_http_body_length(h)` to tell this apart from EOF.
+
+#### `fio_http_body_expect`
+
+```c
+SFUNC void fio_http_body_expect(fio_http_s *, size_t expected_length);
+```
+
+Prepares the body for `expected_length` more bytes: reserves RAM, or moves to
+a temporary file early if the size crosses `FIO_HTTP_BODY_RAM_LIMIT`. It's
+only a hint and never fails.
+
+#### `fio_http_body_write`
+
+```c
+SFUNC int fio_http_body_write(fio_http_s *, const void *data, size_t len);
+```
+
+Appends `len` bytes from `data` to the body.
+
+**Returns:** `0` on success, or `-1` on error (for example, when no temporary
+file can be created).
+
+**Note**: errors are sticky. Later writes fail until the body is closed, and
+the data stored before the error stays readable. When an HTTP/1.1 server can't
+store a request body, it responds with `500` and closes the connection; a
+client closes the connection.
+
+#### `fio_http_body_fd`
+
+```c
+SFUNC int fio_http_body_fd(fio_http_s *);
+```
+
+**Returns:** the body's temporary file descriptor (borrowed: do not close it),
+or `-1` while the body is in RAM.
+
+#### `fio_http_body_close`
+
+```c
+SFUNC void fio_http_body_close(fio_http_s *);
+```
+
+Releases the body's RAM buffer and temporary file (if any) and resets the body
+to empty.
+
+The handle releases its body automatically when it is destroyed. Call this
+only to free resources early, once the body was consumed.
+
+#### `fio_http_body_save`
+
+```c
+SFUNC int fio_http_body_save(fio_http_s *, const char *filename);
+```
+
+Saves the whole body to `filename`, atomically replacing any existing file
+(see `fio_data_save`). A body in a temporary file is copied file to file, so a
+large upload is never loaded into RAM. The body and its reading position are
+unchanged. A leading `"~/"` is the home folder.
+
+**Returns:** `0` on success, or `-1` on error (including a body in a write
+error state, or a short read of the body's temporary file).
+
+**Note**: never derive `filename` from client input without validating it.
+
+### Params parsing (query / body)
+
+These functions parse the query string and the request body into application
+objects. They build nothing themselves: the parser calls your callbacks to
+create values, maps and arrays. Supported bodies are JSON, URL-encoded and
+`multipart/form-data`.
+
+With the FIOBJ module included, `fio_http_params2FIOBJ` builds a FIOBJ Hash
+(or merges into an existing one); see
+[HTTP Params to FIOBJ](./440%20http%20fiobj.md).
+
+#### `fio_http_params_parse_callbacks_s`
+
+```c
+typedef struct FIO_ALIGN(64) {
+  /** JSON null: returns an owned value. */
+  fio_json_obj_result_s (*on_null)(void *udata);
+  /** JSON true: returns an owned value. */
+  fio_json_obj_result_s (*on_true)(void *udata);
+  /** JSON false: returns an owned value. */
+  fio_json_obj_result_s (*on_false)(void *udata);
+  /** JSON integer: returns an owned value. */
+  fio_json_obj_result_s (*on_number)(void *udata, int64_t i);
+  /** JSON float: returns an owned value. */
+  fio_json_obj_result_s (*on_float)(void *udata, double f);
+  /** JSON string with escapes (raw, still escaped): returns an owned value.
+   * Form text uses it only when `on_string_simple` is NULL. */
+  fio_json_obj_result_s (*on_string)(void *udata, fio_buf_info_s str);
+  /** Decoded query, URL-encoded or multipart text, or a JSON string without
+   * escapes: returns an owned value (falls back to `on_string` if NULL). */
+  fio_json_obj_result_s (*on_string_simple)(void *udata, fio_buf_info_s str);
+  /** Opens a map at `parent[key]` (`key.buf == NULL` appends to an array
+   * parent; `parent == NULL` creates the owned root). Reuse an existing map to
+   * merge. A replaced value is freed or returned in `old`. */
+  fio_json_push_result_s (*on_map)(void *udata,
+                                   void *parent,
+                                   fio_buf_info_s key);
+  /** Like `on_map`, opening an array (reuse an existing array to append). */
+  fio_json_push_result_s (*on_array)(void *udata,
+                                     void *parent,
+                                     fio_buf_info_s key);
+  /** Stores `value` (owned, taken even on error) at the decoded `map[key]`. A
+   * replaced value is freed or returned in `obj` for conflict resolution. */
+  fio_json_obj_result_s (*map_push)(void *udata,
+                                    void *map,
+                                    fio_buf_info_s key,
+                                    void *value);
+  /** Appends `value` (owned, taken even on error). Returns non-zero on error. */
+  int (*array_push)(void *udata, void *array, void *value);
+  /** Returns non-zero if `obj` is an array (optional, used for conflicts). */
+  int (*is_array)(void *udata, void *obj);
+  /** Returns non-zero if `obj` is a map (optional, used for conflicts and
+   * required for `fio_http_params_parse` to merge a JSON object body). */
+  int (*is_map)(void *udata, void *obj);
+  /** Frees an owned unused value (never a key); `obj` may be NULL. */
+  void (*free_unused_object)(void *udata, void *obj);
+
+  /* ===== File Uploads (multipart) ===== */
+
+  /** Called when a file upload starts. Returns an owned file object, or NULL
+   * to skip the file. The object is stored at the field name once the upload
+   * ends, or freed through `free_unused_object` if parsing failed. */
+  void *(*on_file)(void *udata,
+                   fio_str_info_s name,
+                   fio_str_info_s filename,
+                   fio_str_info_s content_type,
+                   fio_str_info_s headers);
+  /** Called for each chunk of file data. A non-zero return aborts parsing
+   * (returned unchanged in `err`); the file object is then freed. */
+  int (*on_file_data)(void *udata, void *file, fio_buf_info_s data);
+} fio_http_params_parse_callbacks_s;
+```
+
+The parser callbacks: 16 pointers, aligned to 64 bytes (128 bytes in total).
+The first 14 members match `fio_json_parser_callbacks_s` exactly (same order,
+types and contract), so the table is handed to the JSON parser as is. They
+follow the [JSON callback contract](./012%20json.md#fio_json_parser_callbacks_s),
+which defines the result types, decoded keys, ownership, `old` and the
+conflict rules. The last two members handle multipart file uploads.
+
+**Contract:**
+- **Ownership transfers:** value callbacks return owned values. `map_push` and
+  `array_push` take the value they receive, **even when they fail**; the
+  parser never uses or frees a value after passing it.
+- **Containers:** a container placed in a parent is borrowed; a root
+  (`parent == NULL`) is owned by the caller.
+- **NULL is nothing:** a native `NULL` `obj` / `old` never triggers conflict
+  resolution. A replaced value is either freed by the callback or handed back
+  (`old`, or `map_push().obj`) for the conflict rules.
+- **Opaque errors:** any non-zero callback `err` stops parsing and reaches
+  `fio_http_params_parse_result_s.err` unchanged. On error, `obj` / `old` are
+  ignored.
+- **Results on error:** `result` holds the partial root, owned by the caller.
+
+**Members:**
+- `on_null` ... `on_float` - JSON scalars; return an owned value.
+- `on_string` - JSON strings with escapes; receives the escaped bytes and
+  returns an owned, decoded string.
+- `on_string_simple` - decoded query, URL-encoded and multipart text values,
+  and JSON strings without escapes; returns an owned value. Text values are
+  never converted to numbers or booleans (use `fio_string2primitive` if
+  needed). If it is `NULL`, form text goes to `on_string` (and vice versa).
+- `on_map`, `on_array`, `map_push`, `array_push` - create and fill
+  containers. Keys arrive decoded and are borrowed only during the call. JSON
+  object keys go to these callbacks, never to the string callbacks.
+- `is_map`, `is_array` - resolve conflicts with existing containers. A
+  missing callback counts as "false". `fio_http_params_parse` needs `is_map`
+  to merge a JSON object body into the params map.
+- `free_unused_object` - frees an owned value the parser didn't use.
+- `on_file` - a file upload starts; returns an owned file object, or `NULL`
+  to skip the file. When the upload ends, the object is stored like any other
+  value, or passed to `free_unused_object` if parsing already failed
+  (including truncated uploads).
+- `on_file_data` - receives the next chunk of file data; a non-zero return
+  aborts parsing (returned unchanged in `err`) and frees the file object.
+
+There is no general duplicate-key rule: a callback either frees a replaced
+value itself or hands it back (see the JSON conflict rules).
+
+The table is never written to: pass a `static const` table. Missing
+`on_string` / `on_string_simple`, `is_map` and `is_array` callbacks are
+handled internally.
+
+#### `fio_http_params_parse_args_s`
+
+```c
+typedef struct {
+  /** Parser callbacks (required, never written to). */
+  const fio_http_params_parse_callbacks_s *callbacks;
+  /** User / root context passed unchanged to all callbacks. */
+  void *udata;
+  /** Field budget for this call (query pairs, form fields and multipart
+   * parts; JSON bodies are not counted). Zero (the default) inherits
+   * `settings.max_params` (default FIO_HTTP_PARAMS_MAX_FIELDS); a non-zero
+   * value fully replaces the settings value for this call. */
+  size_t limit;
+} fio_http_params_parse_args_s;
+```
+
+The named arguments of the parsing functions.
+
+**Members:**
+- `callbacks` - the parser callbacks; required.
+- `udata` - passed to every callback.
+- `limit` - the field budget for this call; `0` (the default) uses the
+  `max_params` value of `fio_http_settings(h)` (default `FIO_HTTP_PARAMS_MAX_FIELDS`, 4096).
+  See the field limits of the parsing functions below.
+
+#### `fio_http_params_parse_error_e`
+
+```c
+typedef enum {
+  /** Parsing succeeded. */
+  FIO_HTTP_PARAMS_PARSE_SUCCESS = 0,
+  /** Invalid arguments, malformed input or another error. */
+  FIO_HTTP_PARAMS_PARSE_ERROR = -1,
+  /** A field name or JSON value exceeded the nesting-depth limit. */
+  FIO_HTTP_PARAMS_PARSE_DEPTH = -2,
+  /** The HTTP body could not be read (not ordinary EOF). */
+  FIO_HTTP_PARAMS_PARSE_IO = -3,
+} fio_http_params_parse_error_e;
+```
+
+Named values for the errors the HTTP params parsers report themselves.
+`fio_http_params_parse_result_s.err` is a plain `int`: success is `0` and
+every failure is non-zero. Generic / formatting and depth values intentionally
+match `FIO_JSON_ERROR_GENERIC` and `FIO_JSON_ERROR_NESTING`.
+
+| Value | Meaning |
+| --- | --- |
+| `FIO_HTTP_PARAMS_PARSE_SUCCESS` | Parsing succeeded. |
+| `FIO_HTTP_PARAMS_PARSE_ERROR` | Invalid arguments or callbacks, malformed or truncated input, an unsupported direct-body Content-Type, field-budget overflow, or another generic error. Ordinary EOF before a complete multipart body is an error, not an I/O failure. |
+| `FIO_HTTP_PARAMS_PARSE_DEPTH` | A decoded form name path or JSON body exceeded `FIO_JSON_MAX_DEPTH`. |
+| `FIO_HTTP_PARAMS_PARSE_IO` | Reading a spilled JSON, URL-encoded or multipart body failed. Ordinary EOF is not I/O failure. |
+
+Callback errors pass through unchanged, without translation, from every
+source (JSON, query, URL-encoded and multipart). A callback may return any
+non-zero value, including custom positive or negative values, so a callback
+error may coincide with one of the named values above.
+
+Invalid or truncated percent escapes in query / URL-encoded input remain
+literal and do not fail parsing. Field-budget overflow uses `ERROR`, not a
+separate error kind.
+
+#### `fio_http_params_parse_result_s`
+
+```c
+typedef struct {
+  /** The top-level parsed object, owned by the caller (the partial root on
+   * error, NULL if none was created). */
+  void *result;
+  /** Number of bytes consumed from the parsed input(s). */
+  size_t consumed;
+  /** Number of fields charged against the field budget (query pairs, form
+   * fields and multipart parts, including skipped uploads). JSON bodies are
+   * not counted. */
+  size_t count;
+  /** 0 on success, a `fio_http_params_parse_error_e` value or an unchanged
+   * non-zero callback error. */
+  int err;
+} fio_http_params_parse_result_s;
+```
+
+The result of a parsing function.
+
+**Members:**
+- `result` - the root object, owned by the caller. `NULL` for an empty JSON or
+  multipart body, or when no root was created. After an error, the partial
+  root (which the caller still owns and must free).
+- `consumed` - the number of input bytes parsed (query and body). Ignored body
+  bytes are not counted.
+- `count` - the number of fields charged against the field budget (query
+  pairs, form fields and multipart parts, including skipped uploads). JSON
+  bodies add `0`.
+- `err` - `0` on success, a named parsing error, or an unchanged non-zero
+  callback error.
+
+#### `fio_http_body_parse` / `fio_http_query_parse` / `fio_http_params_parse`
+
+```c
+SFUNC fio_http_params_parse_result_s FIO_NOOP
+fio_http_body_parse(fio_http_s *h, fio_http_params_parse_args_s args);
+#define fio_http_body_parse(http___handle, ...)                                \
+  fio_http_body_parse((http___handle),                                         \
+                      (fio_http_params_parse_args_s){__VA_ARGS__})
+
+SFUNC fio_http_params_parse_result_s FIO_NOOP
+fio_http_query_parse(fio_http_s *h, fio_http_params_parse_args_s args);
+#define fio_http_query_parse(http___handle, ...)                               \
+  fio_http_query_parse((http___handle),                                        \
+                       (fio_http_params_parse_args_s){__VA_ARGS__})
+
+SFUNC fio_http_params_parse_result_s FIO_NOOP
+fio_http_params_parse(fio_http_s *h, fio_http_params_parse_args_s args);
+#define fio_http_params_parse(http___handle, ...)                              \
+  fio_http_params_parse((http___handle),                                       \
+                        (fio_http_params_parse_args_s){__VA_ARGS__})
+```
+
+Each function is shadowed by a macro, so it accepts the named arguments of
+`fio_http_params_parse_args_s`:
+
+```c
+/* illustrative: my_callbacks is a `static const` callback table */
+fio_http_params_parse_result_s r =
+    fio_http_params_parse(h, .callbacks = &my_callbacks, .udata = my_ctx);
+if (r.err) {
+  /* r.result is the partial params map (or NULL): the caller still owns it */
+  my_free(r.result);
+  return;
+}
+```
+
+- `fio_http_query_parse` parses the URL-encoded query into a map. Keys and
+  values are percent / `+` decoded. Both `key` and `key=` give an empty string
+  value; an empty query gives an empty map. Invalid percent escapes stay
+  literal rather than failing.
+- `fio_http_body_parse` parses the body by its Content-Type. A JSON body
+  returns its root, whether map, array or scalar. URL-encoded and multipart
+  bodies return a map. A missing or unknown Content-Type is an error.
+- `fio_http_params_parse` parses the query and the body into one map, query
+  fields first. A body with a missing or unknown Content-Type is ignored
+  without error. A JSON body is merged only if its first non-whitespace byte
+  (after an optional UTF-8 BOM) is `{`; other JSON bodies are ignored, even if
+  malformed.
+
+For combined query + JSON object parsing, the params map built from the query
+is passed to `fio_json_parse` as the explicit `root`, so the body updates that
+map in place (`on_map` is not called again at the root, and `is_map` must
+recognize the map). The root callbacks may reuse `udata` as the map or create
+a new one; either way the query and body fields end up in the one result.
+
+**Named Arguments:** see `fio_http_params_parse_args_s`.
+
+**Returns:** a `fio_http_params_parse_result_s`. The caller owns `result` in
+all cases. On success, `err == 0`. When an error happens after the root was
+created, `result` is the partial root (free it, or keep it if the root came
+from `udata`). A `NULL` handle, an invalid callback table, an unsupported
+direct-body Content-Type or a failure to create the root returns an error with
+a `NULL` `result`.
+
+**Content-Type matching:** leading spaces / tabs are ignored, and the media
+type (before any `;` or whitespace) matches exactly, ignoring case. JSON media
+types are `application/json`, `application/<subtype>+json` (with a non-empty
+subtype), `text/json` and `application/x-json`. `text/plain` is never JSON.
+
+**Field names and nesting:** decoded query and form field names can address
+nested keys. `user[name]` and `user.name` address the same nested key, `tags[]`
+appends to an array, and `user[tags][]` appends inside a nested map. Only a
+**terminal** `[]` appends. Invalid paths (such as `a..b` or `items[][id]`)
+and empty names stay single literal keys. JSON object keys are always literal,
+even if they contain dots or brackets.
+
+**Depth limit:** name paths and JSON bodies share `FIO_JSON_MAX_DEPTH`
+(default 128). Define it before including the library to change both. Up to
+`FIO_JSON_MAX_DEPTH` levels of open containers are allowed, and the root is
+level 1. A name with N segments opens N containers (the root plus N-1 nested
+maps), plus one array for a terminal `[]`. So N can be at most
+`FIO_JSON_MAX_DEPTH`, or one less with `[]`. Going deeper reports `DEPTH`, and
+`result` holds the partial root.
+
+**Field limits:** each call accepts at most `.limit` URL-encoded pairs and
+multipart parts. The next field fails parsing with `ERROR`: it is not delivered
+(nor are its file callbacks), and `result` holds the partial root. Skipped
+uploads still count. `fio_http_params_parse` shares one budget between the
+query and the body, and its `count` is the combined total. JSON bodies don't count
+toward the field limit; they are bounded by `FIO_JSON_MAX_DEPTH` instead.
+
+A non-zero `.limit` replaces the settings value for that call. This lets an
+application charge several parses against one budget; for example, parse the
+body with `.limit = budget - r.count` after parsing the query.
+
+**Multipart uploads:** malformed syntax and ordinary EOF before the closing
+boundary report `ERROR`; a failed body read reports `IO`. File data is
+streamed in chunks to `on_file_data`, so large uploads can be written to
+storage while they are parsed. The `headers` argument of `on_file` holds the
+raw part headers (without the blank line) and
+is valid only during the call. The filename is cut to the bytes after its last
+`/` or `\`. A file with an empty (cut) filename or an empty field name is
+skipped without calling `on_file`. A part without a Content-Type gives a
+`NULL` `content_type.buf`; a declared empty type gives a non-`NULL` buffer.
+
+**Body handling:** both body parsers restore the body's reading position,
+even on errors. A closed body adds nothing; `fio_http_params_parse` still
+returns the query fields. JSON and URL-encoded bodies are read whole, and
+a read failure reports `IO`. Multipart reads also distinguish this failure
+from ordinary EOF (truncation), which reports `ERROR`.
+
+**Note**: the `{` check of `fio_http_params_parse` does not skip JSON
+comments. A JSON body that starts with a comment is ignored by
+`fio_http_params_parse` but accepted by `fio_http_body_parse`. This may
+change.
 
 ### Cookies
 
+#### `fio_http_cookie_same_site_e`
+
 ```c
 typedef enum fio_http_cookie_same_site_e {
+  /** No `SameSite` attribute: the browser decides. */
   FIO_HTTP_COOKIE_SAME_SITE_BROWSER_DEFAULT = 0,
+  /** The browser sends the cookie with cross-site and same-site requests. */
   FIO_HTTP_COOKIE_SAME_SITE_NONE,
+  /**
+   * The cookie is withheld on cross-site sub-requests.
+   *
+   * The cookie is sent when a user navigates to the URL from an external
+   * site.
+   */
   FIO_HTTP_COOKIE_SAME_SITE_LAX,
+  /** The browser sends the cookie only for same-site requests. */
   FIO_HTTP_COOKIE_SAME_SITE_STRICT,
 } fio_http_cookie_same_site_e;
-
-typedef struct fio_http_cookie_args_s fio_http_cookie_args_s;
-
-int fio_http_cookie_set(fio_http_s *h, fio_http_cookie_args_s args);
-#define fio_http_cookie_set(h, ...) \
-  fio_http_cookie_set((h), (fio_http_cookie_args_s){__VA_ARGS__})
-
-fio_str_info_s fio_http_cookie(fio_http_s *h,
-                               const char *name,
-                               size_t name_len);
-size_t fio_http_cookie_each(fio_http_s *h,
-                            int (*callback)(fio_http_s *,
-                                            fio_str_info_s name,
-                                            fio_str_info_s value,
-                                            void *udata),
-                            void *udata);
-size_t fio_http_set_cookie_each(fio_http_s *h,
-                                int (*callback)(fio_http_s *,
-                                                fio_str_info_s set_cookie,
-                                                fio_str_info_s value,
-                                                void *udata),
-                                void *udata);
 ```
 
-`fio_http_cookie_args_s` contains `name`, `value`, optional `domain` and `path`,
-`max_age`, `same_site`, and the `secure`, `http_only`, and `partitioned` flags.
-An empty / missing value deletes the cookie by setting a negative max-age.
+The `SameSite` attribute of a cookie (see
+[MDN: Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie)).
+The default (`0`) omits the attribute and lets the browser decide.
+
+#### `fio_http_cookie_set`
+
+```c
+SFUNC int fio_http_cookie_set(fio_http_s *h, fio_http_cookie_args_s);
+/* Named arguments using macro. */
+#define fio_http_cookie_set(http___handle, ...)                                \
+  fio_http_cookie_set((http___handle), (fio_http_cookie_args_s){__VA_ARGS__})
+
+typedef struct fio_http_cookie_args_s {
+  /** The cookie's name (a zero `len` reads `buf` as a C string). */
+  fio_str_info_s name;
+  /** The cookie's value (a NULL `buf` deletes the cookie). */
+  fio_str_info_s value;
+  /** The cookie's domain (optional). */
+  fio_str_info_s domain;
+  /** The cookie's path (optional). */
+  fio_str_info_s path;
+  /** Max-Age, in seconds (0 = a session cookie). */
+  int max_age;
+  /** The SameSite value. */
+  fio_http_cookie_same_site_e same_site;
+  /** Sends the cookie only over secure (HTTPS) connections. */
+  unsigned secure : 1;
+  /** Hides the cookie from JavaScript (HttpOnly). */
+  unsigned http_only : 1;
+  /**
+   * Sets the Partitioned (third-party) cookie flag:
+   * https://developer.mozilla.org/en-US/docs/Web/Privacy/Partitioned_cookies
+   */
+  unsigned partitioned : 1;
+} fio_http_cookie_args_s;
+```
+
+Sets a response cookie (a `Set-Cookie` header). The function is shadowed by a
+macro, so it accepts named arguments:
+
+```c
+/* illustrative */
+fio_http_cookie_set(h,
+                    .name = FIO_STR_INFO1("session"),
+                    .value = FIO_STR_INFO1("abc123"),
+                    .max_age = 3600,
+                    .http_only = 1,
+                    .secure = 1);
+```
+
+The new value is also visible to `fio_http_cookie` on the same handle.
+
+**Named Arguments:**
+- `name` - the cookie's name.
+- `value` - the cookie's value. A `NULL` `value.buf` deletes the cookie (sends
+  a negative `Max-Age`).
+- `domain`, `path` - optional cookie scope.
+- `max_age` - lifetime in seconds; `0` (the default) makes a session cookie.
+- `same_site` - the `SameSite` attribute; see `fio_http_cookie_same_site_e`.
+- `secure` - send the cookie only over secure connections.
+- `http_only` - hide the cookie from JavaScript.
+- `partitioned` - set the
+  [Partitioned](https://developer.mozilla.org/en-US/docs/Web/Privacy/Partitioned_cookies)
+  (third-party) flag.
+
+**Returns:** `0` on success, or `-1` if `h` is `NULL` or the response already
+started (headers sent).
+
+**Note**: a `name` or `value` with a non-`NULL` `buf` and `len == 0` is read
+as a NUL-terminated string.
+
+**Note**: bytes that aren't allowed in a cookie name or value are
+percent-encoded, and a warning is logged (once). Cookie data longer than
+about 5KB logs an error. Many browsers and proxies limit a cookie (name and
+value together) to about 4KB.
+
+#### `fio_http_cookie`
+
+```c
+SFUNC fio_str_info_s fio_http_cookie(fio_http_s *,
+                                     const char *name,
+                                     size_t name_len);
+```
+
+Gets the value of the cookie `name`: a received cookie, or one set with
+`fio_http_cookie_set`. Received cookie names and values are percent-decoded.
+
+**Returns:** a borrowed view of the value, or an empty value if there is no
+such cookie.
+
+#### `fio_http_cookie_each`
+
+```c
+SFUNC size_t fio_http_cookie_each(fio_http_s *,
+                                  int (*callback)(fio_http_s *,
+                                                  fio_str_info_s name,
+                                                  fio_str_info_s value,
+                                                  void *udata),
+                                  void *udata);
+```
+
+Calls `callback` for each cookie, with the same values `fio_http_cookie`
+returns.
+
+**Parameters:**
+- `callback` - called for each cookie (must not be `NULL`); return non-zero
+  to stop.
+- `udata` - passed to `callback`.
+
+**Returns:** the number of times `callback` was called.
+
+#### `fio_http_set_cookie_each`
+
+```c
+SFUNC size_t
+fio_http_set_cookie_each(fio_http_s *h,
+                         int (*callback)(fio_http_s *,
+                                         fio_str_info_s set_cookie_header,
+                                         fio_str_info_s value,
+                                         void *udata),
+                         void *udata);
+```
+
+Calls `callback` for each cookie set with `fio_http_cookie_set`.
+`set_cookie_header` is always `"set-cookie"` and `value` is the full header
+value. Controllers use this to send the cookies.
+
+**Parameters:**
+- `callback` - called for each response cookie (must not be `NULL`); return
+  non-zero to stop.
+- `udata` - passed to `callback`.
+
+**Returns:** the number of times `callback` was called.
 
 ### Writing responses
 
+#### `fio_http_write` / `fio_http_finish`
+
 ```c
+SFUNC void fio_http_write(fio_http_s *, fio_http_write_args_s args);
+/* Named arguments using macro. */
+#define fio_http_write(http_handle, ...)                                       \
+  fio_http_write(http_handle, (fio_http_write_args_s){__VA_ARGS__})
+#define fio_http_finish(http_handle) fio_http_write(http_handle, .finish = 1)
+
 typedef struct fio_http_write_args_s {
+  /** The data to write (or NULL when writing from `fd`). */
   const void *buf;
+  /** The number of bytes to write. */
   size_t len;
+  /** The offset into `buf` or `fd` at which writing starts. */
   size_t offset;
+  /**
+   * A file to send (0 = none). The file is closed once sent (or on error),
+   * unless `copy` is set.
+   */
   int fd;
+  /** Optional: frees `buf` once sent (also called on error). */
   void (*dealloc)(void *);
+  /** If set, copies `buf` (or keeps `fd` open) instead of taking ownership. */
   int copy;
+  /**
+   * If set, this write ends the response.
+   *
+   * Otherwise the response is streamed, unless a `content-length` header was
+   * set.
+   */
   int finish;
 } fio_http_write_args_s;
-
-void fio_http_write(fio_http_s *h, fio_http_write_args_s args);
-#define fio_http_write(h, ...) fio_http_write(h, (fio_http_write_args_s){__VA_ARGS__})
-#define fio_http_finish(h)    fio_http_write(h, .finish = 1)
 ```
 
-`fio_http_write` sends headers on the first write and then writes body data. If
-`finish` is set, the response is complete. Without `finish`, the response is a
-stream. A finished response without an explicit `content-length` header gets
-one automatically. The response starts with the first write that carries body
-data (a buffer or a file) or `finish`: an empty write without `finish` is a
-no-op, so headers can still be set, and a response that is finished without
-any body data is sent with `content-length: 0` rather than as an empty
-chunked stream. HTTP/1.1 streams use `transfer-encoding: chunked`; HTTP/1.0 responses
-never use a transfer coding (RFC 9112 §6.1), so an HTTP/1.0 stream is sent
-unframed and delimited by closing the connection, even if `keep-alive` was
-requested.
+Writes body data. The first write sends the headers; after that, header
+changes are not sent. `fio_http_finish(h)` finishes the response without more
+data.
 
-Responses without content (`1xx`, `204`, `205`, `304`, RFC 9110 §15) never
-send body data, are never streamed or compressed, and never send
-`transfer-encoding` (an application-provided value is removed). Their
-`content-length` follows RFC 9110 §8.6:
+The function is shadowed by a macro, so it accepts named arguments:
 
-- `1xx` / `204`: removed, never added.
-- `205`: always `content-length: 0` (§15.3.6), replacing any other value.
-- `304`: an application-provided value is kept (it describes the selected
-  representation); none is added automatically.
+```c
+/* illustrative */
+fio_http_write(h, .buf = "Hello", .len = 5, .finish = 1);
+```
 
-Responses to `HEAD` requests send the headers a `GET` would (a finished
-response still gets its automatic `content-length`), but never send content
-(RFC 9110 §9.3.2): body writes are discarded and the response is never
-streamed (no `transfer-encoding: chunked`). File writes use `fd` and `offset`; the file descriptor is always closed
-by the write path.
+With status `0` (a client handle), the same calls write a request.
 
-On upgraded handles, `fio_http_write` routes through the WebSocket or SSE
-controller. For WebSocket text/binary choice, call `fio_http_websocket_write`
-directly when the payload type matters.
+**Named Arguments:**
+- `buf`, `len` - the data to write.
+- `offset` - where writing starts, in `buf` or in the file.
+- `fd` - a file to send instead of a buffer. Set `len` too: a finished
+  response uses it as its `content-length`. `fd` is closed once sent, or on
+  error. With `copy` set, `fd` is never closed and stays the caller's.
+- `dealloc` - frees `buf` once it was sent. Setting it passes ownership of
+  `buf` to `fio_http_write`, which frees it even on error. Without `dealloc`
+  or `copy`, `buf` must stay valid until it is sent.
+- `copy` - copy `buf` before returning (or keep `fd` open), so the caller
+  keeps ownership.
+- `finish` - this write completes the response. Without it, the response is
+  streamed.
+
+**Note**: an empty write without `finish` does nothing, so headers can still
+be set. The response starts with the first write that has data (a buffer or a
+file) or `finish`.
+
+**Response framing:**
+
+- A finished response without a `content-length` header gets one
+  automatically. A response finished without any data is sent with
+  `content-length: 0`, not as an empty stream.
+- A streamed HTTP/1.1 response uses `transfer-encoding: chunked`. HTTP/1.0
+  responses never use a transfer coding (RFC 9112 §6.1), so an HTTP/1.0
+  stream is sent unframed and ends when the connection closes, even if
+  `keep-alive` was requested.
+- A `date` header is added if missing.
+- With `compress_dynamic` enabled, a finished buffer response may be
+  compressed (see [`fio_http_settings_s`](#fio_http_settings_s)).
+
+**Special responses:**
+
+- If `fio_http_etag_is_match` returns `1` (the request's `if-none-match`
+  matches a 2xx `GET` / `HEAD` response), the first write with data sends
+  `304 Not Modified` instead and discards the data.
+- Finishing a response with status `400` or above and no data sends the
+  default error response (see `fio_http_send_error_response`).
+- Responses without content (`1xx`, `204`, `205`, `304`, RFC 9110 §15) never
+  send data, are never streamed or compressed, and never send
+  `transfer-encoding` (an application value is removed). Their
+  `content-length` follows RFC 9110 §8.6:
+  - `1xx` / `204`: removed, never added.
+  - `205`: always `content-length: 0` (§15.3.6), replacing any other value.
+  - `304`: an application value is kept (it describes the selected
+    representation); none is added.
+- Responses to `HEAD` requests send the headers a `GET` would (including the
+  automatic `content-length`) but never send content (RFC 9110 §9.3.2). Body
+  writes are discarded and the response is never streamed.
+
+**Upgraded handles:** on a WebSocket or SSE handle, `fio_http_write` sends
+through the WebSocket or SSE controller. A WebSocket buffer shorter than
+`FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT` is sent as text if it is valid
+UTF-8, and as binary otherwise; longer data is sent as binary. Call
+`fio_http_websocket_write` to choose the message type.
+
+**Note**: on a handle that isn't upgraded, writes after the response finished
+fail: `fd` is closed and `buf` is freed if `dealloc` is set.
 
 ### General helpers
 
+#### `fio_http_send_error_response`
+
 ```c
-int            fio_http_send_error_response(fio_http_s *h, size_t status);
-int            fio_http_etag_is_match(fio_http_s *h);
-int            fio_http_static_file_response(fio_http_s *h,
-                                             fio_str_info_s root_folder,
-                                             fio_str_info_s file_name,
-                                             size_t max_age);
-fio_str_info_s fio_http_status2str(size_t status);
-void           fio_http_write_log(fio_http_s *h);
-int            fio_http_from(fio_str_info_s *dest, const fio_http_s *h);
-fio_str_info_s fio_http_date(uint64_t now_in_seconds);
-fio_str_info_s fio_http_log_time(uint64_t now_in_seconds);
+SFUNC int fio_http_send_error_response(fio_http_s *h, size_t status);
 ```
 
-Read request timestamps with `fio_http_received_at`; format dates with
-`fio_http_date` / `fio_http_log_time`.
+Sends an error response with `status` and finishes the response. A `status`
+of `0` or above `1000` sends `404`.
 
-`fio_http_from` writes a best-effort peer address starting with the `Forwarded`
-header, then socket peer address, then `"[unknown]"`.
+The body is the first file found of `./<status>.html` (relative to the
+current working folder) and `<public_folder>/<status>.html`. Otherwise it is a
+short plain text message, such as `Error 404: Not Found.`.
 
-`fio_http_static_file_response` sends a file from a root folder and finishes
-the response on success (0), returning -1 when the application should handle
-the request itself. See *Static File Service* for the path resolution,
-pre-compressed variant, range, and caching semantics.
+**Returns:** `0` on success, or `-1` if `h` is `NULL` or the response already
+started.
+
+#### `fio_http_etag_is_match`
+
+```c
+SFUNC int fio_http_etag_is_match(fio_http_s *h);
+```
+
+Tests whether the client's cached copy is current, following RFC 9110
+§13.1.2. It compares the response's `etag` header with every entity tag in
+the request's `if-none-match` header lines, using the weak comparison: a
+`W/` prefix is ignored on both sides.
+
+Only `GET` and `HEAD` requests with a 2xx response status are evaluated
+(RFC 9110 §13.2.1).
+
+**Note**: `If-None-Match: *` matches any such response, even without an
+`etag` header, so it gets a `304`. This is what the RFC requires: `*` asks for
+the content only if no current representation exists. A `*` mixed with other
+tags is invalid and never matches.
+
+`fio_http_write` runs this test itself on the first data write and sends
+`304` on a match (see [Writing Responses](#writing-responses)).
+
+**Returns:** `1` on a match, `0` otherwise.
+
+#### `fio_http_static_file_response`
+
+```c
+SFUNC int fio_http_static_file_response(fio_http_s *h,
+                                        fio_str_info_s root_folder,
+                                        fio_str_info_s file_name,
+                                        size_t max_age);
+```
+
+Sends the file `file_name` (URL-decoded) from `root_folder` and finishes the
+response. A non-zero `max_age` sets `cache-control: max-age=<max_age>`.
+
+See [Static File Service](#static-file-service) for path resolution,
+pre-compressed variants, ranges and caching.
+
+**Returns:** `0` if the response was sent, or `-1` if the application should
+handle the request itself.
+
+**Note**: `root_folder` MUST name an existing folder (use `"."` for the
+current working folder). An empty root would expose any absolute path on the
+system.
+
+#### `fio_http_status2str`
+
+```c
+SFUNC fio_str_info_s fio_http_status2str(size_t status);
+```
+
+**Returns:** the reason phrase of `status` (such as `"Not Found"`), or
+`"Unknown"`. The string is static: never free it.
+
+#### `fio_http_write_log`
+
+```c
+SFUNC void fio_http_write_log(fio_http_s *h);
+```
+
+Writes a log line for the request / response cycle to `stdout`. The line
+holds the process ID, the peer address (see `fio_http_from`), the time, the
+request line, the status, the bytes sent and the time since
+`fio_http_received_at`. Lines longer than about 1KB are truncated.
+
+The server calls this for each response when `.log` is set. With
+`FIO_HTTP_LOG_X_REQUEST_START`, the line also shows the wait time (see
+[Compile-Time Knobs](#compile-time-knobs)).
+
+**Note**: this resets `received_at` to the current time.
+
+#### `fio_http_from`
+
+```c
+SFUNC int fio_http_from(fio_str_info_s *dest, const fio_http_s *h);
+```
+
+Appends the peer's address to `dest` and NUL-terminates it. The address is
+taken from the last `forwarded` header (its `for=` value), then the first
+address in the last `x-forwarded-for` header, then the socket's peer address.
+If all fail, it writes `"[unknown]"`.
+
+**Parameters:**
+- `dest` - the string to append to; it needs room for the address and a NUL
+  byte (`dest->capa > dest->len + address length`).
+- `h` - the HTTP handle.
+
+**Returns:**
+- `0` - the address came from a `forwarded` or `x-forwarded-for` header.
+- `-1` - no forwarded header was found; the socket's address (or
+  `"[unknown]"`) was written. The return value tells a direct peer apart from
+  a forwarded address.
+- the address length (positive) - `dest` is too small; nothing was written.
+
+**Note**: clients can send any `forwarded` or `x-forwarded-for` value. Trust
+the result only behind a proxy that sets these headers.
+
+#### `fio_http_date` / `fio_http_log_time`
+
+```c
+SFUNC fio_str_info_s fio_http_date(uint64_t now_in_seconds);
+SFUNC fio_str_info_s fio_http_log_time(uint64_t now_in_seconds);
+```
+
+Format a Unix time (in seconds) for the HTTP `date` header (RFC 7231 format)
+or for log lines.
+
+**Returns:** a view of a static buffer that is reused while the second stays
+the same and overwritten when it changes.
+
+**Note**: the buffers are shared and not synchronized. Copy the result if you
+need to keep it.
 
 ### Path and MIME helpers
 
+#### `FIO_HTTP_PATH_EACH`
+
 ```c
 #define FIO_HTTP_PATH_EACH(path, pos)
-
-int fio_http_mimetype_register(char *file_ext,
-                               size_t file_ext_len,
-                               fio_str_info_s mime_type);
-fio_str_info_s fio_http_mimetype(char *file_ext, size_t file_ext_len);
 ```
 
-`FIO_HTTP_PATH_EACH` iterates decoded path sections using a 4096-byte stack
-buffer. The MIME registry is not thread-safe.
+Loops over each section of `path` (such as `fio_http_path(h)`), decoding
+percent encoding.
+
+The loop declares `pos`, a `fio_buf_info_s` holding the decoded section, and
+`pos_reminder`, a `fio_buf_info_s` holding the rest of the path. `pos` points
+to a 4096-byte buffer on the stack, valid only inside the loop.
+
+```c
+/* illustrative */
+FIO_HTTP_PATH_EACH(fio_http_path(h), section) {
+  /* "/users/42" visits "users", then "42" */
+}
+```
+
+**Note**: the loop stops early at a section longer than about 4063 bytes.
+
+#### `fio_http_mimetype_register` / `fio_http_mimetype`
+
+```c
+SFUNC int fio_http_mimetype_register(char *file_ext,
+                                     size_t file_ext_len,
+                                     fio_str_info_s mime_type);
+SFUNC fio_str_info_s fio_http_mimetype(char *file_ext, size_t file_ext_len);
+```
+
+Register or look up the MIME type of a file extension (without the dot, such
+as `"html"`). Common types are registered at startup. Registering an empty
+`mime_type` removes the extension.
+
+**Parameters:**
+- `file_ext`, `file_ext_len` - the extension; at most 7 bytes. Matching is
+  case-sensitive.
+- `mime_type` - at most 117 bytes; copied.
+
+**Returns:** `fio_http_mimetype_register` returns `0` on success or `-1` on
+error (for example, a value too long). `fio_http_mimetype` returns a borrowed
+view of the registered type, or an empty value.
+
+**Note**: the MIME registry is **NOT** thread-safe. Register types before
+starting the server.
 
 ### Controller
+
+#### `fio_http_controller_s`
 
 ```c
 typedef struct fio_http_controller_s fio_http_controller_s;
 
 struct fio_http_controller_s {
+  /** Reserved. MUST be initialized to zero. */
   uintptr_t private_flags;
+  /** Called when an HTTP handle is freed. */
   void (*on_destroyed)(fio_http_s *h);
+  /** Informs the controller that request / response headers must be sent. */
   void (*send_headers)(fio_http_s *h);
+  /** called by the HTTP handle for each body chunk, or to finish a response. */
   void (*write_body)(fio_http_s *h, fio_http_write_args_s args);
+  /** called once a request / response had finished */
   void (*on_finish)(fio_http_s *h);
+  /** called to close an HTTP connection */
   void (*close_io)(fio_http_s *h);
-  int  (*get_fd)(fio_http_s *h);
+  /** called when the file descriptor is directly required */
+  int (*get_fd)(fio_http_s *h);
 };
 ```
 
-Controllers allow the handle to write through different protocols. Initialize
-custom controllers to zero before use; `private_flags` is reserved and must
-remain zero. If controller callbacks are not
-thread-safe, call `fio_http_write` only from the controller's expected thread.
+A controller connects the handle to a protocol: the handle calls it to send
+headers and body data. The HTTP module provides controllers for HTTP/1,
+WebSocket and SSE; custom controllers are rarely needed.
+
+**Members:**
+- `private_flags` - reserved; MUST be zero.
+- `on_destroyed` - the handle is being destroyed.
+- `send_headers` - send the request / response headers.
+- `write_body` - send body data; takes ownership of `args` (free `buf` with
+  `dealloc`, close `fd`).
+- `on_finish` - the request / response is complete.
+- `close_io` - close the connection (see `fio_http_close`).
+- `get_fd` - return the connection's file descriptor, or `-1`.
+
+Install a controller with `fio_http_controller_set`. Missing callbacks are
+filled with no-op defaults when the controller is set.
+
+**Note**: if the controller's callbacks aren't thread-safe, call
+`fio_http_write` only from the thread the controller expects.
 
 ---
 
 ## Compile-Time Knobs
 
-HTTP module defaults:
+Define any of these macros before including the library to change its
+default. Each is guarded by `#ifndef`.
 
-```c
-FIO_HTTP_DEFAULT_MAX_HEADER_SIZE      /* 32768 */
-FIO_HTTP_DEFAULT_MAX_LINE_LEN         /* 8192 */
-FIO_HTTP_DEFAULT_MAX_BODY_SIZE        /* 33554432 */
-FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE      /* 262144 */
-FIO_HTTP_DEFAULT_TIMEOUT              /* 50 */
-FIO_HTTP_DEFAULT_TIMEOUT_LONG         /* 50 */
-FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER   /* 0 */
-FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT
-FIO_WEBSOCKET_STATS                   /* 0 */
-FIO_HTTP_WEBSOCKET_DEFLATE_MIN        /* 1024 */
-```
+**Limits and timeouts** (the `DEFAULT_` values apply when the matching
+`fio_http_settings_s` field is 0):
 
-HTTP handle defaults:
+| Macro | Default | Meaning |
+|---|---|---|
+| `FIO_HTTP_DEFAULT_MAX_HEADER_SIZE` | `32768` | Request / status line plus all headers, in bytes. |
+| `FIO_HTTP_DEFAULT_MAX_LINE_LEN` | `8192` | A single header or request line, in bytes. |
+| `FIO_HTTP_DEFAULT_MAX_BODY_SIZE` | `33554432` | HTTP body (payload), in bytes. |
+| `FIO_HTTP_PARAMS_MAX_FIELDS` | `4096` | URL-encoded pairs and multipart parts per parse call. |
+| `FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE` | `262144` | A single WebSocket message, in bytes. |
+| `FIO_HTTP_DEFAULT_TIMEOUT` | `50` | HTTP/1.x connection timeout, in seconds. |
+| `FIO_HTTP_DEFAULT_TIMEOUT_LONG` | `50` | WebSocket / SSE connection timeout, in seconds. |
 
-```c
-FIO_HTTP_EXACT_LOGGING                /* fuzzy timestamps by default with IO */
-FIO_HTTP_BODY_RAM_LIMIT               /* 1 << 17 */
-FIO_HTTP_CACHE_LIMIT                  /* 0 */
-FIO_HTTP_CACHE_STR_MAX_LEN            /* 1 << 12 */
-FIO_HTTP_CACHE_USES_MUTEX             /* 1 */
-FIO_HTTP_PRE_CACHE_KNOWN_HEADERS      /* 1 */
-FIO_HTTP_DEFAULT_INDEX_FILENAME       /* "index" */
-FIO_HTTP_STATIC_FILE_COMPLETION       /* 1 */
-FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT   /* 1 << 21 */
-FIO_HTTP_LOG_X_REQUEST_START          /* 1 */
-FIO_HTTP_ENFORCE_LOWERCASE_HEADERS    /* 0 */
-```
+**WebSocket behavior:**
+
+| Macro | Default | Meaning |
+|---|---|---|
+| `FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT` | `((1UL << 16) - 10UL)` | `fio_http_write` on a WebSocket tests shorter data for UTF-8 validity: valid data is sent as text, the rest as binary. Longer data is sent as binary without testing. |
+| `FIO_HTTP_WEBSOCKET_DEFLATE_MIN` | `1024` | Messages smaller than this are never compressed. |
+| `FIO_WEBSOCKET_STATS` | `0` | If true, logs the longest WebSocket round-trips (`FIO_LOG_INFO`). |
+
+**HTTP handle behavior:**
+
+| Macro | Default | Meaning |
+|---|---|---|
+| `FIO_HTTP_EXACT_LOGGING` | `0` (`1` without the IO module) | If true, request timing uses exact microsecond time stamps and `fio_http_received_at` returns microseconds. Otherwise it uses the IO reactor's cached millisecond clock, which is faster but less exact. |
+| `FIO_HTTP_BODY_RAM_LIMIT` | `(1 << 17)` | Bodies larger than this (in bytes) move to a temporary file. |
+| `FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER` | `0` | If true, keeps the received `content-length` header in the header map. Off by default, because `fio_http_body_length` gives the same value. |
+| `FIO_HTTP_ENFORCE_LOWERCASE_HEADERS` | `0` | If true, header names are lower-cased when set or looked up. Otherwise names are case-sensitive: use lower-case names. |
+| `FIO_HTTP_CACHE_LIMIT` | `0` | Maximum strings per HTTP string cache; `0` disables caching. |
+| `FIO_HTTP_CACHE_STR_MAX_LEN` | `(1 << 12)` | Strings longer than this (in bytes) are never cached. |
+| `FIO_HTTP_CACHE_USES_MUTEX` | `1` | If true, a mutex protects the string caches across threads. |
+| `FIO_HTTP_PRE_CACHE_KNOWN_HEADERS` | `1` | Adds a static cache for common header names. |
+
+**Static files and logging:**
+
+| Macro | Default | Meaning |
+|---|---|---|
+| `FIO_HTTP_DEFAULT_INDEX_FILENAME` | `"index"` | File name served when a static file request points to a folder. |
+| `FIO_HTTP_STATIC_FILE_COMPLETION` | `1` | If true, a missing static file is retried with `.html`, `.htm`, `.txt` and `.md` extensions. |
+| `FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT` | `(1UL << 21)` | Maximum file size (2 MiB) for on-disk static file compression. |
+| `FIO_HTTP_LOG_X_REQUEST_START` | `1` | If true, request logs include the wait time from the `x-request-start` header (see below). |
 
 With `FIO_HTTP_LOG_X_REQUEST_START`, request logs (`.log = 1`) include the
 request's wait time when the client or proxy sends an `X-Request-Start`
@@ -21194,6 +23082,8 @@ more.
 ---
 
 ## Minimal Server
+
+This program answers every request with `hello` and logs each request.
 
 ```c
 #define FIO_HTTP
@@ -21206,13 +23096,65 @@ static void on_http(fio_http_s *h) {
   fio_http_write(h, .buf = "hello\n", .len = 6, .finish = 1);
 }
 
-void start_http(void) {
-  fio_http_listen("0.0.0.0:3000", .on_http = on_http, .log = 1);
+int main(void) {
+  if (!fio_http_listen("0.0.0.0:3000", .on_http = on_http, .log = 1))
+    return 1;
+  fio_io_start(0); /* runs until stopped, e.g., by SIGINT */
+  return 0;
 }
 ```
 
-For WebSocket or SSE routes, provide the relevant authentication and upgraded
-connection callbacks in the route settings.
+For WebSocket or SSE, add the upgrade authentication and connection callbacks
+to the listener or route settings (see
+[WebSocket and SSE Upgrades](#websocket-and-sse-upgrades)).
+
+---
+## HTTP Params to FIOBJ (440 http fiobj.h)
+
+```c
+#define FIO_FIOBJ
+#define FIO_HTTP
+#include FIO_INCLUDE_FILE
+```
+
+This bridge compiles automatically once **both** the HTTP and FIOBJ modules are included. They can be included in either order, in one pass or in separate passes. Neither module depends on the other, so you can include each one independently.
+
+```c
+FIOBJ fio_http_params2FIOBJ(FIOBJ dest, fio_http_s *h);
+```
+
+Calls [`fio_http_params_parse`](./430 http.md#params-parsing-query--body) and returns a FIOBJ Hash of query and body params. `dest` must be `FIOBJ_INVALID` (a new, owned Hash is returned - free it with `fiobj_free`) or an existing `FIOBJ_T_HASH`, which is reused as the root so params merge into its current data using the same conflict rules. A caller-supplied `dest` remains owned by the caller in all cases. Query fields are stored first, then body fields. A JSON object body merges into the Hash; a non-object JSON body contributes nothing. Bodies with missing or unknown Content-Type are ignored. Query, URL-encoded and multipart text values are Strings (including empty Strings for `key` and `key=`); JSON values keep their JSON types.
+
+Repeated scalars become Arrays in source order, Maps merge, and Arrays append. Form field names use dot and bracket paths, including terminal `[]` for explicit appends. Invalid paths stay literal; JSON object keys always stay literal.
+
+Name paths and JSON bodies allow up to `FIO_JSON_MAX_DEPTH` levels (default 128), with the root at level 1 (N name segments open N containers, plus one for terminal `[]`). Define the macro before including the library to change both limits; excessive nesting returns `FIOBJ_INVALID` (the partial Hash is freed, unless it is a caller-supplied `dest`). This differs from NeoRack's suggested 32. These results are checked in [`tests/http-fiobj.c`](../tests/http-fiobj.c):
+
+| Input | Result |
+|---|---|
+| Query `a=1&a=2&a=3` | `{"a":["1","2","3"]}` |
+| Query `user=x&user.name=A` | `{"user":{"":"x","name":"A"}}` |
+| Query `user[name]=A`; JSON body `{"user":{"age":3}}` | `{"user":{"name":"A","age":3}}` |
+| Query `tag=x&tag[]=a` | `{"tag":["x","a"]}` |
+| Query `a=1`; JSON body `[1,2]` | `{"a":"1"}` |
+| JSON body `{"a.b":1,"c[d]":2}` | `{"a.b":1,"c[d]":2}` |
+| Query `a=1`; JSON body `{"a":null,"b":null,"b":2}` | `{"a":["1",null],"b":[null,2]}` |
+
+JSON `null` values are real `fiobj_null()` objects, so they take part in conflict resolution like any other scalar.
+
+A file upload is a [`FIOBJ_T_DATA`](./250 fiobj.md) object, treated as a scalar in conflict handling. Read borrowed metadata with `fiobj_data_filename(upload)`, `fiobj_data_type(upload)` and `fiobj_data_headers(upload)`; the type has a NULL `buf` if absent. The filename excludes `/` and `\\` path components. Empty filenames and empty field names are omitted. Upload content streams in chunks and spills to a temporary file once it exceeds `FIO_DATA_RAM_LIMIT`. Read it with `fio_data_read(fiobj_data_ptr(upload), len)` or save it with `fio_data_save(fiobj_data_ptr(upload), filename)`; never use the client's filename as a path without validating it. If upload storage fails, parsing fails.
+
+Returns `FIOBJ_INVALID` on parsing error, including a params field-limit overflow, malformed parsed bodies, a `NULL` handle, or a `dest` that isn't a Hash. On error a fresh Hash is freed; a caller-supplied `dest` is NOT freed (it stays valid and caller-owned) but may hold partially merged data. An empty request returns an empty Hash. Check the result before accessing it:
+
+```c
+FIOBJ params = fio_http_params2FIOBJ(FIOBJ_INVALID, h);
+if (params == FIOBJ_INVALID) {
+  /* Handle parse failure. */
+} else {
+  FIOBJ name = fiobj_hash_get2(params, "name", 4);
+  /* Use name while params is alive. */
+  fiobj_free(params);
+}
+```
 ## Hash Function Testing
 
 During development I tested the Hash functions using [the SMHasher testing suite (@rurban's fork)](https://github.com/rurban/smhasher). The testing suite is often growing with more tests, so I do not know what the future may bring... but attached are the test results for Risky Hash, Stable Hash (64 and 128 bit variation) as they were at the time of (re)development (March, 2023).

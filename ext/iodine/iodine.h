@@ -99,7 +99,7 @@ static ID IODINE_JOIN_ID;
 static ID IODINE_TO_PATH_ID;
 static ID IODINE_TO_S_ID;
 static ID IODINE_TO_JSON_ID;
-static ID IODINE_RACK_HIJACK_ID;
+static ID IODINE_RACK_HIJACK_ID; /* rack_hijack */
 static ID IODINE_ON_AUTHENTICATE_ID;
 static ID IODINE_ON_AUTHENTICATE_SSE_ID;
 static ID IODINE_ON_AUTHENTICATE_WEBSOCKET_ID;
@@ -135,6 +135,10 @@ static ID IODINE_DELETE_ID;
   name = rb_intern(value);                                                     \
   STORE.hold(RB_ID2SYM(name));
 
+#define IODINE_CONST_IDSYM_STORE(name, value)                                  \
+  name##_ID = rb_intern(value);                                                \
+  STORE.hold((name##_SYM = RB_ID2SYM(name##_ID)));
+
 static VALUE iodine_rb_IODINE;
 static VALUE iodine_rb_IODINE_BASE;
 static VALUE iodine_rb_IODINE_BASE_APP404;
@@ -150,9 +154,9 @@ static rb_encoding *IodineBinaryEncoding;
 static VALUE IODINE_CONNECTION_ENV_TEMPLATE = Qnil;
 static VALUE IODINE_CONNECTION_ENV_TEMPLATE_HTTPS = Qnil;
 static VALUE IODINE_RACK_PROTOCOL_STR;
-static VALUE IODINE_RACK_HIJACK_ID_SYM;
-static VALUE IODINE_RACK_HIJACK_STR;
-static VALUE IODINE_RACK_HIJACK_SYM;
+static VALUE IODINE_RACK_HIJACK_ID_SYM; /* rack_hijack */
+static VALUE IODINE_RACK_HIJACK_STR;    /* rack.hijack */
+static VALUE IODINE_RACK_HIJACK_SYM;    /* rack.hijack */
 static VALUE IODINE_RACK_UPGRADE_STR;
 static VALUE IODINE_RACK_UPGRADE_Q_STR;
 static VALUE IODINE_RACK_UPGRADE_WS_SYM;
@@ -252,6 +256,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_tls.h"
 /* layer 3 modules */
 #include "iodine_connection.h"
+#include "iodine_params.h"
 
 /* layer 4 modules */
 #include "iodine_core.h"

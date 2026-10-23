@@ -7,6 +7,18 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
+#### 0.8.3 - unreleased
+
+[facil.io C STL](https://github.com/facil-io/cstl) updates:
+
+**API**: (`http`) the HTTP params helpers now follow the NeoRack `params` extension, including its conflict-resolution rules: `fio_http_query_parse` parses the query string, `fio_http_body_parse` parses URL-encoded, multipart and JSON bodies, and `fio_http_params_parse` parses the query and then the body into a single map. Query and form names use dot / bracket paths (`a.b`, `a[b]`, terminal `[]`), repeated scalars become Arrays in arrival order, maps merge, and scalar/map conflicts nest the scalar under the empty-string key. Multipart file uploads stream in chunks and fields are limited by the new `fio_http_settings_s.max_params` (default `FIO_HTTP_PARAMS_MAX_FIELDS`, 4096).
+
+**API**: (`fiobj`) `FIOBJ_T_DATA` objects now carry upload metadata: `fiobj_data_filename`, `fiobj_data_type` and `fiobj_data_headers` (and their setters). `fio_http_params2FIOBJ` returns the request params as a FIOBJ Hash, with file uploads stored as Data objects.
+
+**API**: (`json`) the JSON parser callback contract was reworked to support conflict resolution: containers are placed in their parent when opened (`on_map` / `on_array` receive a borrowed `fio_buf_info_s` key and may report a replaced value through `void **old`), `map_push` receives a borrowed key, and the new `is_map` / `is_array` callbacks support `fio_json_parse_update` and the conflict-resolution helpers. `Iodine::JSON` keeps last-wins semantics, matching the FIOBJ parser.
+
+**Feature**: (`http`) the NeoRack `params` extension (version 0.0.1) is now implemented: `Iodine::Connection#params` returns a memoized parameter Hash merging the URL query string and the request body (URL-encoded, multipart, and JSON bodies including `application/*+json` media types), with bracket / dot path nesting, Array creation for repeated scalars and `[]`, and conflict resolution. `#query2params` and `#body2params` parse a single source each (query-first precedence). Multipart file uploads are exposed as `Iodine::Base::Upload` objects (an internal class): readable binary streams (`read`, `rewind`, `size`, `save`, `close`, `closed?`) with `filename`, `type`, `name` and `headers` metadata readers and Rack-style `[]` access (`upload[:tempfile]` returns the upload). Uploads close automatically at request end and when garbage collected. Parser resource limits raise a `RangeError` (iodine convention: native Ruby errors only). Iodine extensions now report `params: "0.0.1"`.
+
 #### 0.8.2 - 2026-10-22
 
 [facil.io C STL](https://github.com/facil-io/cstl) updates:
