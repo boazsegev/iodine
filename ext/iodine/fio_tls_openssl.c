@@ -885,6 +885,8 @@ static fio_rw_hook_s FIO_TLS_HANDSHAKE_HOOKS = {
     .flush = fio_tls_flush4handshake,
     .cleanup = fio_tls_cleanup,
 };
+extern char fio_tls_client_sni[256];
+
 static inline void fio_tls_attach2uuid(intptr_t uuid,
                                        fio_tls_s *tls,
                                        void *udata,
@@ -920,6 +922,8 @@ static inline void fio_tls_attach2uuid(intptr_t uuid,
     /* Client mode (connect) */
     FIO_LOG_DEBUG("Attaching TLS read/write hook for %p (client mode).",
                   (void *)uuid);
+    if (fio_tls_client_sni[0])
+      SSL_set_tlsext_host_name(c->ssl, fio_tls_client_sni);
     SSL_set_connect_state(c->ssl);
   }
   fio_force_event(uuid, FIO_EVENT_ON_READY);
