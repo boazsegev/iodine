@@ -5492,7 +5492,23 @@ typedef struct {
   void *tls;
   void (*on_connect)(intptr_t uuid, void *udata);
   void (*on_fail)(intptr_t uuid, void *udata);
+  char sni[256];
 } fio_connect_protocol_s;
+
+/* The SNI host name for the TLS client connection being attached. */
+char fio_tls_client_sni[256];
+
+/* Copies a host name for SNI, leaving IP literals out (RFC 6066, 3). */
+static void fio_connect_sni_copy(char *dest, size_t size, const char *address) {
+  unsigned char ip[sizeof(struct in6_addr)];
+  dest[0] = 0;
+  if (!address || !address[0] || address[0] == '[' ||
+      inet_pton(AF_INET, address, ip) == 1 ||
+      inet_pton(AF_INET6, address, ip) == 1)
+    return;
+  strncpy(dest, address, size - 1);
+  dest[size - 1] = 0;
+}
 
 static void fio_connect_on_close(intptr_t uuid, fio_protocol_s *pr_) {
   fio_connect_protocol_s *pr = (fio_connect_protocol_s *)pr_;
@@ -5524,7 +5540,9 @@ static void fio_connect_on_ready_tls(intptr_t uuid, fio_protocol_s *pr_) {
     return; /* Don't call on_connect more than once */
   pr->pr.on_ready = mock_on_ev;
   pr->on_fail = NULL;
+  memcpy(fio_tls_client_sni, pr->sni, sizeof(fio_tls_client_sni));
   fio_tls_connect(uuid, pr->tls, pr->udata);
+  fio_tls_client_sni[0] = 0;
   pr->on_connect(uuid, pr->udata);
   fio_poll_add(fio_uuid2fd(uuid));
   (void)uuid;
@@ -5536,7 +5554,9 @@ static void fio_connect_on_ready_tls_alpn(intptr_t uuid, fio_protocol_s *pr_) {
     return; /* Don't call on_connect more than once */
   pr->pr.on_ready = mock_on_ev;
   pr->on_fail = NULL;
+  memcpy(fio_tls_client_sni, pr->sni, sizeof(fio_tls_client_sni));
   fio_tls_connect(uuid, pr->tls, pr->udata);
+  fio_tls_client_sni[0] = 0;
   fio_poll_add(fio_uuid2fd(uuid));
   (void)uuid;
 }
@@ -5589,6 +5609,7 @@ intptr_t fio_connect FIO_IGNORE_MACRO(struct fio_connect_args args) {
       .on_connect = args.on_connect,
       .on_fail = args.on_fail,
   };
+  fio_connect_sni_copy(pr->sni, sizeof(pr->sni), args.address);
   fio_attach(uuid, &pr->pr);
   return uuid;
 error:
