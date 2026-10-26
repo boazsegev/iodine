@@ -19,6 +19,8 @@ PARAMS_PORT = (ENV["IODINE_TEST_PORT"] || 19_876).to_i + 20  # +10 is taken by c
 PARAMS_RESULTS = {}
 PARAMS_ESCAPED_UPLOADS = Hash.new { |h, k| h[k] = [] }
 PARAMS_HASH_SUBCLASS = Class.new(Hash)
+PARAMS_TMP_DIR = File.expand_path('../tmp/params-spec', __dir__)
+$params_saved_stream = nil
 
 # Handler: routes return a JSON rendering of the params Hash (or a report).
 module ParamsHandler
@@ -43,7 +45,7 @@ module ParamsHandler
       [result, out, result.equal?(out), out.encoding.name]
     end
     up.rewind
-    save_path = File.expand_path('../ai-tmp/upload-save-test.bin', __dir__)
+    save_path = File.join(PARAMS_TMP_DIR, 'upload-save-test.bin')
     saved = up.save(save_path)
     saved_content = File.binread(save_path)
     File.delete(save_path)
@@ -102,7 +104,7 @@ module ParamsHandler
   end
 
   def upload_race_report(up)
-    base = File.expand_path('../ai-tmp/upload-race', __dir__)
+    base = File.join(PARAMS_TMP_DIR, 'upload-race')
     save_path = "#{base}-save.bin"
     race_path = "#{base}-close.bin"
     threads = []
@@ -159,6 +161,13 @@ module ParamsHandler
     case e.path
     when '/params'
       json(e, e.params)
+    when '/reject'
+      begin
+        e.params
+        json(e, { 'error' => nil })
+      rescue RangeError => error
+        json(e, { 'error' => error.class.name, 'message' => error.message })
+      end
     when '/split' # body2params first: merge order follows the calls
       e.body2params
       e.query2params
@@ -248,7 +257,7 @@ module ParamsHandler
       end
     when '/upload_big' # >= 256KiB: save runs outside the GVL
       up = e.params['big']
-      save_path = File.expand_path('../ai-tmp/upload-big-test.bin', __dir__).freeze
+      save_path = File.join(PARAMS_TMP_DIR, 'upload-big-test.bin')
       prefix = up.read(17)
       saved = up.save(save_path)
       saved_content = File.binread(save_path)
@@ -352,6 +361,8 @@ RSpec.describe 'Iodine params extension' do
   end
 
   before(:context) do
+    require 'fileutils'
+    FileUtils.mkdir_p(PARAMS_TMP_DIR)
     Iodine.workers = 0
     Iodine.threads = 4
 
@@ -468,25 +479,25 @@ RSpec.describe 'Iodine params extension' do
       PARAMS_RESULTS[:limit_json] = postj.call("/count?#{query_at_limit}", '{"json":}',
                                                'application/json')
 
-      # 4097 actual form fields must still be rejected (RangeError -> 500).
+      # 4097 actual form fields must raise RangeError, caught by the handler.
       big = (0...4097).map { |i| "#{i}=" }.join('&')
-      PARAMS_RESULTS[:limit_status] = post.call('/params', big, 'application/x-www-form-urlencoded').code.to_i
+      PARAMS_RESULTS[:limit_error] = postj.call('/reject', big, 'application/x-www-form-urlencoded')
 
       deep_name = 'a' + ('[a]' * 128) # 129 segments; the native bound is 128.
-      PARAMS_RESULTS[:depth_status] = post.call('/params', "#{deep_name}=1",
-                                                'application/x-www-form-urlencoded').code.to_i
+      PARAMS_RESULTS[:depth_error] = postj.call('/reject', "#{deep_name}=1",
+                                               'application/x-www-form-urlencoded')
       deep_text = multipart_body([{ name: deep_name, value: 'text' }], boundary)
-      PARAMS_RESULTS[:depth_multipart_text_status] =
-        post.call('/params', deep_text, multipart_type).code.to_i
+      PARAMS_RESULTS[:depth_multipart_text_error] =
+        postj.call('/reject', deep_text, multipart_type)
       deep_file = multipart_body([upload_part(deep_name, 'deep.txt')], boundary)
-      PARAMS_RESULTS[:depth_multipart_file_status] =
-        post.call('/params', deep_file, multipart_type).code.to_i
+      PARAMS_RESULTS[:depth_multipart_file_error] =
+        postj.call('/reject', deep_file, multipart_type)
 
       # Omitted multipart parts still count against the cross-source budget.
       omitted = multipart_body([upload_part('empty', ''), upload_part('', 'named.txt')], boundary)
       query_one_short = (0...4095).map { |i| i.to_s(36) }.join('&')
-      PARAMS_RESULTS[:limit_omitted] = post.call("/params?#{query_one_short}", omitted,
-                                                 multipart_type).code.to_i
+      PARAMS_RESULTS[:limit_omitted_error] = postj.call("/reject?#{query_one_short}", omitted,
+                                                         multipart_type)
     rescue => e
       PARAMS_RESULTS[:error] = "#{e.class}: #{e.message}\n#{e.backtrace.first(3).join("\n")}\ncompleted: #{PARAMS_RESULTS.keys.inspect}"
     ensure
@@ -749,18 +760,21 @@ RSpec.describe 'Iodine params extension' do
     expect(PARAMS_RESULTS[:limit_json]).to eq('count' => 4096, 'has_json' => false)
   end
 
-  it 'rejects requests exceeding the field limit (RangeError -> 500)' do
-    expect(PARAMS_RESULTS[:limit_status]).to eq(500)
-    expect(PARAMS_RESULTS[:limit_omitted]).to eq(500)
+  it 'raises RangeError for field overflow, including omitted multipart parts' do
+    [:limit_error, :limit_omitted_error].each do |key|
+      expect(PARAMS_RESULTS[key]).to include('error' => 'RangeError')
+      expect(PARAMS_RESULTS[key]['message']).to include('field limit exceeded')
+    end
   end
 
-  it 'rejects URL-encoded names exceeding the native nesting bound' do
-    expect(PARAMS_RESULTS[:depth_status]).to eq(500)
+  it 'raises RangeError for URL-encoded names exceeding the native nesting bound' do
+    expect(PARAMS_RESULTS[:depth_error]).to include('error' => 'RangeError')
   end
 
-  it 'rejects multipart text and file names exceeding the native nesting bound' do
-    expect(PARAMS_RESULTS[:depth_multipart_text_status]).to eq(500)
-    expect(PARAMS_RESULTS[:depth_multipart_file_status]).to eq(500)
+  it 'raises RangeError for multipart text and file names exceeding the native nesting bound' do
+    [:depth_multipart_text_error, :depth_multipart_file_error].each do |key|
+      expect(PARAMS_RESULTS[key]).to include('error' => 'RangeError')
+    end
   end
 
   it 'saves large uploads (256KiB+, saved outside the GVL)' do
@@ -846,7 +860,7 @@ RSpec.describe 'Iodine params extension' do
 
     it 'accepts String save paths only, like Ruby\'s own IO (no Symbols)' do
       up = Iodine::Base::Upload.new
-      base = File.expand_path('../ai-tmp', __dir__)
+      base = PARAMS_TMP_DIR
       expect { up.save(12_345) }.to raise_error(TypeError)
       expect { up.save(Object.new) }.to raise_error(TypeError)
       expect { up.save(:"#{base}/u2.bin") }.to raise_error(TypeError)
