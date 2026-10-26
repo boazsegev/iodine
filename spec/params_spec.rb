@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'net/http'
+require 'socket'
 require 'uri'
 require 'json'
 require 'timeout'
@@ -403,7 +404,16 @@ RSpec.describe 'Iodine params extension' do
       PARAMS_RESULTS[:read_after] = postj.call('/read_after', 'x=1', 'application/x-www-form-urlencoded')
       PARAMS_RESULTS[:closed]    = postj.call('/closed', 'x=1', 'application/x-www-form-urlencoded')
       PARAMS_RESULTS[:plain]     = postj.call('/params', 'a=1', 'text/plain')
-      PARAMS_RESULTS[:no_ct]     = JSON.parse(Net::HTTP.post(URI("#{base}/params"), 'a=1').body)
+      # Net::HTTP on Ruby 3.x silently adds application/x-www-form-urlencoded
+      # when a POST has a body but no Content-Type. Send the exact wire request.
+      no_ct_response = TCPSocket.open('127.0.0.1', port) do |socket|
+        socket.write("POST /params HTTP/1.1\r\nHost: 127.0.0.1\r\n" \
+                     "Content-Length: 3\r\nConnection: close\r\n\r\na=1")
+        socket.read
+      end
+      no_ct_status, no_ct_body = no_ct_response.split("\r\n\r\n", 2)
+      raise "unexpected no-Content-Type response: #{no_ct_status}" unless no_ct_status&.include?(' 200 ')
+      PARAMS_RESULTS[:no_ct] = JSON.parse(no_ct_body)
       PARAMS_RESULTS[:json]      = postj.call('/params?q=1', '{"a":1,"b":{"c":[true,null]},"s":"txt"}', 'application/json')
       PARAMS_RESULTS[:json_suffix] = postj.call('/params', '{"ld":1}', 'application/ld+JSON; charset=utf-8')
       PARAMS_RESULTS[:json_long_suffix] = postj.call('/params', '{"long":1}',
