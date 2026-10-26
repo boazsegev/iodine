@@ -22839,7 +22839,7 @@ SFUNC size_t fio_sock_maximize_limits(size_t max_limit) {
 SFUNC fio_socket_i fio_sock_open_unix(const char *address, uint16_t flags) {
   /* Unix socket */
   struct sockaddr_un addr = {0};
-  size_t addr_len = strlen(address);
+  size_t addr_len = FIO_STRLEN(address);
   if (addr_len >= sizeof(addr.sun_path)) {
     FIO_LOG_ERROR(
         "(fio_sock_open_unix) address too long (%zu bytes > %zu bytes).",
@@ -69418,7 +69418,7 @@ FIO_CONSTRUCTOR(fio___secret_constructor) {
     const char *secret_length = fio_sys_env("SECRET_LENGTH");
     len = secret_length ? fio_atol((char **)&secret_length) : 0;
     if (!len)
-      len = strlen(str);
+      len = FIO_STRLEN(str);
     if (!len)
       str = NULL;
   }
@@ -109660,7 +109660,7 @@ SFUNC fio_io_tls_s *fio_io_tls_alpn_add(fio_io_tls_s *t,
     return t;
   if (!on_selected)
     on_selected = fio_io_noop;
-  size_t pr_name_len = strlen(protocol_name);
+  size_t pr_name_len = FIO_STRLEN(protocol_name);
   if (pr_name_len > 255) {
     FIO_LOG_ERROR(
         "fio_io_tls_alpn_add called with name longer than 255 chars!");
@@ -109953,6 +109953,7 @@ FIO_SFUNC void fio___io_after_fork(void *ignr_) {
   FIO___IO.pid = fio_thread_getpid();
   FIO___IO.io_thread = 0; /* forked child has a new reactor thread */
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
+  FIO___IO.lock = FIO___LOCK_INIT; /* better leak the lock, avoid UB */
   fio_queue_perform_all(&FIO___IO.queue);
   FIO_LIST_EACH(fio_io_protocol_s,
                 reserved.protocols,
@@ -110233,13 +110234,24 @@ FIO_SFUNC void fio___io_work(int is_worker) {
 Worker Forking
 ***************************************************************************** */
 static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2);
+static void fio___io_unwait_forked_worker(void *thr_);
 
 static void fio___io_wait_for_worker(void *thr_) {
   fio_thread_t t = (fio_thread_t)(uintptr_t)thr_;
   fio_state_callback_remove(FIO_CALL_ON_STOP,
                             fio___io_wait_for_worker,
                             (void *)(uintptr_t)t);
+  fio_state_callback_remove(FIO_CALL_IN_CHILD,
+                            fio___io_unwait_forked_worker,
+                            thr_);
   fio_thread_join(&t);
+}
+
+static void fio___io_unwait_forked_worker(void *thr_) {
+  fio_state_callback_remove(FIO_CALL_ON_STOP, fio___io_wait_for_worker, thr_);
+  fio_state_callback_remove(FIO_CALL_IN_CHILD,
+                            fio___io_unwait_forked_worker,
+                            thr_);
 }
 
 /** Worker sentinel */
@@ -110249,6 +110261,9 @@ static void *fio___io_worker_sentinel(void *pid_data) {
   int status = 0;
   (void)status;
   fio_thread_t thr = fio_thread_current();
+  fio_state_callback_add(FIO_CALL_IN_CHILD,
+                         fio___io_unwait_forked_worker,
+                         (void *)thr);
   fio_state_callback_add(FIO_CALL_ON_STOP,
                          fio___io_wait_for_worker,
                          (void *)thr);
@@ -110754,7 +110769,7 @@ test_url:
     if (!args.url)
       args.url = "0.0.0.0";
   }
-  url_alt.len = strlen(args.url);
+  url_alt.len = FIO_STRLEN(args.url);
   if (url_alt.len > 2024) {
     FIO_LOG_ERROR("binding address / url too long.");
     args.url = NULL;
@@ -110903,7 +110918,7 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   if (!args.timeout)
     args.timeout = 30000;
 
-  size_t url_len = strlen(args.url);
+  size_t url_len = FIO_STRLEN(args.url);
   fio_url_s url = fio_url_parse(args.url, url_len);
   args.tls = fio_io_tls_from_url(args.tls, url);
   if (args.tls && url.host.len)
@@ -118510,7 +118525,8 @@ typedef struct {
 
 /** Redis connection state, observed from the IO thread. */
 typedef enum {
-  /** The engine stopped after a failed HELLO handshake (or NULL was queried). */
+  /** The engine stopped after a failed HELLO handshake (or NULL was queried).
+   */
   FIO_REDIS_STATE_ERROR,
   /** No socket is attached, or the RESP3 HELLO handshake is still pending. */
   FIO_REDIS_STATE_CONNECTING,
@@ -118566,8 +118582,7 @@ SFUNC void fio_redis_free(fio_pubsub_engine_s *engine);
  * This function must be called from the IO thread. Commands can be sent in
  * every state: they queue until the RESP3 HELLO handshake completes.
  */
-SFUNC fio_redis_state_e
-fio_redis_state(fio_pubsub_engine_s const *engine);
+SFUNC fio_redis_state_e fio_redis_state(fio_pubsub_engine_s const *engine);
 
 /**
  * Sends a Redis command through the engine's connection.
@@ -119517,10 +119532,8 @@ FIO_SFUNC int fio___redis_verb_should_wait(const uint8_t *cmd, size_t len) {
   if (!p || (size_t)(p - cmd) + 4 >= len || p[1] != '$')
     return 1;
   const uint8_t *vlen_s = p + 2;
-  const uint8_t *vlen_e = (const uint8_t *)FIO_MEMCHR(
-      vlen_s,
-      '\n',
-      len - (size_t)(vlen_s - cmd));
+  const uint8_t *vlen_e =
+      (const uint8_t *)FIO_MEMCHR(vlen_s, '\n', len - (size_t)(vlen_s - cmd));
   if (!vlen_e || (vlen_e - vlen_s) < 2 || vlen_e[-1] != '\r')
     return 1;
   size_t vlen = 0;
@@ -119538,8 +119551,7 @@ FIO_SFUNC int fio___redis_verb_should_wait(const uint8_t *cmd, size_t len) {
     if (no_wait[i].len != vlen)
       continue;
     size_t c = 0;
-    while (c < vlen &&
-           (uint8_t)(verb[c] & 0xDF) == (uint8_t)no_wait[i].verb[c])
+    while (c < vlen && (uint8_t)(verb[c] & 0xDF) == (uint8_t)no_wait[i].verb[c])
       ++c; /* case-insensitive (ASCII upper) */
     if (c == vlen)
       return 0;
@@ -119888,8 +119900,8 @@ FIO_SFUNC void fio___redis_attach_cmd_task(void *engine_, void *cmd_) {
   /* Add command to queue and try to send.
    * Classify should_wait from the command verb at accept time: every
    * command flows through the same two-type queue discipline. */
-  cmd->should_wait = (uint8_t)fio___redis_verb_should_wait(cmd->cmd,
-                                                           cmd->cmd_len);
+  cmd->should_wait =
+      (uint8_t)fio___redis_verb_should_wait(cmd->cmd, cmd->cmd_len);
   FIO_LIST_PUSH(&r->cmd_queue, &cmd->node);
   fio___redis_send_next_cmd(r);
   fio___redis_free(r); /* Release the reference held for this deferred task */
@@ -120014,8 +120026,7 @@ FIO_SFUNC void fio___redis_on_hello_reply(fio_pubsub_engine_s *e,
  * queue to distinguish a TCP connection awaiting `HELLO 3` from a RESP3-ready
  * connection. Commands may be sent regardless of the returned state.
  */
-SFUNC fio_redis_state_e
-fio_redis_state(fio_pubsub_engine_s const *engine) {
+SFUNC fio_redis_state_e fio_redis_state(fio_pubsub_engine_s const *engine) {
   if (!engine)
     return FIO_REDIS_STATE_ERROR;
   fio_redis_engine_s const *r = (fio_redis_engine_s const *)engine;
@@ -120063,14 +120074,15 @@ typedef struct {
  * Channel names that don't fit in half the buffer require a dynamic
  * allocation and are sent as a separate SUBSCRIBE/PSUBSCRIBE message.
  */
-FIO_SFUNC void fio___redis_resubscribe_batch(fio___redis_resubscribe_sink_s sink) {
+FIO_SFUNC void fio___redis_resubscribe_batch(
+    fio___redis_resubscribe_sink_s sink) {
   uint8_t *buf = fio___redis_resubscribe_buf(0);
   const size_t half = FIO___REDIS_RESUBSCRIBE_BUF_CAPA / 2;
   size_t used = 0;
   for (int is_pattern = 0; is_pattern < 2; ++is_pattern) {
-    fio___pubsub_channel_map_s *map =
-        is_pattern ? &FIO___PUBSUB_POSTOFFICE.patterns
-                   : &FIO___PUBSUB_POSTOFFICE.channels;
+    fio___pubsub_channel_map_s *map = is_pattern
+                                          ? &FIO___PUBSUB_POSTOFFICE.patterns
+                                          : &FIO___PUBSUB_POSTOFFICE.channels;
     const char *verb = is_pattern ? "PSUBSCRIBE" : "SUBSCRIBE";
     const size_t verb_len = is_pattern ? 10 : 9;
     FIO_MAP_EACH(fio___pubsub_channel_map, map, i) {
@@ -120084,11 +120096,11 @@ FIO_SFUNC void fio___redis_resubscribe_batch(fio___redis_resubscribe_sink_s sink
         }
         uint8_t *solo = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, need, 0);
         if (solo) {
-          size_t len = fio___redis_write_sub_cmd(solo,
-                                                 verb,
-                                                 verb_len,
-                                                 FIO_BUF_INFO2(ch->name,
-                                                               ch->name_len));
+          size_t len =
+              fio___redis_write_sub_cmd(solo,
+                                        verb,
+                                        verb_len,
+                                        FIO_BUF_INFO2(ch->name, ch->name_len));
           sink.on_write(sink.udata, solo, len);
           FIO_MEM_FREE(solo, need);
         }
@@ -120101,8 +120113,7 @@ FIO_SFUNC void fio___redis_resubscribe_batch(fio___redis_resubscribe_sink_s sink
       used += fio___redis_write_sub_cmd(buf + used,
                                         verb,
                                         verb_len,
-                                        FIO_BUF_INFO2(ch->name,
-                                                      ch->name_len));
+                                        FIO_BUF_INFO2(ch->name, ch->name_len));
     }
   }
   if (used)
@@ -120992,7 +121003,7 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
   size_t port_len = 4; /* strlen("6379") */
 
   if (args.url && args.url[0]) {
-    fio_url_s u = fio_url_parse(args.url, strlen(args.url));
+    fio_url_s u = fio_url_parse(args.url, FIO_STRLEN(args.url));
     if (u.host.buf && u.host.len) {
       host = u.host.buf;
       host_len = u.host.len;
@@ -121011,7 +121022,7 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
 
   size_t auth_len = args.auth_len;
   if (args.auth && !auth_len)
-    auth_len = strlen(args.auth);
+    auth_len = FIO_STRLEN(args.auth);
 
   /* Pre-compute the HELLO 3 handshake command (auth folds into HELLO).
    * Exact sizing (no estimates); auth failure is a hard engine error. */
@@ -126636,8 +126647,8 @@ FIO_SFUNC int fio___http_params_store(
   fio_json_obj_result_s c = {.obj = root};
   fio___http_params_path_s path;
   if (fio___http_params_path_parse(&path, name)) {
-    FIO_LOG_WARNING("HTTP params name depth limit exceeded (%u)",
-                    (unsigned)FIO_JSON_MAX_DEPTH);
+    FIO_LOG_SECURITY("HTTP params name depth limit exceeded (%u)",
+                     (unsigned)FIO_JSON_MAX_DEPTH);
     c.err = FIO_HTTP_PARAMS_PARSE_DEPTH;
     goto error;
   }
@@ -130659,7 +130670,7 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
   fio___http_settings_validate(&s, 1);
   fio_url_s u = (fio_url_s){0};
   if (url)
-    u = fio_url_parse(url, strlen(url));
+    u = fio_url_parse(url, FIO_STRLEN(url));
 
   if (!h)
     h = fio_http_new();
@@ -131066,7 +131077,7 @@ FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
       (unsigned)s.timeout * 1000U;
   /* fill in TLS data */
   if (url) {
-    fio_url_s u = fio_url_parse(url, strlen(url));
+    fio_url_s u = fio_url_parse(url, FIO_STRLEN(url));
     s.tls = fio_io_tls_from_url(s.tls, u);
     if (s.tls) {
       s.tls = fio_io_tls_dup(s.tls);
