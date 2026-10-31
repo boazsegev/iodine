@@ -795,6 +795,7 @@ typedef struct {
   fio_str_info_s filename;
   fio_str_info_s content_type;
   fio_str_info_s headers;
+  fio_buf_info_s data;
 } iodine___params_callback_args_s;
 
 FIO_SFUNC VALUE iodine___params_callback_dispatch(VALUE args_) {
@@ -848,6 +849,10 @@ FIO_SFUNC VALUE iodine___params_callback_dispatch(VALUE args_) {
                                         a->filename,
                                         a->content_type,
                                         a->headers);
+    if (iodine___params_on_file_data(a->u, a->result, a->data)) {
+      a->result = NULL;
+      a->status = -1;
+    }
     break;
   }
   return Qnil;
@@ -963,11 +968,13 @@ FIO_SFUNC int iodine___params_cb_array_push(void *udata_,
   return a.status;
 }
 
-FIO_SFUNC void *iodine___params_cb_on_file(void *udata_,
-                                           fio_str_info_s name,
-                                           fio_str_info_s filename,
-                                           fio_str_info_s content_type,
-                                           fio_str_info_s headers) {
+FIO_SFUNC fio_json_obj_result_s iodine___params_cb_on_file(
+    void *udata_,
+    fio_str_info_s name,
+    fio_str_info_s filename,
+    fio_str_info_s content_type,
+    fio_str_info_s headers,
+    fio_buf_info_s data) {
   iodine___params_callback_args_s a = {
       .u = (iodine_params_udata_s *)udata_,
       .op = IODINE_PARAMS_CB_FILE,
@@ -975,9 +982,10 @@ FIO_SFUNC void *iodine___params_cb_on_file(void *udata_,
       .filename = filename,
       .content_type = content_type,
       .headers = headers,
+      .data = data,
   };
   iodine___params_callback_protect(&a);
-  return a.result;
+  return (fio_json_obj_result_s){.obj = a.result, .err = a.status};
 }
 
 /* The STL treats this callback table as read-only. */
@@ -997,7 +1005,6 @@ static fio_http_params_parse_callbacks_s IODINE_PARAMS_CALLBACKS = {
     .is_map = iodine___params_is_map,
     .free_unused_object = iodine___params_free_unused_object,
     .on_file = iodine___params_cb_on_file,
-    .on_file_data = iodine___params_on_file_data,
 };
 
 /* *****************************************************************************

@@ -59,7 +59,7 @@ All atomic macros use sequentially consistent ordering. They work on a pointer t
 | `fio_atomic_or_fetch(p_obj, value)` | `*p_obj \|= value` | new value |
 | `fio_atomic_xor_fetch(p_obj, value)` | `*p_obj ^= value` | new value |
 
-The implementation prefers GCC/Clang `__atomic` builtins, falls back to legacy `__sync` builtins, then C11 `stdatomic.h`, then MSVC intrinsics.
+The implementation prefers GCC/Clang `__atomic` builtins, falls back to legacy `__sync` builtins, then MSVC `Interlocked` intrinsics. These macros operate on plain (non-`_Atomic`) objects, so C11 `stdatomic.h` is not a valid backend: a C11 compiler with none of these primitives stops with an `#error`.
 
 ## Spinlocks
 
@@ -198,7 +198,7 @@ uint32_t fio_xor_rrot2_shr_32(uint32_t x, uint8_t a, uint8_t b, uint8_t c);
 uint64_t fio_xor_rrot2_shr_64(uint64_t x, uint8_t a, uint8_t b, uint8_t c);
 ```
 
-Computes `ROTR(x,a) ^ ROTR(x,b) ^ (x >> c)`. Used by SHA-256/SHA-512 lowercase sigma functions for message scheduling.
+Computes `ROTR(x,a) ^ ROTR(x,b) ^ (x >> c)`. Used by SHA-256/SHA-512 lowercase sigma functions for message scheduling. Rotation and shift counts are reduced modulo the operand width.
 
 ## XOR masking
 
@@ -267,7 +267,7 @@ uint32_t fio_has_full_byte32(uint32_t row);
 
 * `fio_has_zero_byte32` detects `0x00` bytes.
 * `fio_has_byte32` detects an arbitrary byte value.
-* `fio_has_full_byte32` detects `0x00` bytes — the source's inline comment claims `0xFF`, but the implementation calls `fio_has_zero_byte32(row)`.
+* `fio_has_full_byte32` detects `0xFF` bytes (exact, no false positives).
 
 ### 64-bit vectors
 
@@ -437,8 +437,9 @@ facil.io headers are designed to be included more than once to generate code. [`
 
 - **`FIO_COMPILER_GUARD`** — clobber memory and prevent the compiler from reordering instructions around it.
 - **`FIO_COMPILER_GUARD_INSTRUCTION`** — prevent instruction reordering without the full memory clobber.
+- **`FIO_COMPILER_GUARD_PTR(ptr)`** — like `FIO_COMPILER_GUARD`, but also makes the memory at `ptr` visible to the barrier (as if read). Use it after wiping a private (non-escaping) buffer: a plain memory clobber only covers memory the compiler already considers reachable, so stores to a local key buffer may still be removed as dead stores.
 
-On GCC/Clang these are inline `asm volatile` barriers; on MSVC they map to `_ReadWriteBarrier` and `_WriteBarrier`.
+On GCC/Clang these are inline `asm volatile` barriers (`FIO_COMPILER_GUARD_PTR` passes `ptr` as an `asm` input); on MSVC they map to `_ReadWriteBarrier` and `_WriteBarrier` (`FIO_COMPILER_GUARD_PTR` first stores `ptr` to a `volatile` sink).
 
 ## Thread scheduling
 
@@ -495,7 +496,7 @@ intmax_t  fio_ct_min(intmax_t a, intmax_t b);
 uintmax_t fio_ct_abs(intmax_t i);
 ```
 
-* `fio_ct_max` / `fio_ct_min` perform signed comparisons without branches.
+* `fio_ct_max` / `fio_ct_min` perform signed comparisons without branches, correctly across the full `intmax_t` range (including `INTMAX_MIN` / `INTMAX_MAX`).
 * `fio_ct_abs` returns the absolute value of `i`.
 
 ## ASCII case conversion
@@ -541,13 +542,13 @@ Compares two memory regions and returns `1` if they are byte-for-byte identical,
 void fio_secure_zero(void *a_, size_t bytes);
 ```
 
-Zeros `bytes` starting at `a_`. The write is performed through a `volatile` pointer so the compiler cannot optimize it away. Use this for passwords, keys, and other sensitive material that must be erased from memory.
+Zeros `bytes` starting at `a_` in a way the compiler cannot optimize away. It uses unaligned-safe word stores (`fio_u2buf64u` and friends), followed by a compiler barrier that publishes the buffer's address, so the stores can't be removed as dead. Use this for passwords, keys, and other sensitive material that must be erased from memory.
 
 ```c
 #define FIO_MEM_STACK_WIPE(pages)
 ```
 
-Allocates a volatile stack array of `(pages) * 4096` bytes and initializes it to zero. Useful for clearing sensitive stack scratch space; the `(void)stack_mem` use keeps the array alive through the scope.
+Allocates a volatile stack array of `(pages) * 4096` bytes and initializes it to zero. `pages` must be a small compile-time constant (a runtime value does not compile). Useful for clearing sensitive stack scratch space; the `(void)stack_mem` use keeps the array alive through the scope.
 # Endian and Byte Ordering
 
 Macros and inline helpers for detecting and converting byte order. All are defined in [`./000 core.h`](./000%20core.h).
@@ -1120,6 +1121,8 @@ Heap-allocation-free logging macros and assertion utilities. `FIO_LOG2STDERR` an
 
 Sets the application-wide logging level. Returns the new level.
 
+**Note**: the level is a plain shared `int` (`FIO_LOG_LEVEL`), not an atomic variable. Set it before starting logging threads, or externally synchronize changes with all readers, including log macro calls. Concurrent logging with an unchanged level does not require a level lock. The setter does not coordinate threads or guarantee which messages a runtime level change will include.
+
 ### `FIO_LOG_LEVEL_GET`
 
 ```c
@@ -1153,11 +1156,14 @@ Output destination for all logging. Define it before including `./fio-stl.h` to 
 #define FIO_LOG_LENGTH_LIMIT 1024
 ```
 
-Log buffer size. Keep this above `128`.
+Compile-time stack-buffer budget; default `1024`. Values below `3` or above `INT_MAX - 66` are rejected. Keep the value small enough for each logging thread's stack; the upper check prevents arithmetic overflow, not stack exhaustion. Values above `128` are recommended.
 
-- When `FIO_LOG_LENGTH_LIMIT > 128`, the formatted message is limited to `FIO_LOG_LENGTH_LIMIT - 34` bytes, followed by a 32-byte truncation warning.
-- When `FIO_LOG_LENGTH_LIMIT <= 128`, `vsnprintf` is capped at `FIO_LOG_LENGTH_LIMIT - 2` bytes; the truncation warning is appended afterward.
-- Values `<= 2` are dangerous: the `vsnprintf` size argument underflows/overflows.
+`vsnprintf` receives a capacity of `FIO_LOG_LENGTH_LIMIT - 2`, including its terminating NUL. A message requiring at least that many bytes is truncated:
+
+- Above `128`, keep the first `FIO_LOG_LENGTH_LIMIT - 34` message bytes and append a 32-byte truncation warning.
+- From `3` through `128`, keep the first `FIO_LOG_LENGTH_LIMIT - 3` message bytes and append the same warning, without a gap or embedded formatter NUL.
+
+Shorter messages remain intact. Every successful formatting result ends with an added newline, including an empty message. The stack buffer occupies `FIO_LOG_LENGTH_LIMIT + 32` bytes above `128`, or `FIO_LOG_LENGTH_LIMIT + 66` bytes otherwise.
 
 ## Core Logging Function
 
@@ -1167,7 +1173,13 @@ Log buffer size. Keep this above `128`.
 void FIO_LOG2STDERR(const char *format, ...);
 ```
 
-`printf`-style output to `FIO_STDERR_FILE` using only stack-allocated memory. Truncation follows the two `FIO_LOG_LENGTH_LIMIT` paths described above. In `./fio-stl/001 logging.h` the name is `#undef`-ed before the `static` function definition, so a pre-include macro is removed and a post-inclusion function definition would conflict. Override it after inclusion only by defining `FIO_LOG2STDERR` as a macro.
+`printf`-style output to `FIO_STDERR_FILE` using only stack-allocated memory. Truncation follows the two `FIO_LOG_LENGTH_LIMIT` paths described above. The function returns no status and preserves entry `errno`, including when formatting or output fails. A negative formatter result attempts to print `ERROR: log formatting error.` instead.
+
+Output is best-effort: the function makes one `fwrite` attempt per call, does not retry short or failed writes, and does not flush the stream. The stream owner can inspect `ferror(FIO_STDERR_FILE)` and check `fflush` when delivery matters. This is a diagnostic logger, not a durable audit-record API. Keep the destination stream alive and synchronize any replacement with writers.
+
+**Note**: this is a raw formatted-byte sink. It preserves deliberate newlines and ANSI styling. Use trusted format strings and matching `printf` arguments; pass untrusted text as data, never as the format. Escape untrusted fields at the caller boundary when they must not contain terminal controls or forge log records. `%s` alone does not escape them.
+
+In `./fio-stl/001 logging.h` the name is `#undef`-ed before the `static` function definition, so a pre-include macro is removed and a post-inclusion function definition would conflict. Override it after inclusion only by defining `FIO_LOG2STDERR` as a macro.
 
 ## Log Macros
 
@@ -1322,13 +1334,13 @@ Each fits in the named unsigned type and has about half of its bits set (`3`–`
 uint64_t fio_math_mod_mul64(uint64_t a, uint64_t b, uint64_t mod);
 ```
 
-Computes `(a * b) % mod` without overflowing 64 bits. Uses `__uint128_t` when available; otherwise falls back to a double-and-add loop.
+Computes `(a * b) % mod` without overflowing 64 bits. Uses `__uint128_t` when available; otherwise falls back to an overflow-safe double-and-add loop. Returns `0` when `mod` is `0`.
 
 ```c
 uint64_t fio_math_mod_expo64(uint64_t base, uint64_t exp, uint64_t mod);
 ```
 
-Right-to-left binary modular exponentiation. Calls `fio_math_mod_mul64` for each set bit of `exp`.
+Right-to-left binary modular exponentiation. Calls `fio_math_mod_mul64` for each set bit of `exp`. Returns `0` when `mod` is `0` or `1`.
 
 ## Primality tests
 
@@ -1337,7 +1349,7 @@ bool fio_math_is_uprime(uint64_t n);
 bool fio_math_is_iprime(int64_t n);
 ```
 
-`fio_math_is_uprime` tests whether `n` is probably prime. `fio_math_is_iprime` tests the absolute value of `n`.
+`fio_math_is_uprime` tests whether `n` is probably prime. `fio_math_is_iprime` tests the absolute value of `n` (`INT64_MIN` is handled as `2^63`).
 
 For `n < FIO_PRIME_TABLE_LIMIT` (default `1024`) the test is deterministic using a small sieve. Larger values use Miller–Rabin with `10` rounds. Internal helpers `fio___is_prime_table` and `fio___is_prime_maybe` implement the two paths.
 
@@ -1396,9 +1408,10 @@ For large numbers:
 
 ```c
 #define FIO___MATH_KARATSUBA_THRESHOLD 32
+#define FIO___MATH_KARATSUBA_LIMIT     256
 ```
 
-When `len` is at least this threshold and even, `fio_math_mul` calls `fio___math_mul_karatsuba`.
+When `len` is even and between these bounds (inclusive), `fio_math_mul` calls `fio___math_mul_karatsuba`. Longer inputs use schoolbook multiplication, keeping stack use bounded. A zero `len` writes nothing.
 
 ```c
 void fio___math_mul_karatsuba(uint64_t *restrict dest,
@@ -1407,7 +1420,7 @@ void fio___math_mul_karatsuba(uint64_t *restrict dest,
                               size_t len);
 ```
 
-`fio___math_mul_karatsuba` splits `a` and `b` into low/high halves, computes `z0`, `z1`, and `z2`, then combines them as `z2*B^2 + z1*B + z0`. It uses `fio___math_mul_norecurse` for the three half-sized sub-products and allocates scratch buffers on the stack. `len` must be even; on MSVC or pre-C++14 the stack buffers are fixed at 256 words, so inputs are limited accordingly.
+`fio___math_mul_karatsuba` splits `a` and `b` into low/high halves, computes `z0`, `z1`, and `z2`, then combines them as `z2*B^2 + z1*B + z0`. It uses `fio___math_mul_norecurse` for the three half-sized sub-products and allocates scratch buffers on the stack. `len` must be even and no larger than `FIO___MATH_KARATSUBA_LIMIT`; on MSVC or pre-C++14 the stack buffers are fixed at that limit.
 
 ## See also
 
@@ -1454,9 +1467,9 @@ All routines are declared in [`./001 memalt.h`](./001%20memalt.h).
 void *fio_memcpy(void *dest, const void *src, size_t bytes);
 ```
 
-Copies `bytes` from `src` to `dest`. Handles overlapping regions like `memmove`. Returns `dest` immediately if `dest == src`, `bytes` is zero, or either pointer is `NULL`.
+Copies `bytes` from `src` to `dest`. Handles overlapping regions like `memmove` and always returns `dest`. Does nothing if `dest == src`, `bytes` is zero, or either pointer is `NULL`.
 
-For small, non-overlapping copies (≤64 bytes) it uses overlapping fixed-width copies. For larger or overlapping regions it uses a 64-byte buffered copy, choosing forward or backward direction as needed.
+For small, non-overlapping copies (≤64 bytes) it uses overlapping fixed-width copies. Larger non-overlapping regions use the internal block-copy helper; overlapping regions use a 64-byte buffered copy in the required direction. Overlap detection assumes the flat, byte-addressed `uintptr_t` address model used by supported targets.
 
 ### `fio_memset`
 
@@ -1479,7 +1492,7 @@ Picks the best available implementation at compile time:
 - AVX2 on x86-64 with intrinsics
 - SSE2 on x86 with intrinsics
 - NEON on ARM with intrinsics
-- Scalar 128-bit block fallback otherwise
+- Scalar 128-byte block fallback otherwise
 
 ### `fio_memcmp`
 
@@ -1497,7 +1510,7 @@ Processes 64-byte blocks for large buffers, 8-byte blocks for medium buffers, an
 size_t fio_strlen(const char *str);
 ```
 
-Returns the length of the NUL-terminated string `str`, or `0` if `str` is `NULL`. The implementation is a simple byte loop the compiler can auto-vectorize. Building with Address Sanitizer may flag speculative reads.
+Returns the length of the NUL-terminated string `str`, or `0` if `str` is `NULL`. The byte loop stops at the first NUL without reading later bytes. Address Sanitizer instrumentation remains enabled.
 
 ## OS patch environment helpers
 
@@ -1508,7 +1521,7 @@ char *fio_sys_env(const char *name);
 int   fio_sys_env_set(const char *name, const char *value, int overwrite);
 ```
 
-- `fio_sys_env(name)` returns the value of the environment variable, or `NULL`.
+- `fio_sys_env(name)` returns the value of the environment variable (including an empty value), or `NULL`. On Windows, the returned pointer is borrowed until the next call; copy it before retaining it. Values longer than 4,095 bytes are rejected with `NULL` and `errno == ERANGE`, not returned truncated.
 - `fio_sys_env_set(name, value, overwrite)` sets the variable. If `overwrite` is zero and the variable already exists, it is left unchanged. Returns `0` on success, `-1` on failure.
 
 On POSIX these are thin wrappers around `getenv`/`setenv`. On Windows they call `GetEnvironmentVariableA` and `SetEnvironmentVariableA` directly, bypassing macro redefinitions such as the one in Ruby's `win32.h` and avoiding `wchar_t` conversion issues.
@@ -1520,6 +1533,8 @@ On POSIX these are thin wrappers around `getenv`/`setenv`. On Windows they call 
 - **macOS < 10.12**: defines a `clock_gettime` fallback using `gettimeofday`, plus `CLOCK_REALTIME` and `CLOCK_MONOTONIC` placeholders.
 - **Windows startup**: enables virtual terminal processing for stdout/stderr and sets binary file mode by default.
 - **Windows symbol gaps**: supplies inline patches for `strcasecmp`, `write`, `read`, `clock_gettime`, and `pwrite`; maps `O_*`/`S_*` constants, `fstat`/`stat`/`lseek`/`unlink`, and defines `PATH_MAX`.
+- **Windows positional writes**: `pwrite` waits for pending I/O, rejects negative offsets and non-seekable handles, and returns a short write for counts above `INT32_MAX`. It preserves the cursor by saving and restoring it. Serialize operations that share a Windows file description, including duplicated descriptors; the shim is not atomic against concurrent cursor changes. The offset range remains limited by the platform's `off_t` (32-bit on MSVC). Append-only native handles retain Windows append semantics.
+- **Windows file metadata**: `stat` and `fstat` use the paired `_stati64` / `_fstati64` interfaces for 64-bit file sizes; this does not widen `off_t`. No `O_TMPFILE` alias is supplied: Windows temporary files use exclusive random names with `O_TEMPORARY` instead.
 - **POSIX branch**: present but currently has no extra patches beyond the environment helpers.
 # Memory Primitives
 
@@ -1839,7 +1854,7 @@ Parameters:
 
 - `extern` — linkage prefix, e.g. `static` or `FIO_SFUNC`.
 - `name` — base name for all generated functions and internal state.
-- `reseed_log` — automatic reseed interval, `2^reseed_log` calls. Set to `0` for a fully deterministic stream.
+- `reseed_log` — automatic reseed interval, about every `2^reseed_log` calls. Set to `0` for a fully deterministic stream.
 - `seed_offset` — arbitrary offset added to the default seed constants.
 
 ### Non-Deterministic Mode
@@ -1848,9 +1863,9 @@ Parameters:
 FIO_DEFINE_RANDOM128_FN(static, my_rng, 5, 0x1234)
 ```
 
-When `reseed_log` is non-zero (and less than `64`), the generator calls `name_reseed()` automatically every `2^reseed_log` calls, mixing in timing data and the cycle counter. This makes the stream non-deterministic, and improves entropy.
+When `reseed_log` is non-zero (and less than `64`), the generator re-seeds itself automatically about every `2^reseed_log` calls. This makes the stream non-deterministic, and improves entropy.
 
-In this example, reseeding is set to `5`, resulting in reseeding every 32 calls (collecting new entropy every 4,096 bytes).
+In this example, reseeding is set to `5`, resulting in reseeding about every 32 calls.
 
 ## Generated API
 
@@ -1870,7 +1885,7 @@ Returns 128 pseudo-random bits. The return type is [`fio_u128`](./001%20vector%2
 uint64_t my_rng64(void);
 ```
 
-Returns 64 pseudo-random bits. Each call consumes half of a 128-bit result; a new 128-bit value is generated only every other call.
+Returns 64 pseudo-random bits.
 
 ### `my_rng_bytes`
 
@@ -1924,6 +1939,8 @@ Because `reseed_log` is `0`, the same seed always produces the same sequence.
 
 - Set `reseed_log = 0` for deterministic, repeatable output.
 - Set `reseed_log` to a practical value such as `31` for a non-deterministic stream that reseeds automatically.
+- The generated functions are thread-safe. Deterministic replay requires a single thread.
+- This is not a CSPRNG; use `fio_rand_bytes_secure` for secrets.
 - After `fork()`, call `name_reseed()` or register a wrapper that calls `name_on_fork()` with `pthread_atfork()` to avoid duplicated sequences in child processes.
 
 ## Testing
@@ -2446,16 +2463,16 @@ Extract 128-bit halves from a 256-bit value. `extracti128` uses `imm8 & 1`.
 #### `fio_fx86_256_sha512rnds2_epi64`, `fio_fx86_256_sha512msg1_epi64`, `fio_fx86_256_sha512msg2_epi64`
 
 ```c
-FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512rnds2_epi64(fio_fx86_m256i state1,
-                                                        fio_fx86_m256i state0,
-                                                        fio_fx86_m256i wk);
+FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512rnds2_epi64(fio_fx86_m256i dst,
+                                                        fio_fx86_m256i src,
+                                                        fio_fx86_m128i wk);
 FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512msg1_epi64(fio_fx86_m256i w0,
-                                                       fio_fx86_m256i w1);
+                                                       fio_fx86_m128i w1);
 FIO_IFUNC fio_fx86_m256i fio_fx86_256_sha512msg2_epi64(fio_fx86_m256i w0,
                                                        fio_fx86_m256i w1);
 ```
 
-Intel SHA-512 extension helpers using four 64-bit lanes.
+Intel SHA-512 extension helpers. `rnds2` takes {C,D,G,H} in `dst` and {A,B,E,F} in `src` (high to low lanes), with two W+K words in `wk`. `msg1` takes only the low qword of its 128-bit second operand.
 
 ### Shadowed Intrinsic Families
 
@@ -2851,7 +2868,7 @@ Creates a stack-allocated `fio_str_info_s` named `name` with `capacity` writable
   }
 ```
 
-Use this when a function needs a writable working buffer that normally fits on the stack but may be reallocated by downstream helpers.
+Use this when a function needs a writable working buffer that normally fits on the stack but may be reallocated by downstream helpers. `capacity` should be a compile-time constant: a runtime value creates an unchecked variable-length array, so never derive it from untrusted input.
 
 ### `FIO_STR_INFO_TMP_IS_REALLOCATED(name)`
 
@@ -2875,8 +2892,8 @@ These functions work on one code point at a time and do not check memory bounds.
 
 Controls whether the UTF-8 helpers may use branchy (`if`) fast paths.
 
-- **`1`** (default): ASCII-biased fast paths. Best when most input is ASCII.
-- **`0`**: Branchless, constant-time-ish paths. Better when input distribution is unpredictable and branch mispredictions are a concern.
+- **`1`** (default): fastest for real-world text, including text that mixes characters of different lengths.
+- **`0`**: branchless. Faster validation only when character lengths follow no pattern at all; decoding (`fio_utf8_read`) is considerably slower.
 
 Defined before including [`./000 core.h`](./000%20core.h) to override the default.
 
@@ -2920,6 +2937,16 @@ Returns the number of valid UTF-8 bytes used by the first character at `str`, va
 
 Returns `0` if `str` does not point to a valid UTF-8-encoded code point. Returns `1`–`4` for a valid character.
 
+Validation is strict (RFC 3629): overlong encodings, UTF-16 surrogates (`U+D800`–`U+DFFF`), and code points above `U+10FFFF` return `0`. Input must be NUL-terminated or padded, since a truncated character may be read up to its expected length. For raw, unterminated buffers, use `fio_utf8_char_len_bounded`.
+
+### `fio_utf8_char_len_bounded`
+
+```c
+unsigned fio_utf8_char_len_bounded(const void *str, size_t len);
+```
+
+Same as `fio_utf8_char_len`, but never reads past `len` bytes. Returns `0` when `len` is `0` or when the character is cut off by the end of the buffer. Use it for raw, unterminated buffers.
+
 ## Write Helper
 
 ### `fio_utf8_write`
@@ -2930,7 +2957,7 @@ unsigned fio_utf8_write(void *dest, uint32_t u);
 
 Writes the UTF-8 encoding of code point `u` to `dest`. Returns the number of bytes written (`0`–`4`).
 
-`u` is treated as described for `fio_utf8_code_len`: code points up to `0x1FFFFF` are encoded (including the non-Unicode range `0x110000`–`0x1FFFFF`), and higher values result in `0` bytes written.
+`u` is treated as described for `fio_utf8_code_len`: code points up to `0x1FFFFF` are encoded (including the non-Unicode range `0x110000`–`0x1FFFFF`), and higher values result in `0` bytes written. Exactly the returned number of bytes is written (nothing for a `0` return). Note that `fio_utf8_char_len` rejects the encodings of code points above `U+10FFFF` and of surrogates.
 
 The caller must ensure `dest` has room for up to 4 bytes. Typical use advances the destination pointer:
 
@@ -2948,7 +2975,7 @@ uint32_t fio_utf8_read(char **str);
 
 Decodes the first UTF-8 character at `*str` and returns its code point. Advances `*str` by the number of bytes consumed.
 
-Returns `0` if the byte at `*str` is not a valid UTF-8 start byte or continuation sequence.
+Returns `0` (and does not advance `*str`) if `*str` does not start a valid UTF-8 sequence, as defined by `fio_utf8_char_len`.
 
 ## Peek Helper
 
@@ -3312,7 +3339,9 @@ void fio_u2048_montgomery_mul(fio_u2048 *result, const fio_u2048 *a, const fio_u
                               const fio_u2048 *N, const fio_u2048 *N_dash);
 ```
 
-The multiplication uses `fio_math_mul` from [`./002 math.h`](./002%20math.h).
+`N` must be odd and `N_dash` must be `-N^-1 mod 2^bits`. Inputs must be below `N`; the result is `a * b * 2^-bits mod N`. The final reduction runs in constant time. Stack temporaries are not wiped; callers handling secrets should clear their own buffers.
+
+The multiplication uses `fio_math_mul` from [`./000 core.h`](./000%20core.h).
 
 ## Shuffle and Reduce on Native Arrays
 
@@ -3512,10 +3541,12 @@ These macros are defined in [`./001 header.h`](./001%20header.h) and are re-eval
 - **`FIO_MEMORY_DISABLE`** — Define to disable all custom facil.io allocators and force system `malloc`/`free` for temporary allocations.
 - **`FIO_MALLOC_TMP_USE_SYSTEM`** — Force the recursive allocator variant to use the system `realloc`/`free`. Useful when a custom `FIO_MEM_REALLOC` needs an allocation path that will not recurse back into facil.io.
 - **`FIO_MEM_REALLOC_` / `FIO_MEM_FREE_`** — Recursive-safe copies of `FIO_MEM_REALLOC`/`FIO_MEM_FREE`. Override these when the custom allocator itself needs to allocate or free memory without re-entering the override.
-- **`FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)`** — Reallocate with a minimum pointer alignment, **assigning** the result to `ptr` (save a copy first if failure must be recoverable). `alignment` of `0` selects the allocator default; non power-of-2 values are rounded down to a power of 2; effective alignment never drops below the current alignment of `ptr` nor below the allocator default. Routes to `fio_realloc_aligned` when the facil.io allocator is available, or to the system backends (`_aligned_realloc` on Windows, `posix_memalign`-based emulation on POSIX).
+- **`FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)`** — Reallocate with a minimum pointer alignment, **assigning** the result to `ptr` (save a copy first if failure must be recoverable). `alignment` of `0` selects the allocator default; non power-of-2 values are rounded down to a power of 2; effective alignment never drops below the current alignment of `ptr` nor below the allocator default. Routes to `fio_realloc_aligned` when the facil.io allocator is available, or to allocate-copy-free system backends (`_aligned_malloc` on Windows, `posix_memalign` on POSIX, checked over-allocation elsewhere). Without the facil.io allocator, the default is the larger of `_Alignof(long double)` and `sizeof(void *)`, not `sizeof(long double)`. Overflow in the portable backend returns `NULL` with `errno = ENOMEM`, leaving the old allocation intact.
 - **`FIO_MEM_FREE_ALIGNED(ptr, size)`** — Free a block obtained through `FIO_MEM_REALLOC_ALIGNED`. With the facil.io allocator this is simply `fio_free` (which accepts interior pointers); with the system backends it routes to `_aligned_free` on Windows or `free` on POSIX. Custom allocators that stash alignment bookkeeping near the returned pointer should override this pair together.
 - **`FIO_MEM_ALLOC_SIZE(size)`** — The usable bytes the allocator reserves for a `size` request (`fio_alloc_size`, or the identity function with the system allocator).
 - **`FIO_MEM_REALLOC_ALIGNED_` / `FIO_MEM_FREE_ALIGNED_`** — Recursive-safe copies of the aligned pair, mirroring `FIO_MEM_REALLOC_` / `FIO_MEM_FREE_`.
+
+**Aligned reallocation contract:** a non-`NULL` source must come from the same aligned allocator backend and remain live. `copy_len` must not exceed its readable, initialized bytes; the copy is limited by `new_size`, not by `old_size`. Default backends may ignore `old_size`, so it does not validate the source bounds. Save the old pointer before calling the assigning macro if allocation failure must be recoverable.
 
 ### Pointer tagging
 
@@ -3530,7 +3561,7 @@ These macros are defined in [`./001 header.h`](./001%20header.h) and let include
 - **`FIO_PTR_TAG_VALID_OR_GOTO(tagged_ptr, label)`** — Validates the tagged pointer and jumps to `label` if it fails validation.
 - **`FIO_PTR_TAG_GET_UNTAGGED(untagged_type, tagged_ptr)`** — Cast the untagged pointer to `untagged_type *`.
 
-Pointer tagging is used by dynamic-type wrappers (for example, FIOBJ) to distinguish object kinds without a separate type field.
+Pointer tagging is used by dynamic-type wrappers (for example, FIOBJ) to distinguish object kinds without a separate type field. For a pointer whose low bit is always zero, a matching tag/untag pair is `((uintptr_t)(p) | (uintptr_t)1)` and `((uintptr_t)(p) & ~(uintptr_t)1)`. Only clear reserved tag bits, preserve all other pointer bits, and make custom validation reject both `NULL` and a tagged `NULL`.
 
 ## See Also
 
@@ -3716,7 +3747,7 @@ Reads an unsigned binary number, with optional `0b` prefix.
 SFUNC uint64_t fio_atol_xbase(char **pstr, size_t base);
 ```
 
-Reads an unsigned number in any base up to 36.
+Reads an unsigned number in base 2-36. Other bases return 0 without consuming input. On overflow, sets `errno = E2BIG` and stops before the overflowing digit.
 
 #### `fio_ltoa8u`
 
@@ -3759,7 +3790,7 @@ FIO_IFUNC void fio_ltoa_xbase(char *dest,
                               size_t base);
 ```
 
-Writes an unsigned number in `base` (up to 36) using `digits` bytes plus NUL.
+Writes an unsigned number in `base` (2-36) using `digits` bytes plus NUL. Other bases write an empty string.
 
 ### Helpers
 
@@ -3825,7 +3856,7 @@ Returns the number of base-2 digits needed for an unsigned number, rounded up to
 FIO_SFUNC size_t fio_digits_xbase(uint64_t i, size_t base);
 ```
 
-Returns the number of digits needed for an unsigned number in `base` (must be < 65).
+Returns the number of digits needed for an unsigned number in `base` (2-36). Other bases return 0.
 
 #### `fio_u2i_limit`
 
@@ -3863,7 +3894,7 @@ SFUNC fio_u256 fio_u256_hex_read(char **pstr);
 SFUNC fio_u512 fio_u512_hex_read(char **pstr);
 ```
 
-Reads a hex string and initializes the corresponding wide integer. Updates `*pstr` past the consumed input.
+Reads a hex string (optional `0x` prefix) and initializes the corresponding wide integer. Updates `*pstr` to the first non-hex character. Digits beyond the integer's width keep only the least significant bits.
 
 #### `fio_u1024_hex_read` / `fio_u2048_hex_read` / `fio_u4096_hex_read`
 
@@ -3883,7 +3914,7 @@ SFUNC size_t fio_u256_hex_write(char *dest, const fio_u256 *u);
 SFUNC size_t fio_u512_hex_write(char *dest, const fio_u512 *u);
 ```
 
-Writes a wide integer as a hex string to `dest`. Returns bytes written excluding NUL.
+Writes a wide integer as a NUL-terminated hex string to `dest`. Returns bytes written excluding NUL.
 
 #### `fio_u1024_hex_write` / `fio_u2048_hex_write` / `fio_u4096_hex_write`
 
@@ -4231,7 +4262,7 @@ Finds an element or the place to insert it.
 FIO_IFUNC int array_name_reserve(array_name_s *a, imap_type min);
 ```
 
-Grows the backing storage to at least `min` slots. Returns `0` on success, `-1` on failure.
+Grows the backing storage to at least `min` slots (minimum 8). Returns `0` on success, `-1` on failure (allocation failure, or `min` exceeds what `imap_type` can index). Growth builds a new buffer, so the map is unchanged on failure.
 
 #### `array_name_rehash`
 
@@ -4239,7 +4270,7 @@ Grows the backing storage to at least `min` slots. Returns `0` on success, `-1` 
 FIO_IFUNC int array_name_rehash(array_name_s *a);
 ```
 
-Rebuilds the index map from the current array contents. Call after sorting or other position-changing operations. Returns `0` on success, `-1` on failure.
+Rebuilds the index map from the current array contents, compacting removed (invalid) elements. Call after sorting or other position-changing operations. Returns `0` on success, `-1` on failure (the index may then be incomplete).
 
 #### `array_name_set`
 
@@ -4250,6 +4281,8 @@ FIO_IFUNC array_type *array_name_set(array_name_s *a,
 ```
 
 Inserts or updates an element. If `overwrite` is zero and the key already exists, returns the existing element. Returns a pointer to the stored element or `NULL` on failure.
+
+Failure leaves the map unchanged. It occurs on allocation failure, when `imap_type` cannot index more elements, or when too many elements share a hash (a sparse map is not grown to resolve collisions).
 
 #### `array_name_get`
 
@@ -4266,6 +4299,8 @@ FIO_IFUNC int array_name_remove(array_name_s *a, array_type obj);
 ```
 
 Zeros the matching element and marks its index-map slot as freed. Returns `0` on success, `-1` if not found.
+
+Removal requires a zeroed element to be invalid; maps where it is valid (e.g., `FIO_IMAP_ALWAYS_VALID`) always return `-1`.
 
 ### Internal Seeker Types
 
@@ -4368,7 +4403,7 @@ Divides the `number_array_length`-word number `a` by `b`, storing the quotient i
 
 **Note:** not constant time. Uses binary long division, which is simple but not the fastest algorithm on earth.
 
-If `b` is zero, logs an error and fills both outputs with `0xFF`.
+Supports up to 1024 words (65,536 bits). If `b` is zero, or `number_array_length` exceeds 1024, logs an error and fills both outputs with `0xFF`.
 
 #### `fio_math_shr`
 
@@ -4379,7 +4414,7 @@ FIO_IFUNC void fio_math_shr(uint64_t *dest,
                             size_t number_array_length);
 ```
 
-Shifts `n` right by `right_shift_bits` and stores the result in `dest`.
+Shifts `n` right by `right_shift_bits` and stores the result in `dest`. Shifting by `number_array_length * 64` bits or more zeroes `dest`. `dest` may equal `n` (in-place), but must not otherwise overlap it.
 
 #### `fio_math_shl`
 
@@ -4390,7 +4425,7 @@ FIO_IFUNC void fio_math_shl(uint64_t *dest,
                             const size_t number_array_length);
 ```
 
-Shifts `n` left by `left_shift_bits` and stores the result in `dest`.
+Shifts `n` left by `left_shift_bits` and stores the result in `dest`. Shifting by `number_array_length * 64` bits or more zeroes `dest`. `dest` may equal `n` (in-place), but must not otherwise overlap it.
 
 #### `fio_math_inv`
 
@@ -4398,7 +4433,7 @@ Shifts `n` left by `left_shift_bits` and stores the result in `dest`.
 FIO_IFUNC void fio_math_inv(uint64_t *dest, uint64_t *n, size_t len);
 ```
 
-Two's-complement negation of the `len`-word number `n`.
+Two's-complement negation of the `len`-word number `n`, stored in `dest`. `dest` may equal `n` (in-place), but must not otherwise overlap it.
 
 #### `fio_math_msb_index`
 
@@ -4447,7 +4482,7 @@ int main(void) {
 
 A non-cryptographic pseudo-random generator plus RiskyHash and Stable Hash. The PRNG is seeded from system jitter (`getrusage`, clocks) and hashed with RiskyHash. It is faster and more random than typical `rand()` implementations, but **do not use it for cryptography** — use `fio_rand_bytes_secure` for that.
 
-RiskyHash is an ephemeral, non-cryptographic hash family that may change between releases. Stable Hash is frozen and safe for persistent data. RiskyHash 256/512 and HMAC variants are also provided.
+RiskyHash is an ephemeral, non-cryptographic hash family that may change between releases. Stable Hash is frozen and safe for persistent data. RiskyHash 256/512 come with keyed and HMAC variants.
 
 ### Pseudo-Random Functions
 
@@ -4493,7 +4528,23 @@ Use this for keys, nonces, and anything security-sensitive.
 SFUNC void fio_rand_reseed(void);
 ```
 
-Rotates the PRNG state with fresh entropy. Call after `fork` to avoid duplicated sequences.
+Rotates the PRNG state with fresh entropy. The PRNG also reseeds itself periodically.
+
+#### `fio_rand_on_fork`
+
+```c
+SFUNC void fio_rand_on_fork(void *is_null);
+```
+
+Reseeds the PRNG in a forked child, so it doesn't repeat the parent's sequence. The `FIO_CALL_IN_CHILD` state callback calls it automatically; call it yourself only when forking without facil.io's fork helpers.
+
+#### `fio_rand_reset`
+
+```c
+SFUNC void fio_rand_reset(void);
+```
+
+Resets the PRNG state to its default seed. Intended for tests; never use it for anything security-sensitive.
 
 ### Risky / Stable Hash
 
@@ -4554,7 +4605,9 @@ Writes a 128-bit Stable Hash into `dest` (16 bytes).
 SFUNC fio_u256 fio_risky256(const void *data, uint64_t len);
 ```
 
-256-bit RiskyHash. Based on the A3 (Zero-Copy ILP) design: two 512-bit states, 128 bytes per iteration, multiply-fold with cross-lane mixing. Returns a `fio_u256`.
+256-bit RiskyHash. Two 512-bit lanes, 128 bytes per iteration, multiply-fold rounds with round constants and cross-lane mixing. Each 64-byte block is absorbed with feed-forward (`v = round(v ^ block) + v`), so a chosen block can't erase earlier input. Returns a `fio_u256`.
+
+The hash has no seed: anyone can compute it, so it doesn't protect against chosen inputs (for example, hash flooding). Use `fio_risky256_keyed` with a secret key for attacker-influenced data. Outputs may change between versions; use Stable Hash for stored values.
 
 #### `fio_risky512`
 
@@ -4563,6 +4616,30 @@ SFUNC fio_u512 fio_risky512(const void *data, uint64_t len);
 ```
 
 512-bit RiskyHash. The first 256 bits are identical to `fio_risky256`; the rest come from an extra squeeze round.
+
+#### `fio_risky256_keyed`
+
+```c
+SFUNC fio_u256 fio_risky256_keyed(const void *key,
+                                  uint64_t key_len,
+                                  const void *data,
+                                  uint64_t len);
+```
+
+Keyed 256-bit RiskyHash. The key seeds all 16 state words (both lanes), together with the key length and the data length. Keys of up to 64 bytes are used as-is; longer keys are first hashed with `fio_risky512`. Single pass: it costs about one `fio_risky256` call plus one round.
+
+Use a key with at least 128 bits of secret entropy. Fit for fast keyed hashing and key derivation where the output stays private; it is not a vetted cryptographic primitive.
+
+#### `fio_risky512_keyed`
+
+```c
+SFUNC fio_u512 fio_risky512_keyed(const void *key,
+                                  uint64_t key_len,
+                                  const void *data,
+                                  uint64_t len);
+```
+
+Keyed 512-bit RiskyHash. The first 256 bits are identical to `fio_risky256_keyed` for the same key and data.
 
 #### `fio_risky256_hmac`
 
@@ -4573,9 +4650,15 @@ SFUNC fio_u256 fio_risky256_hmac(const void *key,
                                  uint64_t msg_len);
 ```
 
-RFC 2104 HMAC using `fio_risky256` as the hash, 64-byte block size. Keys longer than 64 bytes are hashed first. Securely zeros intermediates.
+Keyed MAC with a 32-byte tag, built as a nested keyed hash:
 
-**Note:** the underlying hash is non-cryptographic; standard HMAC security proofs do not apply. Use Blake2 for cryptographic HMAC.
+```
+tag = Keyed(key, outer, Keyed(key, inner, msg))
+```
+
+`inner` and `outer` are domain separation values, so the tag differs from `fio_risky256_keyed`. This is not RFC 2104 HMAC: both passes key both lanes, and the inner digest is never exposed. Key material, state and the inner digest are wiped before returning.
+
+**Note:** the underlying hash is non-cryptographic and unvetted. Use Blake2 or Poly1305 when a cryptographic MAC is required.
 
 #### `fio_risky512_hmac`
 
@@ -4586,7 +4669,7 @@ SFUNC fio_u512 fio_risky512_hmac(const void *key,
                                  uint64_t msg_len);
 ```
 
-Same construction as `fio_risky256_hmac`, but with `fio_risky512` and a 64-byte digest.
+Same construction as `fio_risky256_hmac`, with 512-bit inner and outer digests (64-byte tag).
 
 ### Example
 
@@ -4666,7 +4749,7 @@ typedef struct {
 
 - `sig` — signal number to watch.
 - `callback` — function to run; `NULL` ignores the signal.
-- `udata` — opaque pointer passed to the callback.
+- `udata` — borrowed opaque pointer passed to the callback; the module never frees it.
 - `propagate` — if true, call any previous handler after recording the signal.
 - `immediate` — if true, run the callback inside the signal handler; otherwise defer to `fio_signal_review`.
 
@@ -4680,9 +4763,15 @@ SFUNC int fio_signal_monitor(fio_signal_monitor_args_s args);
   fio_signal_monitor((fio_signal_monitor_args_s){__VA_ARGS__})
 ```
 
-Starts monitoring `sig`. Updating an existing monitor replaces its callback and `udata`. Returns `0` on success, `-1` on error.
+Starts monitoring positive signal number `sig`. Updating an existing monitor replaces its callback and borrowed `udata`, retaining any pending deferred delivery. Returns `0` on success, `-1` for an invalid signal, exhausted capacity, an OS error, or unsupported propagation. A failed update leaves the monitor unchanged.
 
-**Note:** `immediate` callbacks must be async-signal-safe. Most code is not.
+Register, update and forget from one thread at phase boundaries, not concurrently with signal delivery. Call `fio_signal_review` from one thread. Neither updates nor removal waits for an immediate callback already running in another thread.
+
+**Note**: Immediate callbacks and propagated handlers run inside the signal handler: they must be async-signal-safe and must not call the signal monitoring API. Most code is not async-signal-safe. Do not use this API to recover from synchronous faults such as an invalid memory access.
+
+On POSIX, propagation forwards the original `siginfo_t` and context to `SA_SIGINFO` handlers, and preserves the saved handler's mask, restart, alternate-stack and child-notification flags. `SIG_DFL` and `SIG_IGN` are not called. Propagation to a saved action reported as `SA_RESETHAND` returns `-1`; its one-shot disposition cannot be preserved by direct forwarding. Do not request propagation to one-shot handlers on systems that omit this flag when querying `sigaction`. Serialize external `signal`/`sigaction` changes to the same signal with this API.
+
+On Windows, the catcher reinstalls itself before callbacks, preserving the saved previous handler for repeated propagation. If reinstallation fails, it skips callbacks. The CRT's reset-before-entry window means this wrapper cannot guarantee lossless delivery. `SIGFPE` is not rearmed automatically, as required by the CRT.
 
 #### `fio_signal_review`
 
@@ -4690,7 +4779,9 @@ Starts monitoring `sig`. Updating an existing monitor replaces its callback and 
 SFUNC int fio_signal_review(void);
 ```
 
-Calls deferred callbacks for any signals that fired since the last review. Returns the number of callbacks invoked.
+Calls deferred callbacks for pending signals and returns the number of callbacks actually invoked. Multiple deliveries to one monitor coalesce into one pending callback; this is not a signal counter. Pending state is consumed atomically, so delivery racing review remains pending for this or the next review. A `NULL` callback never queues or counts a callback.
+
+Use one review thread. Review callbacks may update or forget monitors. Complete review before releasing borrowed callback data.
 
 #### `fio_signal_forget`
 
@@ -4698,7 +4789,7 @@ Calls deferred callbacks for any signals that fired since the last review. Retur
 SFUNC int fio_signal_forget(int sig);
 ```
 
-Stops monitoring `sig` and restores the default handler. Returns `0` on success, `-1` on error.
+Stops monitoring `sig` and discards pending delivery. If the module's handler is still installed, the handler that was active before the first `fio_signal_monitor` call for `sig` is restored (including its POSIX mask and flags). If another handler replaced the module's handler since, the OS state is left untouched. Returns `0` on success, `-1` for an unknown signal or OS error. On OS failure, the watcher and pending state remain intact. Successful removal releases the watcher's capacity for reuse. It does not wait for callbacks on other threads; do not remove a monitor while delivery is in progress.
 
 ### Example
 
@@ -4707,7 +4798,7 @@ Stops monitoring `sig` and restores the default handler. Returns `0` on success,
 #define FIO_LOG
 #include "fio-stl.h"
 
-static volatile int running = 1;
+static int running = 1;
 
 static void on_sigint(int sig, void *udata) {
   (void)sig; (void)udata;
@@ -4716,21 +4807,19 @@ static void on_sigint(int sig, void *udata) {
 }
 
 int main(void) {
-  fio_signal_monitor(.sig = SIGINT,
-                     .callback = on_sigint,
-                     .udata = NULL);
+  if (fio_signal_monitor(.sig = SIGINT, .callback = on_sigint))
+    return 1;
 
   while (running) {
     fio_signal_review();
     /* do work */
   }
 
-  fio_signal_forget(SIGINT);
-  return 0;
+  return fio_signal_forget(SIGINT) ? 1 : 0;
 }
 ```
 
-------------------------------------------------------------
+---
 # Sorting
 
 ```c
@@ -4792,7 +4881,7 @@ Swaps two elements. Override if your type needs a custom swap.
 #endif
 ```
 
-Partition size below which quicksort switches to insert-sort.
+Partition size below which quicksort switches to insert-sort. Must be 3 or more (smaller values fail to compile).
 
 ### API Functions
 
@@ -4811,7 +4900,7 @@ Sorts `array[0..count-1]` in ascending order. Currently dispatches to quicksort.
 SFUNC void FIO_NAME(FIO_SORT_NAME, qsort)(FIO_SORT_TYPE *array, size_t count);
 ```
 
-Non-recursive quicksort with median-of-three pivot selection. Falls back to insert-sort for small partitions.
+Non-recursive introsort: quicksort with median-of-three pivot selection, insert-sort for small partitions, and heap sort for partitions that exceed a `2*log2(count)` depth limit. Worst case is O(n log n) comparisons, even for crafted input. Not stable.
 
 #### `FIO_SORT_NAME_isort`
 
@@ -4860,7 +4949,7 @@ A thin, portable wrapper over POSIX pthreads and Windows threads. Provides threa
 /* Windows */ typedef uintptr_t fio_thread_t;
 ```
 
-Thread handle. On Windows this is the numeric thread ID; the handle is opened transiently only when needed.
+Thread identity. On Windows this remains a numeric thread ID; the implementation retains the actual OS handle for every created, joinable thread until `fio_thread_join` or `fio_thread_detach` succeeds. Join/detach each successfully created thread exactly once. Do not join and detach the same thread concurrently. `fio_thread_current` does not allocate or acquire ownership.
 
 #### `fio_thread_pid_t`
 
@@ -4939,7 +5028,9 @@ Static initializer for a mutex.
 FIO_IFUNC fio_thread_pid_t fio_thread_fork(void);
 ```
 
-Behaves like POSIX `fork`. On Windows logs an error and returns `-1`.
+Behaves like POSIX `fork`. On native Windows logs an error, sets `errno = ENOSYS`, and returns `(fio_thread_pid_t)-1`. Because the Windows PID type is unsigned, compare against the cast sentinel, not `< 0`.
+
+After a POSIX fork in a multithreaded process, only async-signal-safe operations are safe in the child until `exec`; inherited locks can remain owned by vanished threads.
 
 #### `fio_thread_getpid`
 
@@ -4955,7 +5046,7 @@ Behaves like POSIX `getpid`.
 FIO_IFUNC int fio_thread_kill(fio_thread_pid_t pid, int sig);
 ```
 
-Behaves like POSIX `kill`.
+Behaves like POSIX `kill` on POSIX. Native Windows supports positive PIDs with signal `0` (liveness check) or `SIGTERM`/`SIGINT` (termination), plus `SIGKILL` if defined. Unsupported signals return `-1` with `ENOSYS`; invalid signal numbers use `EINVAL`. Windows group/broadcast PID forms `0` and `(fio_thread_pid_t)-1` return `ENOSYS` rather than targeting the calling process.
 
 #### `fio_thread_waitpid`
 
@@ -4965,7 +5056,9 @@ FIO_IFUNC int fio_thread_waitpid(fio_thread_pid_t pid,
                                  int options);
 ```
 
-Behaves like POSIX `waitpid`.
+Behaves like POSIX `waitpid` on POSIX. Native Windows supports a positive child PID or `(fio_thread_pid_t)-1` and options `0` or `WNOHANG`. Returns the selected child's PID on success, `0` for a live-child poll, or `-1` on error. A `0` or error result leaves `stat_loc` unchanged. Unknown/unsupported option bits set `EINVAL`; PID `0` sets `ENOSYS`; PIDs above `INT_MAX` cannot fit the return type and set `EOVERFLOW`.
+
+**Note**: Windows discovers children through a process snapshot; it does not implement POSIX zombie retention or reaping. Already-exited children can disappear before discovery, and snapshots do not guarantee identity across PID reuse. Blocking any-child waits select a snapshot child, not necessarily the first child to exit. Retain the `CreateProcess` handle and use native waits when durable process identity or exit status is required.
 
 ### Thread Functions
 
@@ -4977,7 +5070,7 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
                                 void *arg);
 ```
 
-Starts a new thread running `fn(arg)`. Returns `0` on success, `-1` on failure.
+Starts a new thread running `fn(arg)`. Returns `0` on success, `-1` on failure with `errno` identifying the error. `t` must point to writable storage and `fn` must be non-NULL. Failure transfers no ownership; do not use the output as a thread identity. Success creates one join/detach obligation. Keep `arg` and any data it references alive until the callback stops using them. Callback return values are discarded. Windows uses a CRT-compatible startup trampoline, including on 32-bit builds.
 
 #### `fio_thread_join`
 
@@ -4985,7 +5078,7 @@ Starts a new thread running `fn(arg)`. Returns `0` on success, `-1` on failure.
 FIO_IFUNC int fio_thread_join(fio_thread_t *t);
 ```
 
-Waits for the thread to finish.
+Waits for a successfully created, joinable thread to finish. Returns `0` on completion and nonzero on error. An error is **not** evidence that the thread stopped: retain its argument/buffer lifetimes. Windows retains ownership after a wait error so the operation can be retried; it releases the OS handle and zeroes `*t` only on success. POSIX returns the native `pthread_join` error number. Joining oneself, joining a detached thread, and concurrent joins/detaches of the same thread are unsupported.
 
 #### `fio_thread_detach`
 
@@ -4993,7 +5086,7 @@ Waits for the thread to finish.
 FIO_IFUNC int fio_thread_detach(fio_thread_t *t);
 ```
 
-Detaches the thread so resources are reclaimed automatically.
+Detaches a successfully created, joinable thread so its resources can be reclaimed without joining. Returns `0` on success, nonzero on error. On Windows this closes the retained joinable handle and zeroes `*t`; on POSIX it returns the native `pthread_detach` result. Detach does not wait for callback completion: keep callback data alive independently.
 
 #### `fio_thread_exit`
 
@@ -5051,7 +5144,7 @@ Returns the current thread's priority, or `FIO_THREAD_PRIORITY_ERROR` on failure
 FIO_SFUNC int fio_thread_priority_set(fio_thread_priority_e pr);
 ```
 
-Sets the current thread's priority. Returns `0` on success, `-1` on error.
+Sets the current thread's priority. Returns `0` on success, `-1` on error. Values outside `FIO_THREAD_PRIORITY_LOWEST` through `FIO_THREAD_PRIORITY_HIGHEST`, including `FIO_THREAD_PRIORITY_ERROR`, fail with `errno = EINVAL`. OS policy/permissions can reject valid priorities; POSIX preserves the native error in `errno`.
 
 ### Mutex Functions
 
@@ -5069,7 +5162,7 @@ Initializes a mutex. You can also use `FIO_THREAD_MUTEX_INIT` for static initial
 FIO_IFUNC int fio_thread_mutex_lock(fio_thread_mutex_t *m);
 ```
 
-Locks `m`, blocking if necessary.
+Locks `m`, blocking if necessary. Returns `0` on success, `-1` on error; POSIX preserves the native error in `errno`.
 
 #### `fio_thread_mutex_trylock`
 
@@ -5085,7 +5178,7 @@ Tries to lock `m` without blocking. Returns `0` on success.
 FIO_IFUNC int fio_thread_mutex_unlock(fio_thread_mutex_t *m);
 ```
 
-Unlocks `m`.
+Unlocks `m`. Returns `0` on success, `-1` on error; POSIX preserves the native error in `errno`.
 
 #### `fio_thread_mutex_destroy`
 
@@ -5122,7 +5215,7 @@ FIO_IFUNC int fio_thread_cond_timedwait(fio_thread_cond_t *c,
                                         size_t milliseconds);
 ```
 
-Waits up to `milliseconds`. Returns `0` if signaled, non-zero on timeout/error.
+Waits up to `milliseconds`, with the same mutex and predicate-loop requirements as `fio_thread_cond_wait`. Returns `0` on wake (which can be spurious), nonzero on timeout/error. POSIX computes an absolute `CLOCK_REALTIME` deadline, preserving fractional precision; clock failure returns its error code without waiting, and an unrepresentable deadline returns `EOVERFLOW`. Realtime clock adjustments can alter the elapsed wait. Windows clamps durations at `INFINITE - 1` milliseconds, the largest finite OS wait, so a finite duration never wraps or becomes `INFINITE`. The mutex remains held on pre-wait validation/clock failures.
 
 #### `fio_thread_cond_signal`
 
@@ -5148,6 +5241,18 @@ FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c);
 
 Destroys `c`.
 
+### Multi-threaded Copy
+
+#### `fio_thread_memcpy`
+
+```c
+FIO_SFUNC size_t fio_thread_memcpy(void *restrict dest,
+                                   const void *restrict src,
+                                   size_t bytes);
+```
+
+Copies `bytes` between valid, non-overlapping buffers, returning the number of participating threads (including the caller). Both buffers must remain valid for the call. Small copies run in the caller; large copies use up to `FIO_MEMCPY_THREADS` threads (default `8`). Creation failures fall back to copying the remaining bytes in the caller. A worker join failure is fatal: returning while a worker might still access stack state or buffers would be unsafe. This is not a general-purpose performance replacement for a tuned single-threaded copy; benchmark your workload.
+
 ### Example
 
 ```c
@@ -5169,10 +5274,16 @@ static void *worker(void *arg) {
 
 int main(void) {
   fio_thread_t t1, t2;
-  fio_thread_create(&t1, worker, NULL);
-  fio_thread_create(&t2, worker, NULL);
-  fio_thread_join(&t1);
-  fio_thread_join(&t2);
+  if (fio_thread_create(&t1, worker, NULL))
+    return 1;
+  if (fio_thread_create(&t2, worker, NULL)) {
+    if (fio_thread_join(&t1))
+      abort(); /* do not continue without establishing worker completion */
+    fio_thread_mutex_destroy(&lock);
+    return 1;
+  }
+  if (fio_thread_join(&t1) || fio_thread_join(&t2))
+    abort();
   printf("counter: %d\n", counter);
   fio_thread_mutex_destroy(&lock);
   return 0;
@@ -5214,12 +5325,13 @@ Parsed URL components. Empty components have `.buf == NULL` and `.len == 0`. Str
 typedef struct {
   fio_buf_info_s key;
   fio_buf_info_s cert;
+  fio_buf_info_s trust;
   fio_buf_info_s pass;
   bool tls;
 } fio_url_tls_info_s;
 ```
 
-TLS material extracted from scheme or query parameters.
+TLS material extracted from scheme or query parameters. Slices borrow the input buffer; keep it alive while using them. `trust` names a CA file or the system trust store (`sys` or `system`).
 
 #### `fio_url_query_each_s`
 
@@ -5248,7 +5360,9 @@ Parses `url` of length `len` into components. Accepts many shapes:
 - `user:password@host:port/path?query#target`
 - `scheme://user:password@host:port/path?query#target`
 
-Invalid input produces unpredictable results — the parser does not validate.
+Invalid input produces unpredictable results — the parser does not validate. Input need not be NUL terminated. A zero length returns empty components and permits `url == NULL`; otherwise supply at least `len` readable bytes.
+
+Component scans stop at ASCII control bytes (0–31). Spaces and bytes 128–255 are preserved without UTF-8 validation or decoding, independent of whether `char` is signed.
 
 **Note:** `file`, `unix`, and `priv` schemes are treated as file paths; the parser puts the whole remainder into `path` and clears host/port/user/password.
 
@@ -5258,7 +5372,11 @@ Invalid input produces unpredictable results — the parser does not validate.
 SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u);
 ```
 
-Detects TLS from scheme or query. Implicit TLS schemes include `wss`, `https`, `sses`, `ssse`, `tcps`, `stcp`, `tls`, `ssl`, `udps`, `sudp`. Explicit TLS is enabled by query keys `tls`, `key`, `cert`, `pass`, or `password`.
+Detects TLS from scheme or query. Implicit TLS schemes include `wss`, `https`, `sses`, `ssse`, `tcps`, `stcp`, `tls`, `ssl`, `udps`, `sudp`. Scheme and query-key matching is case-insensitive.
+
+Query keys `tls` or `ssl` enable TLS. A nonempty value other than `1` or `true` supplies both key and certificate. A nonempty `key` and `cert` pair also enables TLS; `pass` or `password` supplies its optional passphrase. A nonempty `trust` value enables TLS independently. `key`, `cert`, or passphrase parameters alone do not enable TLS.
+
+Input slices need no trailing NUL or padding. Returned slices borrow the input buffer. Debug diagnostics report only TLS status and material-presence flags, never material contents.
 
 ### Macros
 
@@ -5329,7 +5447,7 @@ Decodes a single Markup Language entity (`&name;`, `&#digits;`, `&#xhex;`) into 
 SFUNC size_t fio_entity(char *dest, const char *src, size_t len);
 ```
 
-Decodes the entity starting at `src` (length `len`). Writes the UTF-8 result to `dest`, which must be at least 8 bytes. A NUL terminator is written only if the result is shorter than 8 bytes.
+Decodes the entity starting at `src` (length `len`). Reads only within that source window; no NUL terminator or extra readable guard byte is required. Writes the UTF-8 result to `dest`, which must be at least 8 bytes. A NUL terminator is written only if the result is shorter than 8 bytes.
 
 **Returns:** the number of bytes written (excluding NUL), or `0` if `src` does not start with a valid entity.
 
@@ -5339,7 +5457,11 @@ Supported forms:
 - Decimal: `&#digits;`
 - Hex: `&#xhex;` or `&#Xhex;`
 
-`&#0;` is replaced with the Unicode replacement character (`U+FFFD`). Code points above `0x10FFFF` are rejected.
+Numeric forms require at least one digit and a semicolon within `len`. Signs, whitespace, underscores, and extra prefixes are rejected, regardless of the number parser's divider setting. Overflow and code points above `0x10FFFF` are rejected.
+
+Zero and surrogate code points (`U+D800`–`U+DFFF`) are replaced with the Unicode replacement character (`U+FFFD`). Named entities use ASCII letter case folding; digits must match exactly. Invalid or unsupported input returns `0` without changing `dest`.
+
+This is a limited entity decoder, not a complete HTML5 or XML entity parser.
 
 ### Example
 
@@ -5474,7 +5596,7 @@ Opens `filename` with POSIX `open` semantics. If `filename` starts with `"~/"` (
 SFUNC int fio_filename_tmp(void);
 ```
 
-Creates an anonymous temporary file and returns its descriptor. Tries `TMPDIR`, `TMP`, `TEMP`, `P_tmpdir`, then the current directory. On Linux it attempts `O_TMPFILE` first; otherwise it builds a name prefixed with `facil_io_tmp_` and opens with `O_CREAT | O_EXCL`. On POSIX systems the name is unlinked right after the file is opened; on Windows the file is opened with delete-on-close (`O_TEMPORARY`). Either way, the file is removed once the descriptor is closed (or the process exits), so no temporary files are left behind.
+Creates a temporary file and returns its descriptor. Uses the first defined environment value among `TMPDIR`, `TMP`, and `TEMP`, otherwise `P_tmpdir` when available; an empty or overlong value falls back to the current directory. On Linux it attempts `O_TMPFILE` first; otherwise it builds a name prefixed with `facil_io_tmp_` and opens with `O_CREAT | O_EXCL`, owner-only permissions. On POSIX, success guarantees no name: if unlinking fails, the descriptor is closed and the function returns `-1` with the unlink error (an empty named file may remain). On Windows, delete-on-close (`O_TEMPORARY`) removes the file when its descriptor closes or the process exits; the name may remain until then.
 
 **Returns:** file descriptor on success, `-1` on error.
 
@@ -5490,9 +5612,11 @@ Overwrites `filename` with `len` bytes from `buf`, atomically replacing any exis
 
 The data is written to a new sibling file in the target's folder (`<filename>.fio-tmp-<random>`, opened with `O_CREAT | O_EXCL`, mode `0666` minus the `umask`), flushed to storage (`fsync`; `_commit` on Windows) and renamed over `filename` (`rename`; `MoveFileExA` with `MOVEFILE_REPLACE_EXISTING` on Windows). A leading `"~/"` (or `"~\\"` on Windows) is expanded exactly as by `fio_filename_open`. An empty buffer (`len == 0`) creates an empty file.
 
+**Metadata:** this replaces the inode rather than modifying it. Existing ownership, permissions, ACLs, and extended attributes are not preserved. The new file receives creation-time metadata (including inherited ACLs); for example, an existing POSIX `0600` file can become `0644` under `umask 022`. Use these save helpers only where new-file metadata is appropriate, not to update a file whose access restrictions must be retained.
+
 **Durability:** exactly one `fsync` per save, on the new file before the rename. This makes the replace atomic across crashes: after a crash, `filename` holds either the old or the complete new content, never a partial or empty file. The folder isn't `fsync`ed (it would cost a second blocking call; `syncfs` flushes the whole file system), so the rename itself may not survive a crash (or power loss) right after the save returns: `filename` then still holds the previous version (or doesn't exist, if it was new). Call `fsync` on the folder yourself if you need the rename to be durable.
 
-**Returns:** `0` on success, `-1` on error (`errno` is preserved from the failing call; `EINVAL` for a missing `filename`, or `buf == NULL` with `len > 0`). On error, any existing `filename` is untouched and the sibling file is removed. On Windows, a failed `MoveFileExA` maps `GetLastError()` to `errno`: `ENOENT` (file / path not found), `EACCES` (access denied), `EBUSY` (sharing / lock violation), `EEXIST`, `ENOSPC` (disk full), `EXDEV` (not the same device), otherwise `EIO`.
+**Returns:** `0` on success, `-1` on error (`errno` is preserved from the failing call; `EINVAL` for a missing `filename`, or `buf == NULL` with `len > 0`). On error, any existing `filename` is untouched. Sibling cleanup is attempted; if cleanup also fails, a warning is logged and the sibling may remain. `errno` still reports the primary save error. On Windows, a failed `MoveFileExA` maps `GetLastError()` to `errno`: `ENOENT` (file / path not found), `EACCES` (access denied), `EBUSY` (sharing / lock violation), `EEXIST`, `ENOSPC` (disk full), `EXDEV` (not the same device), otherwise `EIO`.
 
 **Note:** uses fixed size stack buffers (zero allocations); over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`). `fio_fd_save` does the same with a file descriptor as the source.
 
@@ -5519,9 +5643,9 @@ Removes the file / link or folder at `path`, abstracting OS differences (`unlink
 - `folder` - set to allow removal of an empty folder (like `rmdir`)
 - `recursive` - set to remove a folder and all of its content (like `rm -r`); implies `folder`. If `path` isn't a folder, the flag is ignored and `path` is removed as a file / link
 
-**Returns:** `0` on success, `-1` on error. Recursive removal stops on the first error (some content may remain). Uses a fixed size stack buffer (zero allocations); over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+**Returns:** `0` on success, `-1` on error. Recursive removal stops on the first error (some content may remain). Uses a fixed size path buffer; over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`). Directory enumeration uses OS resources per depth, including libc directory-stream buffers on POSIX.
 
-**Note:** links (symlinks / reparse points) are removed, never followed into.
+**Note:** links at the final component and within the removed tree (symlinks / reparse points) are removed, never followed into, including paths with trailing separators. POSIX traversal holds directory descriptors and opens children with `O_NOFOLLOW`; Windows traversal holds non-delete-shared, reparse-safe directory handles. Concurrent substitution can fail the operation. Parent path components use normal OS resolution: this is not a path confinement API. Control the containing directory when the identity of the entry being removed must remain fixed.
 
 **Example:**
 
@@ -5690,7 +5814,7 @@ Splits a NUL-terminated path into folder, basename, and extension without copyin
 SFUNC fio_filename_s fio_filename_parse2(const char *filename, size_t len);
 ```
 
-Same as `fio_filename_parse`, but reads at most `len` bytes. Use when the input is not NUL-terminated.
+Same as `fio_filename_parse`, but reads at most `len` bytes and stops at an earlier NUL. Use when the input is not NUL-terminated. `len == 0` returns an empty result without reading `filename`; `filename == NULL` also returns an empty result.
 
 ### File Search
 
@@ -5931,8 +6055,8 @@ The parser's internal checks are not identical for every callback:
 - `fio_http1_on_header` during chunked trailers is passed through; negative
   values become parse errors and positive values stop the current parse as
   incomplete.
-- `fio_http1_on_expect` is special: any non-zero return rejects the expectation,
-  resets the parser, and stops the current parse without calling
+- `fio_http1_on_expect` is special: any non-zero return rejects the message as
+  a parse error (`FIO_HTTP1_PARSER_ERROR`) without calling
   `fio_http1_on_complete`.
 
 All `fio_buf_info_s` values point into the `buf` memory passed to
@@ -5984,9 +6108,11 @@ static int fio_http1_on_status(size_t istatus,
 For response lines, the parser calls `fio_http1_on_version` first and then
 `fio_http1_on_status`.
 
-`istatus` is parsed from the numeric status token. `status` is the remaining
-status text slice after the numeric token. The version slice is clamped to at
-most 14 bytes.
+`istatus` is parsed from the numeric status token, which must be exactly three
+digits (`100`-`999`); anything else is rejected. `status` is the reason phrase
+after the numeric token. It may be empty (`.len == 0`): both `HTTP/1.1 200 ` and
+`HTTP/1.1 200` (no SP) are accepted. The version slice is clamped to at most
+14 bytes.
 
 The parser decides whether the first line is a response by checking whether the
 second token starts with a decimal digit.
@@ -6056,7 +6182,8 @@ smuggling):
   followed by any other `transfer-encoding` line), a repeated `chunked`
   coding (`chunked, chunked`), malformed separators before the final
   `chunked` token, a `content-length` header, and requests using `GET`,
-  `HEAD`, or `OPTIONS`.
+  `HEAD`, or `OPTIONS`. The final `chunked` must be a whole list element:
+  `gzip, chunked` is accepted, `gzip chunked` or `xchunked` are rejected.
 
 Requests must carry exactly one `host` header, as required by RFC 9112 §3.2:
 
@@ -6068,8 +6195,10 @@ Requests must carry exactly one `host` header, as required by RFC 9112 §3.2:
 - responses aren't affected. The `host` header itself is passed to
   `fio_http1_on_header`.
 
-`expect` is special when its value is exactly `100-continue`. Any other
-`Expect` value is rejected.
+In requests, `expect` is special when its value is exactly `100-continue`. Any
+other `Expect` value is rejected. `Expect` is a request header (RFC 9110
+§10.1.1): in responses it's forwarded to `fio_http1_on_header` unchanged and
+`fio_http1_on_expect` is never called.
 
 ### Messages Without a Body
 
@@ -6105,8 +6234,11 @@ requires a post-header decision and a body may follow (a `Content-Length` body
 or `transfer-encoding: chunked`). It is not called for messages that cannot
 carry a body (e.g., `GET` / `HEAD` / `OPTIONS` or a zero `Content-Length`),
 since there is nothing to continue (RFC 9110 §10.1.1).
-Return `0` to continue into the body / completion flow. Return non-zero to reset
-the parser and stop the current parse without calling `fio_http1_on_complete`.
+Return `0` to continue into the body / completion flow. Return non-zero to
+reject the message: `fio_http1_parse` returns `FIO_HTTP1_PARSER_ERROR` without
+calling `fio_http1_on_complete`. The client may send the declared body anyway
+(RFC 9110 §10.1.1), so the parser never reads it as the next message; send any
+final response, then close the connection.
 
 ### Body Chunks
 
@@ -6146,8 +6278,9 @@ Details worth keeping in mind:
 - The parser accepts `\n` line endings and handles an optional preceding `\r`.
 - Chunk size lines are hexadecimal, capped by the implementation, and do not
   support chunk extensions.
+- Chunk data must be followed by CRLF (or a bare LF); anything else is rejected.
 - A zero-size chunk either completes immediately when followed by an empty line
-  or enters trailer parsing.
+  (CRLF or LF) or enters trailer parsing.
 
 ---
 
@@ -6271,9 +6404,11 @@ available buffer length.
 #include "fio-stl.h"
 ```
 
-A non-allocating, streaming, callback-based `multipart/form-data` parser. It finds parts, extracts `Content-Disposition` and `Content-Type`, then calls your callbacks for each field or file chunk. Implemented in [`./004 multipart.h`](./004%20multipart.h).
+A non-allocating, callback-based `multipart/form-data` parser. It reports each part once, complete, with `Content-Disposition` and `Content-Type` extracted: a regular field calls `on_string`, a file calls `on_file`. Implemented in [`./004 multipart.h`](./004%20multipart.h).
 
-The parser does not decode transfer encodings or unescape headers — it just slices the original buffer into `fio_buf_info_s` ranges.
+The parser doesn't decode transfer encodings or unescape headers. It slices the original data into `fio_buf_info_s` ranges (no copies), borrowed only during the callback.
+
+Data can be parsed all at once or fed block by block. The parser state keeps a copy of the boundary and how far the pending part was searched, so bytes are never searched twice and only one (incomplete) part is kept in memory at a time.
 
 ### Types
 
@@ -6281,153 +6416,109 @@ The parser does not decode transfer encodings or unescape headers — it just sl
 
 ```c
 typedef struct {
-  void *(*on_field)(void *udata,
-                    fio_buf_info_s name,
-                    fio_buf_info_s value,
-                    fio_buf_info_s content_type);
-  void *(*on_field_start)(void *udata,
-                          fio_buf_info_s name,
-                          fio_buf_info_s content_type);
-  int (*on_field_data)(void *udata, void *field_ctx, fio_buf_info_s data);
-  void (*on_field_end)(void *udata, void *field_ctx);
-  void *(*on_file_start)(void *udata,
-                         fio_buf_info_s name,
-                         fio_buf_info_s filename,
-                         fio_buf_info_s content_type,
-                         fio_buf_info_s headers);
-  int (*on_file_data)(void *udata, void *file_ctx, fio_buf_info_s data);
-  void (*on_file_end)(void *udata, void *file_ctx);
-  void (*on_error)(void *udata);
+  int (*on_string)(void *udata,
+                   fio_buf_info_s key,
+                   fio_buf_info_s value,
+                   fio_buf_info_s content_type);
+  int (*on_file)(void *udata,
+                 fio_buf_info_s key,
+                 fio_buf_info_s filename,
+                 fio_buf_info_s content_type,
+                 fio_buf_info_s headers,
+                 fio_buf_info_s data);
 } fio_multipart_parser_callbacks_s;
 ```
 
-Callback table. All callbacks are optional; unset ones become no-ops.
+Callback table. Both callbacks are optional: a NULL callback is replaced by a no-op that skips its parts, which are still validated.
 
 **Members:**
-- `on_field` - called for regular form fields (no `filename`). Ignored if `on_field_start` is provided.
-- `on_field_start` - optional streaming field start. If set, `on_field` is ignored and `on_field_data` / `on_field_end` are used instead.
-- `on_field_data` - called with a field data chunk. Return non-zero to abort.
-- `on_field_end` - called when a streaming field ends.
-- `on_file_start` - called for any part with a `filename` attribute,
-  including `filename=""` (non-NULL `filename.buf`, zero `filename.len`).
-  `headers` borrows the raw part headers, excluding the terminating
-  `\r\n\r\n`; it is valid only during the call. Returns a context pointer
-  for this file. An empty filename is never a field; consumers may skip it
-  by returning `NULL`.
-- `on_file_data` - called with a file data chunk. Return non-zero to abort.
-- `on_file_end` - called when a file upload ends.
-- `on_error` - called on parse error (optional).
+- `on_string` - a complete regular form field (no `filename` attribute).
+- `on_file` - a complete file part: any part with a `filename` attribute, including `filename=""` (non-NULL `filename.buf`, zero `filename.len`). `headers` holds the raw part headers, excluding the terminating `\r\n\r\n`; `data` holds the whole file.
+
+A missing `Content-Type` has a NULL `buf`. All arguments are borrowed only during the call. A non-zero return value aborts parsing and is returned unchanged in `err` (opaque, like the JSON parser's callback errors). Incomplete, truncated or malformed parts never reach a callback.
+
+#### `fio_multipart_s`
+
+```c
+typedef struct { /* private */ } fio_multipart_s;
+```
+
+The parser state, set by `fio_multipart_init`. It holds a copy of the boundary (so the caller's boundary needn't stay valid) and how far the pending part was searched. Not thread-safe; callbacks must not use the same parser.
 
 #### `fio_multipart_result_s`
 
 ```c
 typedef struct {
   size_t consumed;
-  size_t field_count;
-  size_t file_count;
   int err;
 } fio_multipart_result_s;
 ```
 
-Parse result.
-
 **Members:**
-- `consumed` - bytes consumed from the input buffer
-- `field_count` - regular form fields parsed in this call
-- `file_count` - file uploads parsed in this call
-- `err` - `0` success, `-1` error, `-2` need more data
+- `consumed` - bytes consumed: complete parts (and, once complete, all remaining data). Without an error, `consumed == 0` means more data is required.
+- `err` - `0`, `FIO_MULTIPART_ERROR_GENERIC` (`-1`, malformed or truncated input) or an unchanged callback error.
 
 ### API Functions
+
+#### `fio_multipart_init`
+
+```c
+SFUNC int fio_multipart_init(fio_multipart_s *parser, fio_buf_info_s boundary);
+```
+
+Initializes (or resets) `parser` for `boundary` (the `Content-Type` boundary value, **without** the leading `"--"`), copying it. Returns `-1` if the boundary is empty or longer than `FIO_MULTIPART_MAX_BOUNDARY` (250); the parser then fails every call.
 
 #### `fio_multipart_parse`
 
 ```c
 SFUNC fio_multipart_result_s
-fio_multipart_parse(const fio_multipart_parser_callbacks_s *callbacks,
+fio_multipart_parse(fio_multipart_s *parser,
+                    const fio_multipart_parser_callbacks_s *callbacks,
                     void *udata,
-                    fio_buf_info_s boundary,
                     const char *data,
-                    size_t len);
+                    size_t len,
+                    int eof);
 ```
 
-Parses `data` as MIME multipart input. `boundary` is the boundary string **without** the leading `"--"` and must not exceed 250 bytes.
+Parses `data`, reporting every part it completes.
 
-**Parameters:**
-- `callbacks` - callback table (typically `static const`)
-- `udata` - user data passed to every callback
-- `boundary` - boundary value from the `Content-Type` header
-- `data` - input buffer
-- `len` - input length in bytes
+- **All data at once:** call with `eof = 1`. `err == 0` means the body was complete and every part was reported.
+- **Block by block:** call with `eof = 0`, keep `data + consumed ... data + len`, append the next block and call again with the same `parser`. Call with `eof = 1` once the input ends. `data` must always start at the first unconsumed byte (if it's shorter than what was already searched, the pending part is searched again).
 
-**Returns:** parse result.
+**Framing rules:**
+- The body starts with an optional `CRLF` and the first delimiter (no preamble).
+- A part is reported only after the delimiter line that ends it is validated: either `CRLF` (another part follows) or the closing `--`, optional spaces / tabs (transport padding), then `CRLF` or the end of the input (`eof`). Anything else is an error.
+- Without `eof`, a closing line reaching the end of `data` waits for more data (its part stays pending), so a closing line split across blocks is validated, not trusted.
+- After the closing line, the rest of the data (the epilogue) is consumed and ignored, by this and later calls.
+- Part headers longer than `FIO_MULTIPART_MAX_HEADER_SIZE` (default 8192 bytes), closing transport padding longer than that, and parts without a `Content-Disposition` header are errors. Only the spaces/tabs following the closing delimiter's two hyphens count as padding; the hyphens and optional trailing `CRLF` do not.
+- At `eof`, anything incomplete is an error (truncation).
+- After an error, every call fails.
 
-**Streaming behavior:**
-- `err == 0` - parsing complete; closing boundary found.
-- `err == -2` - need more data. Keep `data + result.consumed ... data + len` and append new data before calling again.
-- `err == -1` - unrecoverable parse error or callback abort.
-
-Each part must fit in the buffer, because a part is only reported once its closing delimiter is found. Use `fio_multipart_stream_parse` to stream large file uploads.
-
-#### `fio_multipart_stream_parse`
-
-```c
-typedef struct { /* private */ } fio_multipart_stream_s;
-
-SFUNC fio_multipart_result_s
-fio_multipart_stream_parse(fio_multipart_stream_s *stream,
-                           const fio_multipart_parser_callbacks_s *callbacks,
-                           void *udata,
-                           fio_buf_info_s boundary,
-                           const char *data,
-                           size_t len);
-
-SFUNC int fio_multipart_stream_close(
-    fio_multipart_stream_s *stream,
-    const fio_multipart_parser_callbacks_s *callbacks,
-    void *udata);
-```
-
-Works like `fio_multipart_parse`, but streams file contents. `on_file_start` is called once a file part's headers arrive, `on_file_data` is called with each chunk as it arrives, and `on_file_end` is called when the file's closing delimiter is found. A file part doesn't need to fit in the buffer, so large uploads can be parsed in bounded memory. Regular fields still need to fit.
-
-- Zero-initialize `stream` (`fio_multipart_stream_s s = {0};`) and pass the same `stream` to every call.
-- On `err == -2`, keep `data + result.consumed ... data + len`, append more data, and call again. While streaming a file, a few trailing bytes (up to the delimiter length) are held back in case they start a delimiter.
-- If the input ends early (while `err == -2`), call `fio_multipart_stream_close`. It calls `on_file_end` for any open file and returns `-1` if a file was left incomplete.
-- If `on_file_data` returns non-zero, `on_file_end` is called and parsing stops with `err == -1`.
-
-`field_count` and `file_count` count the parts completed during each call.
-
-### Examples
-
-#### Basic field and file parsing
+### Example
 
 ```c
 #define FIO_MULTIPART
 #include "fio-stl.h"
 
-static void *on_field(void *u, fio_buf_info_s n, fio_buf_info_s v, fio_buf_info_s ct) {
+static int on_string(void *u, fio_buf_info_s k, fio_buf_info_s v,
+                     fio_buf_info_s ct) {
   (void)u; (void)ct;
-  printf("field %.*s = %.*s\n", (int)n.len, n.buf, (int)v.len, v.buf);
-  return NULL;
-}
-static void *on_file_start(void *u, fio_buf_info_s n, fio_buf_info_s fn,
-                           fio_buf_info_s ct, fio_buf_info_s headers) {
-  (void)u; (void)ct; (void)headers;
-  printf("file %.*s / %.*s\n", (int)n.len, n.buf, (int)fn.len, fn.buf);
-  return NULL;
-}
-static int on_file_data(void *u, void *c, fio_buf_info_s d) {
-  (void)u; (void)c;
-  printf("  chunk %zu bytes\n", d.len);
+  printf("field %.*s = %.*s\n", (int)k.len, k.buf, (int)v.len, v.buf);
   return 0;
 }
-static void on_file_end(void *u, void *c) { (void)u; (void)c; }
+static int on_file(void *u, fio_buf_info_s k, fio_buf_info_s fn,
+                   fio_buf_info_s ct, fio_buf_info_s headers,
+                   fio_buf_info_s data) {
+  (void)u; (void)ct; (void)headers;
+  printf("file %.*s / %.*s: %zu bytes\n", (int)k.len, k.buf, (int)fn.len,
+         fn.buf, data.len);
+  return 0; /* non-zero aborts and is returned in `err` */
+}
 
 int main(void) {
   static const fio_multipart_parser_callbacks_s cb = {
-    .on_field = on_field,
-    .on_file_start = on_file_start,
-    .on_file_data = on_file_data,
-    .on_file_end = on_file_end,
+    .on_string = on_string,
+    .on_file = on_file,
   };
   const char *body =
     "--B\r\n"
@@ -6438,33 +6529,14 @@ int main(void) {
     "Content-Type: text/plain\r\n\r\n"
     "data\r\n"
     "--B--\r\n";
-  fio_multipart_result_s r = fio_multipart_parse(
-      &cb, NULL, FIO_BUF_INFO2("B", 1), body, strlen(body));
-  printf("fields=%zu files=%zu err=%d\n", r.field_count, r.file_count, r.err);
+  fio_multipart_s parser;
+  if (fio_multipart_init(&parser, FIO_BUF_INFO2((char *)"B", 1)))
+    return 1;
+  fio_multipart_result_s r =
+      fio_multipart_parse(&parser, &cb, NULL, body, strlen(body), 1);
+  printf("err=%d\n", r.err);
   return 0;
 }
-```
-
-#### Streaming field callbacks
-
-```c
-static void *field_start(void *u, fio_buf_info_s n, fio_buf_info_s ct) {
-  (void)u; (void)ct;
-  printf("field start %.*s\n", (int)n.len, n.buf);
-  return NULL;
-}
-static int field_data(void *u, void *c, fio_buf_info_s d) {
-  (void)u; (void)c;
-  printf("  field chunk %zu bytes\n", d.len);
-  return 0;
-}
-static void field_end(void *u, void *c) { (void)u; (void)c; }
-
-static const fio_multipart_parser_callbacks_s cb_stream = {
-  .on_field_start = field_start,
-  .on_field_data = field_data,
-  .on_field_end = field_end,
-};
 ```
 
 ------------------------------------------------------------
@@ -6553,6 +6625,7 @@ typedef struct {
   uint8_t streaming_string;
   uint8_t streaming_string_type;
   uint8_t streaming_blob_crlf;
+  uint8_t streaming_chunked;
   void *streaming_string_ctx;
   int64_t streaming_remaining;
   fio_resp3_frame_s stack[FIO_RESP3_MAX_NESTING];
@@ -6567,9 +6640,10 @@ Parser state. Initialize with `{.udata = my_context}` before the first call and 
 - `error` - set to non-zero after a protocol error; the parser will refuse further input
 - `streaming_string` - non-zero while a streamed string (`$?` chunked, or a fixed-length blob above `FIO_RESP3_STREAM_THRESHOLD`) is in progress
 - `streaming_string_type` - type of the streaming string in progress
-- `streaming_blob_crlf` - trailing CRLF bytes pending for a streamed fixed-length blob (0...2)
+- `streaming_blob_crlf` - trailing CRLF bytes pending for the current blob or chunk (0...2)
+- `streaming_chunked` - non-zero while receiving a `$?` string
 - `streaming_string_ctx` - context returned by `on_start_string`
-- `streaming_remaining` - data bytes remaining for a streamed fixed-length blob (0 when inactive or in `$?` chunked mode)
+- `streaming_remaining` - data bytes remaining in the current blob or chunk
 - `stack` - nested container frames
 
 #### `fio_resp3_callbacks_s`
@@ -6656,7 +6730,11 @@ Parses as much RESP3 data as possible. State is preserved in `parser`, so you ca
 
 **Note:** streamed strings (`$?`) require `on_start_string`, `on_string_write`, and `on_string_done` to be usable together. If `on_start_string` is missing or returns `NULL`, the parser sets `err` because it cannot buffer an unknown-length value. Once `on_start_string` returns a context, the parser enters streaming-string mode and later calls `on_string_write` and `on_string_done` directly, so those callbacks must also be supplied. For fixed-length blob, blob-error, and verbatim strings, `on_start_string` is optional; if it is missing or returns `NULL`, the parser falls back to `on_string` or `on_error`. If it returns a context for a fixed-length string, `on_string_write` and `on_string_done` are also called directly. Additionally, fixed-length blobs larger than `FIO_RESP3_STREAM_THRESHOLD` are always streamed incrementally when `on_start_string` is available (multiple `on_string_write` calls across parse calls possible), while smaller blobs complete in a single write once contiguous.
 
-**Note:** top-level attributes (`|`) are delivered via callbacks but do not become the returned `obj`; parsing continues for the following reply.
+**Note:** top-level attributes (`|`) are delivered via callbacks but do not become the returned `obj`; parsing continues for the following reply. Attributes before a nested value do not consume one of its parent's declared elements. `attr_done` may return its context or release it; the parser discards the attribute result.
+
+After any parse error or abandoned partial message, the caller retains ownership of registered frame contexts and keys, the streaming string context, and any returned object. `free_unused` is a notification suitable for releasing such objects; the parser has no destructor and never automatically frees all caller state.
+
+Input must use exact RESP3 tokens and CRLF framing. Integer fields require at least one digit and complete consumption. Decimal doubles must also be fully consumed; exact `inf`, `-inf`, and `nan` (including compatible case-insensitive NaN and `-nan`) are accepted. Blob and chunk lengths must fit `size_t` with room for CRLF. A `$?` string accepts only `;` chunks until `;0`, and each chunk may be written incrementally without requiring contiguous buffering. Streamed maps must contain complete key-value pairs before their `.` terminator.
 
 ### Example
 
@@ -6719,7 +6797,7 @@ Default target used by `fio_sock_maximize_limits(0)`.
 #define FIO_SOCK_AVOID_UMASK
 ```
 
-Deprecated, has no effect. Unix socket creation never changes the process-global `umask`: public Unix sockets are opened up (`0777`) with `chmod` after `bind`.
+Deprecated, has no effect. Unix socket creation never changes the process-global `umask`: public Unix sockets are opened up (`0777`) after `bind` using a no-follow, inode-pinned pathname on Linux or no-follow `fchmodat` where available. If a platform cannot safely change the mode, opening a public socket fails; private sockets retain the process umask.
 
 ### Types and Flags
 
@@ -6863,7 +6941,7 @@ Creates a network socket from an `addrinfo` list and connects it remotely. Non-b
 SFUNC fio_socket_i fio_sock_open_unix(const char *address, uint16_t flags);
 ```
 
-Creates a Unix domain socket where supported. Server sockets unlink an existing path before binding. Non-UDP server sockets call `listen`.
+Creates a Unix domain socket where supported. Server sockets unlink an existing path before binding. Use a server-owned directory: a process that can replace the pathname can disrupt availability or redirect new clients. Non-UDP server sockets call `listen`; failed setup after binding does not unlink a possibly replaced pathname.
 
 If Unix sockets are unsupported, the function asserts and returns `FIO_SOCKET_INVALID`.
 
@@ -7009,6 +7087,14 @@ SFUNC int fio_sock_set_non_block(fio_socket_i fd);
 
 Sets a socket to non-blocking mode.
 
+#### `fio_sock_error`
+
+```c
+SFUNC int fio_sock_error(fio_socket_i fd);
+```
+
+Returns the socket's pending error (`SO_ERROR`, which is then cleared), `0` if there is none, or `-1` if the query failed. Use it to detect a failed non-blocking `connect`.
+
 **Returns:** `0` on success, `-1` on error.
 
 #### `fio_sock_maximize_limits`
@@ -7071,15 +7157,21 @@ Waits for write readiness.
 
 Best-effort test for whether a socket still appears open.
 
+#### `fio_sock_addr`
+
+```c
+SFUNC fio_buf_info_s fio_sock_addr(fio_socket_i s, bool with_port);
+```
+
+Returns the local socket address as a numeric host. Set `with_port` to `true` for `host:port` (IPv4) or `[host]:port` (IPv6); `false` returns only the host, without brackets. For a named Unix socket, returns its pathname with either setting; unnamed and abstract Unix sockets return `{NULL, 0}`. A failed lookup or invalid socket also returns `{NULL, 0}`. The caller retains ownership of `s`. The returned NUL-terminated buffer is borrowed and shares a ring of 128 static 128-byte slots with `fio_sock_peer_addr`; copy it if it must survive 128 subsequent address formatting calls.
+
 #### `fio_sock_peer_addr`
 
 ```c
-SFUNC fio_buf_info_s fio_sock_peer_addr(fio_socket_i s);
+SFUNC fio_buf_info_s fio_sock_peer_addr(fio_socket_i s, bool with_port);
 ```
 
-Returns a numeric, human-readable peer address.
-
-On error, returns `{NULL, 0}`. The result points into a shared ring of 128 static 64-byte slots (63 bytes plus a NUL). Each call takes the next slot, so the 129th call reuses the first. Copy the result if you need to keep it.
+Returns the peer's numeric host when `with_port` is `false`, or its `host:port` endpoint when `true` (IPv6 uses `[host]:port`). Named Unix sockets return their pathname without a port. Unnamed/abstract Unix sockets, unconnected sockets, invalid sockets, and failed lookups return `{NULL, 0}`. The caller retains ownership of `s`; the NUL-terminated result is borrowed from the same 128-slot static ring as `fio_sock_addr`. Copy it before that slot is reused.
 
 ### Windows Notes
 
@@ -7091,7 +7183,7 @@ The `fio___sock_wsa*` helpers are internal implementation details, not regular a
 
 Socket handles are owned by the caller and should be closed with `fio_sock_close`. `fio_sock_address_new` results are owned by the caller and should be freed with `fio_sock_address_free`.
 
-Socket operations are as thread-safe as the operating system calls they wrap. `fio_sock_peer_addr` uses shared static buffers and has the 128-call/thread caveat described above. Unix socket creation never touches the process-global `umask`.
+Socket operations are as thread-safe as the operating system calls they wrap. `fio_sock_addr` and `fio_sock_peer_addr` share static buffers across callers; synchronize concurrent accesses and copy a result before its slot is reused after 128 successful address lookups. Unix socket creation never touches the process-global `umask`.
 
 ### Example
 
@@ -7208,7 +7300,7 @@ SFUNC void fio_state_callback_add(fio_state_event_type_e,
 
 Adds `func(arg)` to an event queue. Adding the same function / argument pair replaces the existing map entry rather than creating a duplicate.
 
-If `FIO_CALL_ON_INITIALIZE` already ran, adding another initialize callback calls it immediately.
+If `FIO_CALL_ON_INITIALIZE` already completed, adding another initialize callback calls it immediately. Registrations made while its snapshot is running execute after the current initialization callbacks finish. A null callback is ignored.
 
 #### `fio_state_callback_remove`
 
@@ -7259,7 +7351,7 @@ Prints callback counts and capacities for every event queue to `stderr`.
 
 ### Thread-Safety
 
-Each event queue has its own lock. Adding, removing, clearing, and forcing callbacks are synchronized while touching the queue. Callback execution happens after the queue has been copied and unlocked.
+Each event queue has its own lock. Adding, removing, clearing, forcing, global cleanup, and diagnostic reads are synchronized while touching a queue. Callback execution happens after the queue has been copied and unlocked. During initialization, new initialize callbacks execute after the current snapshot, without overlapping that snapshot. Forcing a nonempty event allocates a snapshot; allocation failure is fatal, consistent with the library's default allocation assertion. Do not call the registry from other threads during process teardown or fork an active multithreaded process.
 
 ### Example
 
@@ -7688,6 +7780,8 @@ The parser rejects:
 - nested text/binary messages while another data message is open;
 - control payloads larger than 125 bytes;
 - 64-bit lengths with the high bit set;
+- non-minimal length encodings (16-bit form for lengths below 126, 64-bit form
+  for lengths below 65,536);
 - frames larger than `FIO_WEBSOCKET_DEFAULT_MAX_FRAME`;
 - close frames with a 1-byte payload;
 - close frames carrying invalid on-wire close codes.
@@ -7773,7 +7867,7 @@ FIO_IFUNC uint64_t fio_websocket_write_close_client(void *target,
 
 Writes a close frame containing the 2-byte close code followed by the optional
 reason. The reason is truncated so the whole close payload fits in the 125-byte
-control-frame limit. Choose a close code that is valid to send on the wire.
+control-frame limit. A `NULL` reason buffer is treated as an empty reason. Choose a close code that is valid to send on the wire.
 
 ---
 
@@ -7834,7 +7928,7 @@ FIO_WEBSOCKET_PARSE_ERROR
 ```
 
 `FIO_WEBSOCKET_DEFAULT_MAX_FRAME` defaults to 1 GiB and may be overridden before
-including the header. `FIO_WEBSOCKET_PARSE_ERROR` is the parse error sentinel.
+including the header. Overrides must not exceed `UINT32_MAX` (build-time check). `FIO_WEBSOCKET_PARSE_ERROR` is the parse error sentinel.
 
 The header also exposes flag bit masks used by the accessor macros:
 `FIO_WEBSOCKET_FLAG_FIN`, `FIO_WEBSOCKET_FLAG_MASKED`,
@@ -8086,7 +8180,7 @@ SFUNC void fio_cli_start FIO_NOOP(int argc,
                                   fio___cli_line_s *arguments);
 ```
 
-Parses `argv` into a dictionary of named and unnamed arguments, then prints help and exits on `-h`, `-?`, `-help`, or `--help`.
+Parses `argv` into a dictionary of named and unnamed arguments, then prints help and exits on `-h`, `-?`, `-help`, or `--help` (status 0). Invalid input prints help and exits nonzero. A new call clears any previous CLI parse; `fio_cli_start` copies the description, argument lines, and application name for later help rendering. Duplicate alias declarations must refer to the same option and type. Returned value pointers remain borrowed and are invalidated by replacement, a new start, or `fio_cli_end`.
 
 **Named Arguments:**
 - `argc`, `argv` — values passed to `main`.
@@ -8095,7 +8189,7 @@ Parses `argv` into a dictionary of named and unnamed arguments, then prints help
 - `description` — program description shown in help. The text `NAME` is replaced with `argv[0]`.
 - `...` — argument description lines using the macros above.
 
-Argument names must start with `-`. The first non-`-` word begins the description. Optional defaults go in parentheses: `(default)` or `("literal default")`.
+Argument names must start with `-`. The first non-`-` word begins the description. Optional defaults go in parentheses: `(default)` or `("literal default")`. An empty `argv` element is retained as a present unnamed argument. An empty named value, including an integer value supplied as `-p ""` or `-p=`, clears that option; a missing value after `-p` is still an error. Bash passes `-p=""` as `-p=`, so it also clears the option.
 
 Accepted input formats:
 
@@ -8105,7 +8199,7 @@ app -t 1 -p 3000 -a localhost
 app --threads=1 --port=3000 --address=localhost
 ```
 
-**Note:** this function is **not** thread-safe.
+**Note:** this function is **not** thread-safe. The CLI clears its owned copies with `fio_secure_zero` on replacement and cleanup. This does not clear the original `argv`, caller-owned input, allocator-internal copies, or other copies an application makes; argv may be visible to other processes. Prefer a non-argv channel for secrets.
 
 ```c
 #define FIO_CLI
@@ -8151,7 +8245,7 @@ A destructor runs this automatically at program exit, but calling it earlier let
 SFUNC char const *fio_cli_get(char const *name);
 ```
 
-Returns the argument value as a NUL-terminated C string, or `NULL` if the argument was not provided. If `name` is `NULL`, returns the first unnamed argument.
+Returns the argument value as a NUL-terminated C string, or `NULL` if a named argument is absent or cleared. If `name` is `NULL`, returns the first unnamed argument, including a present empty string.
 
 #### `fio_cli_get_str`
 
@@ -8203,7 +8297,7 @@ Returns the number of unnamed arguments collected.
 SFUNC char const *fio_cli_unnamed(unsigned int index);
 ```
 
-Returns the unnamed argument at `index` as a NUL-terminated string, or `NULL` if `index` is out of bounds.
+Returns the unnamed argument at `index` as a NUL-terminated string (which may be empty), or `NULL` if `index` is out of bounds.
 
 #### `fio_cli_unnamed_str`
 
@@ -8223,7 +8317,7 @@ Returns the unnamed argument at `index` as a `fio_buf_info_s`, or an empty `fio_
 SFUNC void fio_cli_set(char const *name, char const *value);
 ```
 
-Sets or overwrites a named argument's value. If `name` is `NULL`, appends `value` as a new unnamed argument.
+Sets or overwrites a named argument's value. For named arguments, `value == NULL` or `value == ""` clears the value (including for integer options); an explicit `"0"` remains a present integer value. If `name` is `NULL`, appends `value` as a new unnamed argument; an empty string is retained, while `NULL` is ignored. The parser uses the same empty-value rule for named arguments.
 
 **Note:** this function is **not** thread-safe.
 
@@ -8243,7 +8337,7 @@ Sets a named argument to a base-10 string representation of `i`.
 SFUNC unsigned int fio_cli_set_unnamed(unsigned int index, const char *value);
 ```
 
-Sets or appends an unnamed argument. If `index` is past the end, the value is appended. Returns the stored index, or `(unsigned int)-1` if `value` is `NULL` or empty.
+Sets or appends an unnamed argument. If `index` is past the end, the value is appended. An empty string is stored as a present unnamed argument. Returns the stored index, or `(unsigned int)-1` if `value` is `NULL` (without changing the argument).
 
 **Note:** this function is **not** thread-safe.
 
@@ -8261,7 +8355,7 @@ SFUNC size_t fio_cli_each(int (*task)(fio_buf_info_s name,
                           void *udata);
 ```
 
-Calls `task` for every argument that has a value, returning the number of calls made. If `task` returns non-zero, iteration stops. For unnamed arguments, `name.buf` is `NULL` and `name.len` is `0`.
+Calls `task` for every present argument, returning the number of calls made. Named arguments with a cleared or empty value are skipped; unnamed arguments are included even when their value is an empty string. If `task` returns non-zero, iteration stops. For unnamed arguments, `name.buf` is `NULL` and `name.len` is `0`.
 
 ------------------------------------------------------------
 # Memory Allocator
@@ -8304,7 +8398,7 @@ SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
                                                size_t unit_count);
 ```
 
-Equivalent to `fio_malloc(size_per_unit * unit_count)`.
+Equivalent to `fio_malloc(size_per_unit * unit_count)`, but returns zeroed memory. Returns `NULL` (with `errno = ENOMEM`) if the product overflows.
 
 #### `fio_realloc`
 
@@ -8334,7 +8428,7 @@ Reallocates `ptr` to `new_size`, copying at most `copy_len` bytes. Memory beyond
 **Parameters:**
 - `ptr` — existing allocation, or `NULL`.
 - `new_size` — requested new size.
-- `copy_len` — maximum bytes to copy from the old block.
+- `copy_len` — maximum bytes to copy from the old block. Must not exceed the old allocation's size (the system allocator, `FIO_MEMORY_DISABLE`, can't verify it).
 
 **Returns:** pointer to the new block, or `NULL` on failure.
 
@@ -8456,7 +8550,7 @@ The macros route to the active allocator, exactly like `FIO_MEM_REALLOC` does: t
 | `FIO_MEMORY_DISABLE`, Windows | `_Alignof(max_align_t)` (16) | `_aligned_malloc` / `_aligned_realloc` / `_aligned_free` | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
 | `FIO_MEMORY_DISABLE`, other | `_Alignof(max_align_t)` | over-allocation with stashed raw pointer | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
 
-When `FIO_MALLOC_OVERRIDE_SYSTEM` is defined, the libc aligned-allocation family is overridden as well (`aligned_alloc`, `posix_memalign`, and on Windows `_aligned_malloc` / `_aligned_realloc` / `_aligned_free`), so libc-aligned pointers never reach the fio allocator (and vice versa).
+When `FIO_MALLOC_OVERRIDE_SYSTEM` is defined, the libc aligned-allocation family is overridden as well (`aligned_alloc`, `posix_memalign`, POSIX `memalign` / `valloc`, Linux `pvalloc` / `reallocarray`, and on Windows `_aligned_malloc` / `_aligned_realloc` / `_aligned_free`), so libc-aligned pointers never reach the fio allocator (and vice versa). These follow the libc contracts: invalid alignments fail with `EINVAL` instead of being rounded. `malloc_usable_size` is not overridden. Define the override in one translation unit only; it requires the custom allocator (no `FIO_MEMORY_DISABLE`) on POSIX or Windows.
 
 ---
 
@@ -8500,7 +8594,7 @@ Log2 of the allocation alignment. Clamped to the range `3`–`10` (8 to 1024 byt
 #define FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG 21
 ```
 
-Log2 of the chunk size allocated from the system. Clamped to `17`–`24`. Default is `21` (~2 MB).
+Log2 of the chunk size allocated from the system. Must be in the range `17`–`24` (otherwise compilation fails). Default is `21` (~2 MB).
 
 #### `FIO_MEMORY_BLOCKS_PER_ALLOCATION_LOG`
 
@@ -8508,7 +8602,7 @@ Log2 of the chunk size allocated from the system. Clamped to `17`–`24`. Defaul
 #define FIO_MEMORY_BLOCKS_PER_ALLOCATION_LOG 2
 ```
 
-Log2 of the number of blocks per system chunk. Range `0`–`4`. Affects fragmentation and the threshold for big allocations.
+Log2 of the number of blocks per system chunk. Range `0`–`5` (out-of-range values fall back to `3`). Affects fragmentation and the threshold for big allocations.
 
 #### `FIO_MEMORY_ENABLE_BIG_ALLOC`
 
@@ -8832,10 +8926,12 @@ fio_string_write2(&str, my_realloc,
 #define FIO_STRING_WRITE_UNUM(num)    /* unsigned integer */
 #define FIO_STRING_WRITE_HEX(num)     /* hex representation */
 #define FIO_STRING_WRITE_BIN(num)     /* binary representation */
-#define FIO_STRING_WRITE_FLOAT(num)   /* double */
+#define FIO_STRING_WRITE_FLOAT(num)   /* double, written using fio_ftoa */
 ```
 
 Helper macros that build `fio_string_write_s` items for `fio_string_write2`.
+
+Floats are written by `fio_ftoa(dest, num, 10)`: `%g` style (6 significant digits), with `.0` appended to integral values (`42.0`).
 
 ---
 
@@ -8982,7 +9078,9 @@ SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
                                      size_t encoded_len);
 ```
 
-Base32 encode / decode.
+RFC 4648 Base32 encode / decode. Encoding always pads with `=` to a multiple of 8 characters.
+
+Decoding is case insensitive, ignores whitespace (` \t\n\v\f\r\b`), accepts any amount of trailing `=` padding (including none) and ignores non-zero trailing bits. Empty, whitespace-only or padding-only input is a successful empty decode. Invalid characters, data after padding or 1, 3 or 6 trailing symbols (bits that can't form a byte) return `-1` and leave `dest` unchanged.
 
 #### `fio_string_write_base64enc` / `fio_string_write_base64dec`
 
@@ -8999,6 +9097,8 @@ SFUNC int fio_string_write_base64dec(fio_str_info_s *dest,
 ```
 
 Base64 encode / decode. Pass `url_encoded = 1` to use URL-safe alphabet.
+
+Decoding accepts both the standard and URL-safe alphabets, ignores whitespace (` \t\n\v\f\r\b`), accepts any amount of trailing `=` padding (including none) and ignores non-zero trailing bits. Empty, whitespace-only or padding-only input is a successful empty decode. Invalid characters, data after padding or a single trailing symbol (bits that can't form a byte) return `-1` and leave `dest` unchanged.
 
 #### `fio_string_write_url_enc` / `fio_string_write_url_dec` / `fio_string_write_path_dec`
 
@@ -9048,7 +9148,7 @@ SFUNC int fio_string_readfd(fio_str_info_s *dest,
                             size_t limit);
 ```
 
-Reads up to `limit` bytes from seekable file descriptor `fd` starting at `start_at`. Negative `start_at` counts from EOF. `limit == 0` reads to EOF.
+Reads up to `limit` bytes from seekable file descriptor `fd` starting at `start_at`. Negative `start_at` counts from EOF. `limit == 0` reads to EOF. Returns -1 on error, truncation, or a short read.
 
 #### `fio_string_readfile`
 
@@ -9116,6 +9216,14 @@ Returns a 16-byte-aligned capacity for `new_len`.
 
 Convenience macros pointing to the default callbacks.
 
+#### `fio_string_sys_reallocate`
+
+```c
+SFUNC int fio_string_sys_reallocate(fio_str_info_s *dst, size_t len);
+```
+
+Grows `dst` using libc `realloc` (for memory owned by the system allocator). Returns `0` on success or `-1` on failure (`dst` is unchanged).
+
 #### `fio_string_default_reallocate`
 
 ```c
@@ -9143,6 +9251,8 @@ Frees a buffer allocated with the default callbacks.
 ---
 
 ## UTF-8 Helpers
+
+These helpers never read past the given length (`str.len` or `buf_len`), so the input does not need to be NUL-terminated. A multi-byte sequence cut off by the end of the buffer counts as invalid. Validation is strict (RFC 3629), see [`fio_utf8_char_len`](./001%20utf8.md).
 
 #### `fio_string_utf8_valid`
 
@@ -9317,7 +9427,7 @@ FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
                                        void *(*alloc_func)(size_t len));
 ```
 
-Copies `str` into a persistent key. Strings short enough are embedded; otherwise `alloc_func` is used. Pass `capa == FIO_KEYSTR_CONST` to store a borrowed pointer.
+Copies `str` into a persistent key. Strings short enough are embedded; otherwise `alloc_func` is used. Pass `capa == FIO_KEYSTR_CONST` to store a borrowed pointer. If allocation fails, an empty key is returned.
 
 #### `fio_keystr_destroy`
 
@@ -9448,9 +9558,9 @@ int  fio_data_is_error(fio_data_s *d);
 - RAM never grows past the RAM limit.
 - `fio_data_is_error` returns `1`, until `fio_data_destroy` clears the state.
 
-Memory allocation failures while writing are fatal (`FIO_ASSERT_ALLOC`); read buffer allocation failures aren't (see below).
+RAM allocation failures return `-1`, enter the sticky error state and keep all previously stored bytes readable. Shared buffer references stay intact. Read buffer allocation failures do not change the store's error state (see below).
 
-`fio_data_expect` prepares for `len` more bytes. It reserves RAM, or moves to a temporary file early if the expected size crosses the limit. It's only a hint: if no temporary file can be created, the data stays in RAM and no error state is set (a later write past the limit will fail).
+`fio_data_expect` prepares for `len` more bytes. It reserves RAM, or moves to a temporary file early if the expected size crosses the limit. It's only a hint: if RAM can't be reserved or no temporary file can be created, the data stays intact and no error state is set. A later write retries and reports failure if it can't proceed.
 
 ### Reading
 
@@ -9466,7 +9576,7 @@ fio_str_info_s fio_data_read_until(fio_data_s *d, char token, size_t limit);
 
 - **Reads** start at the reading position and advance it by the number of bytes returned. `fio_data_read` returns up to `len` bytes (`(size_t)-1` reads all the remaining data). `fio_data_read_until` stops after `token` (inclusive), after `limit` bytes (ignored if zero), or at EOF. Both return an empty result at EOF.
 - **Spilled data is memory mapped.** On the first read after the data moved to a temporary file, the whole file is mapped (read-only), and reads return pointers into the mapping, just like RAM reads return pointers into the RAM buffer. Nothing is copied, so reading everything at once is as cheap as reading in chunks.
-- **Without mapping** (`FIO_DATA_NO_MMAP`, Windows, or when `mmap` fails, i.e., a file too big for the address space), reads copy the data into a heap buffer that grows to fit the request (no size cap). `fio_data_read_until` reads the file in `FIO_DATA_READ_BLOCK` blocks and stops at the token, so it never reads past `limit`. Read in bounded chunks to keep memory bounded.
+- **Without mapping** (`FIO_DATA_NO_MMAP`, Windows, or when `mmap` fails, i.e., a file too big for the address space), reads copy the data into a heap buffer that grows to fit the request (no size cap). The buffer remembers which file range it holds, so a read that overlaps it (e.g., a sliding or growing window, or `fio_data_read` after `fio_data_read_until`) reuses the held bytes and only reads the missing ones from the file; writes discard it. `fio_data_read_until` reads the file in `FIO_DATA_READ_BLOCK` blocks and stops at the token, so it never reads past `limit`. Read in bounded chunks to keep memory bounded.
 - **Read failures fail the read, loudly.** If the heap buffer can't be allocated, or the file returns fewer bytes than requested (a short read: an I/O error, or a file truncated by someone else), an error is logged and the read returns an empty result (`buf == NULL`, `len == 0`) without moving the reading position, keeping `errno` (`EIO` for a short read that didn't report an error). Interrupted reads (`EINTR`) are retried by `fio_fd_read`. It never returns a truncated read and never aborts (the size may be controlled by a remote sender). Tell this apart from EOF by `fio_data_pos(d) < fio_data_len(d)`. The stored data is intact and the store is NOT put in an error state, so a later or smaller read may succeed. Whole-content users (FIOBJ `fiobj2cstr`, equality, HTTP body parsers) see such a failure as an empty / unequal / failed read, never as truncated data.
 - **Read buffers** are borrowed: any later `fio_data_*` call on the same store MAY invalidate them (don't rely on any call keeping them valid). In particular, a write to a spilled store unmaps the file (it's mapped again, at its new size, by the next read), and `fio_data_destroy` releases everything.
 - **`fio_data_seek`** sets the position and returns it. Negative values count back from the end: `-n` is `len - n`, so `-1` is the last byte (as with `lseek(fd, -1, SEEK_END)`), and values before the start clamp to `0`. Any position at or past the end is EOF: seek to `fio_data_len(d)` (or `SSIZE_MAX`, which is simply a large value) to reach the end. Writes never move the reading position.
@@ -9852,7 +9962,7 @@ The callback picks the strategy (for example a lookup, or a "set if missing"). R
 
 **NULL values:** a native NULL `obj` / `old` means "nothing". A value callback may return NULL as a value (for example, from `on_null`), and the parser stores it: `map_push` and `array_push` receive it. A key with no value (`{"a":}`) also stores NULL, while the empty slot after a trailing comma (`[1,]`) adds nothing. A replaced NULL never triggers conflict resolution. To resolve null conflicts by the rules, return a dedicated null object (FIOBJ uses `fiobj_null()`).
 
-**Errors:** any non-zero `err` (or `array_push` return value) stops the parse and is returned unchanged in `fio_json_result_s.err`.
+**Errors:** any non-zero `err` (or `array_push` return value) stops the parse and is returned unchanged in `fio_json_result_s.err`. Conflict helpers descend iteratively through at most `FIO_JSON_MAX_DEPTH` containers per call. Longer conflict chains return `FIO_JSON_ERROR_NESTING`, even when duplicate keys kept the input nesting shallow.
 
 **Conflict rules:** when a callback hands a replaced value back (in `old`, or in the `obj` of `map_push`), the parser applies these rules (an upload or any other non-map, non-array object counts as a scalar):
 
@@ -10231,8 +10341,8 @@ Parses `data[0..len)` as URL-encoded form data, decoding each name and value exa
 **Parameters:**
 - `callbacks` - borrowed callback table, valid for the call. `NULL` (or a `NULL` `on_pair`) selects counting-only mode.
 - `udata` - caller-owned context passed unchanged to `on_pair`; may be `NULL`.
-- `data` - borrowed readable buffer containing at least `len` bytes; not modified. A trailing NUL is not required.
-- `len` - number of input bytes to parse; may be zero.
+- `data` - borrowed readable buffer containing at least `len` bytes; not modified. A trailing NUL is not required. May be `NULL` only when `len` is zero.
+- `len` - number of input bytes to parse; may be zero. Empty input returns an all-zero result without invoking callbacks.
 
 **Returns:** the bytes consumed, the pairs processed, and the error. An error stops parsing before the failed pair, so `data + result.consumed` is where that pair starts. Retrying from the beginning repeats earlier callback side effects.
 
@@ -10246,7 +10356,10 @@ Rules from the implementation:
 - pair boundaries are determined before decoding, so encoded `&` and `=` remain part of their fields
 - percent escapes are decoded and `+` becomes a space in both names and values
 - `%2B` decodes to a literal `+`, not a space; `%2526` decodes to `%26`, not `&`
-- invalid or incomplete percent escapes remain literal, following `fio_string_write_url_dec` (including its `%uXXXX` extension)
+- the non-standard `%uXXXX` extension is also decoded, following `fio_string_write_url_dec`
+- invalid or incomplete percent escapes remain literal
+
+**Note**: this is a permissive decoder, not a strict form-encoding validator. Perform security checks on the decoded names and values. A separate filter that only decodes `%XX` will interpret `%u0061dmin` differently: this parser decodes it to `admin`.
 
 **Ownership:** the caller retains `data`, `callbacks`, and `udata`. The parser owns temporary decoded buffers and releases any heap fallback using `FIO_STRING_FREE2` after the callback returns, including when the callback stops parsing. No buffer ownership is transferred to callbacks.
 
@@ -10366,13 +10479,13 @@ Returns the name of the active backend (`"epoll"`, `"kqueue"`, or `"poll"`) as a
 #### `fio_poll_init`
 
 ```c
-FIO_IFUNC void fio_poll_init(fio_poll_s *p, fio_poll_settings_s settings);
+FIO_IFUNC int fio_poll_init(fio_poll_s *p, fio_poll_settings_s settings);
 
 #define fio_poll_init(p, ...) \
   fio_poll_init((p), (fio_poll_settings_s){__VA_ARGS__})
 ```
 
-Initializes the polling object. The macro form accepts designated initializers.
+Initializes the polling object. The macro form accepts designated initializers. Returns `0` on success and `-1` with `errno` set on failure; a failed poller may be destroyed. By default, backend initialization syscall failures terminate the process. Define `FIO_POLL_EXIT_ON_SYSERR 0` before including the library to return `-1` instead. Invalid arguments return `-1` rather than terminating the process.
 
 **Parameters:**
 - `p` — pointer to the polling object.
@@ -10402,7 +10515,7 @@ SFUNC int fio_poll_monitor(fio_poll_s *p,
                            unsigned short flags);
 ```
 
-Adds `fd` to the poll set, updates its `udata`, or adds events. Recognized flags are `POLLIN`, `POLLOUT`, and `POLLPRI`; other flags may be ignored. Monitoring is one-shot: once an event fires, it is removed until re-armed.
+Adds `fd` to the poll set, updates its `udata`, or adds events. `POLLIN` and `POLLOUT` are supported by all backends. `POLLPRI` is supported by POSIX `poll` but may be ignored by other backends; do not rely on it for portable monitoring. Other flags may be ignored. Monitoring is one-shot: once an event fires, it is removed until re-armed.
 
 **Returns:** `0` on success, `-1` on error.
 
@@ -10422,7 +10535,7 @@ Waits up to `timeout` milliseconds for events and dispatches callbacks. Adding a
 SFUNC int fio_poll_forget(fio_poll_s *p, fio_socket_i fd);
 ```
 
-Removes `fd` from the poll set.
+Removes `fd` from the poll set. This is not a cancellation guarantee: an event already returned by the system call may still invoke a callback. Keep `udata` alive until any concurrent review and dispatch have finished; polling thread safety protects the poller's internal state, not `udata`.
 
 **Returns:** `0` on success, `-1` on error.
 
@@ -10440,10 +10553,11 @@ static void on_close(void *udata) { fprintf(stderr, "closed\n"); }
 
 int main(void) {
   fio_poll_s p;
-  fio_poll_init(&p,
-                .on_data = on_data,
-                .on_ready = on_ready,
-                .on_close = on_close);
+  if (fio_poll_init(&p,
+                    .on_data = on_data,
+                    .on_ready = on_ready,
+                    .on_close = on_close))
+    return 1;
 
   fio_poll_monitor(&p, some_fd, NULL, POLLIN);
   for (int i = 0; i < 10; ++i)
@@ -10481,7 +10595,7 @@ struct fio_poll_s {
 };
 ```
 
-Two internal `epoll` file descriptors are used: one for `POLLOUT` readiness and one for `POLLIN`/error events. A `pollfd` pair wakes the internal `poll` used to wait on both epoll FDs at once.
+Two close-on-exec `epoll` file descriptors are used: one for `POLLOUT` readiness and one for `POLLIN` events. Both report errors and hang-ups. A `pollfd` pair wakes the internal `poll` used to wait on both epoll FDs at once.
 
 #### `fio_poll_engine`
 
@@ -10496,8 +10610,10 @@ A state callback re-creates the epoll FDs in the child process after `fork`.
 ## Notes
 
 - Events are monitored in one-shot mode (`EPOLLONESHOT`). After an event fires, the descriptor must be re-armed with `fio_poll_monitor`.
-- Error and hang-up events are dispatched through the read-side epoll FD and delivered to `on_close`.
+- Error and hang-up events on a write-only registration are delivered to `on_close`, even without `EPOLLOUT`. Read registrations dispatch `on_close` on errors and hang-ups.
+- `POLLPRI` monitors urgent input through `EPOLLPRI` and invokes `on_data`.
 - `EPOLLRDHUP` and `EPOLLHUP` are always included in the monitored events.
+- Timeouts greater than `INT_MAX` milliseconds are capped at `INT_MAX` before calling `poll`.
 
 ------------------------------------------------------------
 # POSIX Polling — kqueue Backend
@@ -10572,7 +10688,7 @@ struct fio_poll_s {
 
 The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and snapshots its armed flags before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` update the retained map directly; surviving one-shot flags are restored when the call returns.
 
-`fio_poll_forget` removes the descriptor from the retained map, which also prevents any surviving snapshot flags from being restored. It is not a cancellation guarantee: an event already returned by an in-flight `poll()` call may still be dispatched. This matches the epoll/kqueue backends, whose in-hand event lists always dispatch. As on every backend, `udata` lifetime during dispatch is the caller's responsibility (the facil.io IO layer only forgets from the reactor thread, never concurrently with a review).
+`fio_poll_forget` removes the descriptor from the retained map. Each new registration has a generation token, preventing surviving snapshot flags from being restored even if the same numeric descriptor is re-registered during dispatch. It is not a cancellation guarantee: an event already returned by an in-flight `poll()` call may still be dispatched. This matches the epoll/kqueue backends, whose in-hand event lists always dispatch. As on every backend, `udata` lifetime during dispatch is the caller's responsibility (the facil.io IO layer only forgets from the reactor thread, never concurrently with a review).
 
 One-shot flag accounting strips whole event groups: `WSAPoll` reports sub-band bits (e.g. `POLLRDNORM`) while `POLLIN`/`POLLOUT` are supersets, so a raw bitwise strip would leave band bits (e.g. `POLLRDBAND`) armed on Windows. Fired `POLLIN`/`POLLOUT` groups are therefore stripped in full.
 
@@ -10586,15 +10702,15 @@ Returns `"poll"`.
 SFUNC void fio_poll_close_all(fio_poll_s *p);
 ```
 
-Additional helper available only in the poll backend. Closes every monitored socket and calls `on_close` for each one. Useful during shutdown.
+Additional helper available only in the poll backend. Closes armed sockets and calls `on_close` for each. Call only after polling and monitoring threads have stopped: concurrent review snapshots and monitor calls are not quiesced by this helper.
 
 ---
 
 ## Notes
 
 - `POLLRDHUP` is used when available; otherwise the backend relies on `POLLHUP`, `POLLERR`, and `POLLNVAL` for close/error detection.
-- On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it.
-- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals (which delete the retained entry) prevent that restoration.
+- On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it. A priority-only registration fails immediately with `EINVAL`; mixed priority and IN/OUT requests keep their supported flags.
+- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored after `poll()` returns only to the original registration generation.
 
 ------------------------------------------------------------
 # Task and Timer Queues
@@ -10616,7 +10732,7 @@ A thread-safe task queue built from linked ring buffers, plus a timer queue that
 #define FIO_QUEUE_TASKS_PER_ALLOC 168 /* 338 on 32-bit */
 ```
 
-Tasks per ring-buffer chunk. Default is chosen so `fio_queue_s` fits in one page. Must not exceed 65535.
+Tasks per ring-buffer chunk. The default sizes each heap-allocated chunk to fit a 4 KiB page (4048 bytes on 64-bit, 4068 on 32-bit systems). `fio_queue_s` embeds one chunk plus its own fields, so it is somewhat larger than a page. Must not exceed 65535.
 
 ---
 
@@ -10877,6 +10993,8 @@ SFUNC size_t fio_timer_push2queue(fio_queue_s *queue,
 
 Moves all due timer events into `queue`. Pass `0` for `now_in_milliseconds` to use `fio_time_milli()`.
 
+If `queue` cannot grow (no memory), the remaining due events stay scheduled and are moved by a later call; none is dropped.
+
 **Returns:** number of timers pushed.
 
 #### `fio_timer_next_at`
@@ -11073,7 +11191,7 @@ Packs bytes from an open file descriptor. Reads are performed later by `fio_stre
 - If `keep_open == 0`, the descriptor is closed when the packet is freed, or on pack failure after ownership was accepted.
 - If `keep_open != 0`, the caller remains responsible for closing `fd`.
 
-**Returns:** packet pointer, or `NULL` on invalid input, size detection failure / oversized auto-detected size when `len == 0`, or allocation failure.
+**Returns:** packet pointer, or `NULL` on invalid input (a negative `fd`, or an `offset + len` range that `off_t` can't represent), size detection failure / oversized auto-detected size when `len == 0`, or allocation failure.
 
 #### `fio_stream_add`
 
@@ -11112,6 +11230,8 @@ After the call:
 - On empty stream or error, `*buf == NULL` and `*len == 0`.
 - Otherwise `*buf` either still points to the supplied scratch buffer or points directly into stream-owned memory.
 - `*len` is updated to the number of readable bytes available at `*buf`.
+
+If a file descriptor packet hits EOF or a read error before its declared length (e.g., the file shrank after it was added), the read stops after the bytes actually read, truncates that packet and discards its queued tail. This reduces `fio_stream_length` during an otherwise non-consuming read. Consumers that already framed the declared length must detect this reduction and close or abort their output; IO does so. A short file never reports unread scratch bytes or stalls the stream. The stream stores no persistent failure flag and accepts new packets after the read.
 
 Reset both `*buf` and `*len` before each read if reusing the same scratch buffer. This is not thread-safe.
 
@@ -11247,7 +11367,7 @@ Renders a complete Markdown / GFM document into a `fio_bstr`.
 
 **Returns:** the output `fio_bstr`, or `NULL` on parser / allocation failure.
 
-**Ownership:** the returned buffer is owned by the caller and should be released with `fio_bstr_free`. If `bstr_target == NULL` and rendering fails, the newly allocated output is freed. If `bstr_target` was provided, ownership stays with the caller.
+**Ownership:** on success, retain the returned pointer (which may differ from `bstr_target`) and free it with `fio_bstr_free`. On parser or allocation failure, temporary output is freed and a supplied target remains unchanged and owned by the caller.
 
 ### Rendering Behavior
 
@@ -11347,7 +11467,7 @@ When enabled, limits partial lookup scope to the context of the partial's sectio
 #endif
 ```
 
-When enabled, skips partial names that attempt `../` path traversal.
+When enabled, skips partial names containing a `..` path segment, recognizing both `/` and `\` separators. This lexical check is not a filesystem sandbox.
 
 ### Syntax Quick Map
 
@@ -11408,7 +11528,7 @@ Load / parse settings.
 - `on_yaml_front_matter` - called when front matter is found
 - `udata` - user data for load callbacks
 
-If both `load_file_data` and `free_file_data` are missing, defaults use `fio_bstr_readfile` and `fio_bstr_free`. If one is custom, provide the matching cleanup. Either `filename` or `data` is required.
+If both `load_file_data` and `free_file_data` are missing, defaults use `fio_bstr_readfile` and `fio_bstr_free`. If one is custom, provide the matching cleanup. Every non-NULL loaded buffer is released, including discarded zero-length results. Either `filename` or `data` is required. Nonzero-length filename and template views need no NUL terminator; a zero filename length retains the C-string shorthand.
 
 #### `fio_mustache_bargs_s`
 
@@ -11440,12 +11560,14 @@ Build / render callbacks.
 - `get_var_index` - returns an item context by index
 - `var2str` - returns a string view for a value
 - `var_is_truthful` - returns non-zero for truthy values
-- `release_var` - releases values returned by callbacks
+- `release_var` - releases each non-NULL value acquired through `get_var` or `get_var_index`, including falsey values and intermediate dotted-path results
 - `is_lambda` - handles lambda sections when lambda support is enabled
 - `ctx` - root render context
 - `udata` - output / user pointer; the final value is returned by `fio_mustache_build`
 
 If both writer callbacks are missing, defaults append to a `fio_bstr` in `udata`. The returned pointer should be freed with `fio_bstr_free`.
+
+`ctx` and `{{.}}` aliases are borrowed; the renderer does not release them. Lookup and array callbacks acquire one value per successful call; each value must remain valid until its matching `release_var`. A child returned by a dotted lookup must survive release of its intermediate parent. `var2str` returns a borrowed view valid until that value is released; the writer consumes it before release. Borrowed-data integrations can leave `release_var` as its default no-op.
 
 ### Loading
 
@@ -11461,7 +11583,7 @@ Loads and parses a template from `settings.data` or `settings.filename`.
 
 If `filename` is provided and `data` is empty, the loader callback is used. If both are provided, `data` is parsed and `filename` is kept for partial path resolution.
 
-**Returns:** a parsed template object, or `NULL` on error.
+**Returns:** a parsed template object, or `NULL` on parse or allocation error. Variable and section names must be shorter than 65,535 bytes. Compiled instruction streams must be smaller than `UINT32_MAX` bytes.
 
 #### `fio_mustache_free`
 
@@ -11602,13 +11724,13 @@ The crypto slice is a small, zero-dependency toolbox for code that needs to hash
 The core header defines two function pointer types:
 
 ```c
-typedef void(fio_crypto_enc_fn)(void *restrict mac,
-                                void *restrict data,
-                                size_t len,
-                                const void *ad,
-                                size_t adlen,
-                                const void *key,
-                                const void *nonce);
+typedef int(fio_crypto_enc_fn)(void *restrict mac,
+                               void *restrict data,
+                               size_t len,
+                               const void *ad,
+                               size_t adlen,
+                               const void *key,
+                               const void *nonce);
 
 typedef int(fio_crypto_dec_fn)(void *restrict mac,
                                void *restrict data,
@@ -11628,7 +11750,7 @@ Current AEAD implementations that match this shape include:
 
 These functions encrypt or decrypt `data` in place. `ad` is authenticated but not encrypted. `mac` is the authentication tag buffer; the current AEAD modules use 16-byte tags. Key and nonce sizes belong to the selected cipher, not to the function pointer type.
 
-Decryption returns `0` when authentication succeeds and `-1` when it fails. Treat any failure as “message not trusted”; do not parse, log in detail, or partially use the plaintext.
+Encryption returns `0` on success and `-1` when input exceeds the cipher's limits (the block counter would wrap); on failure `data` and `mac` are zeroed, so no keystream is reused and no plaintext or valid tag is left behind. Decryption returns `0` when authentication succeeds and `-1` when it fails (or input exceeds the cipher's limits). Neither aborts the process on bad input. Treat any failure as “message not trusted”; do not parse, log in detail, or partially use the plaintext.
 
 ## Safe Use, Plainly
 
@@ -11734,8 +11856,8 @@ Flexible-output BLAKE2b with optional keyed hashing.
 - `outlen` — digest length (1–64; defaults to 64 if 0).
 - `data` — bytes to hash.
 - `len` — data length.
-- `key` — optional secret key (NULL for unkeyed).
-- `keylen` — key length (0–64; clamped to 64 if larger).
+- `key` — optional secret key (NULL for unkeyed; a NULL `key` ignores `keylen`).
+- `keylen` — key length. 0–64 is standard keyed BLAKE2b. Longer keys are never truncated: the key is replaced by `BLAKE2b-512(key)` (64 bytes), like HMAC does. This is **non-standard** (other BLAKE2 libraries reject such keys), so use keys of at most 64 bytes for interoperable output.
 
 **Note:** keyed BLAKE2b is a built-in MAC mode; for RFC-2104 HMAC, use `fio_blake2b_hmac`.
 
@@ -11770,8 +11892,21 @@ Initializes a BLAKE2b streaming context.
 
 **Parameters:**
 - `outlen` — desired digest length (1–64; defaults to 64 if 0).
-- `key` — optional secret key (NULL for unkeyed).
-- `keylen` — key length (0–64; clamped to 64 if larger).
+- `key` — optional secret key (NULL for unkeyed; a NULL `key` ignores `keylen`, producing the standard unkeyed digest).
+- `keylen` — key length; keys over 64 bytes are pre-hashed (non-standard), as in `fio_blake2b_hash`.
+
+The context is built directly in the returned object (no intermediate key copy with compilers that apply return-value optimization, e.g. clang at any level, GCC at `-O1`+). Assign the result in its declaration (`fio_blake2b_s h = fio_blake2b_init(...)`) rather than to an existing variable, so no temporary key copy is created. To avoid key copies regardless of compiler, use `fio_blake2b_init_at`. The one-shot `fio_blake2b_hash` never copies the key.
+
+#### `fio_blake2b_init_at`
+
+```c
+SFUNC void fio_blake2b_init_at(fio_blake2b_s *h,
+                               size_t outlen,
+                               const void *key,
+                               size_t keylen);
+```
+
+Initializes `h` in place, with the same arguments and results as `fio_blake2b_init`. The padded key is written only into `h` (and wiped by `fio_blake2b_finalize`).
 
 #### `fio_blake2b_consume`
 
@@ -11789,7 +11924,7 @@ Feeds more data into a BLAKE2b streaming context. May be called repeatedly.
 SFUNC fio_u512 fio_blake2b_finalize(fio_blake2b_s *h);
 ```
 
-Finalizes the stream and returns the digest.
+Finalizes the stream and returns the digest. The context (including any key material) is securely wiped; re-initialize it before reuse.
 
 **Returns:** digest as `fio_u512`. Only the first `outlen` bytes are valid.
 
@@ -11814,7 +11949,7 @@ SFUNC void fio_blake2s_hash(void *restrict out,
                             size_t keylen);
 ```
 
-Flexible-output BLAKE2s with optional keyed hashing. `outlen` is 1–32 (defaults to 32 if 0).
+Flexible-output BLAKE2s with optional keyed hashing. `outlen` is 1–32 (defaults to 32 if 0). `keylen` 0–32 is standard keyed BLAKE2s; longer keys are replaced by `BLAKE2s-256(key)` (non-standard, HMAC-like, never truncated). A NULL `key` is unkeyed and ignores `keylen`.
 
 #### `fio_blake2s_hmac`
 
@@ -11835,7 +11970,18 @@ SFUNC fio_blake2s_s fio_blake2s_init(size_t outlen,
                                      size_t keylen);
 ```
 
-Initializes a BLAKE2s streaming context. `outlen` is 1–32 (defaults to 32 if 0).
+Initializes a BLAKE2s streaming context. `outlen` is 1–32 (defaults to 32 if 0). Key handling matches `fio_blake2s_hash` (NULL key is unkeyed; keys over 32 bytes are pre-hashed) and the context is built in place in the returned object, as with `fio_blake2b_init`.
+
+#### `fio_blake2s_init_at`
+
+```c
+SFUNC void fio_blake2s_init_at(fio_blake2s_s *h,
+                               size_t outlen,
+                               const void *key,
+                               size_t keylen);
+```
+
+Initializes `h` in place, with the same arguments and results as `fio_blake2s_init`, so no key copy is left elsewhere on the stack.
 
 #### `fio_blake2s_consume`
 
@@ -11853,7 +11999,7 @@ Feeds more data into a BLAKE2s streaming context.
 SFUNC fio_u256 fio_blake2s_finalize(fio_blake2s_s *h);
 ```
 
-Finalizes the stream and returns the digest.
+Finalizes the stream and returns the digest. The context (including any key material) is securely wiped; re-initialize it before reuse.
 
 ### Examples
 
@@ -11890,7 +12036,7 @@ void examples(void) {
 | Word size | 64-bit | 32-bit |
 | Block size | 128 bytes | 64 bytes |
 | Max digest | 64 bytes | 32 bytes |
-| Max key | 64 bytes | 32 bytes |
+| Max standard key | 64 bytes | 32 bytes (longer keys are pre-hashed) |
 | Rounds | 12 | 10 |
 | Result type | `fio_u512` | `fio_u256` |
 
@@ -11906,18 +12052,20 @@ ChaCha20 stream cipher, Poly1305 authenticator, and the ChaCha20-Poly1305 AEAD c
 
 **Security note:** this implementation has not been independently audited. Use at your own risk, and prefer a tested cryptographic library when one is available.
 
+**Invalid arguments never abort or crash.** A `NULL` `key`, `nonce` or `mac`, or a `NULL` `data` / `ad` with a non-zero length, fails like over-limit input: functions return `-1` (encryption zeroes `data` and `mac`, decryption leaves `data` untouched, MAC-only functions zero a writable `mac`). `NULL` buffers with zero length are valid.
+
 ### ChaCha20-Poly1305 API
 
 #### `fio_chacha20_poly1305_enc`
 
 ```c
-SFUNC void fio_chacha20_poly1305_enc(void *restrict mac,
-                                     void *restrict data,
-                                     size_t len,
-                                     const void *ad,
-                                     size_t adlen,
-                                     const void *key,
-                                     const void *nonce);
+SFUNC int fio_chacha20_poly1305_enc(void *restrict mac,
+                                    void *restrict data,
+                                    size_t len,
+                                    const void *ad,
+                                    size_t adlen,
+                                    const void *key,
+                                    const void *nonce);
 ```
 
 In-place encryption with a 16-byte Poly1305 tag.
@@ -11929,7 +12077,9 @@ In-place encryption with a 16-byte Poly1305 tag.
 - `ad` — additional authenticated data (not encrypted); may be `NULL`.
 - `adlen` — length of `ad`.
 - `key` — 32-byte key.
-- `nonce` — 12-byte nonce.
+- `nonce` — 12-byte nonce; a key/nonce pair must never be reused.
+
+**Returns:** `0` on success, `-1` if `len` exceeds `(2^32 - 1) * 64` bytes (the block counter would wrap and reuse keystream). On error no keystream is used: `data` and `mac` are zeroed, so no plaintext and no valid tag are produced. The process is never aborted.
 
 #### `fio_chacha20_poly1305_dec`
 
@@ -11945,32 +12095,34 @@ SFUNC int fio_chacha20_poly1305_dec(void *restrict mac,
 
 In-place decryption with tag verification.
 
-**Returns:** `0` on success, `-1` if authentication fails. On failure `data` is zeroed.
+**Returns:** `0` on success, `-1` if authentication fails (`data` is zeroed) or if `len` exceeds the AEAD limit of `(2^32 - 1) * 64` bytes (`data` is left untouched).
 
 #### `fio_chacha20_poly1305_auth`
 
 ```c
-SFUNC void fio_chacha20_poly1305_auth(void *restrict mac,
-                                      void *restrict data,
-                                      size_t len,
-                                      const void *ad,
-                                      size_t adlen,
-                                      const void *key,
-                                      const void *nonce);
+SFUNC int fio_chacha20_poly1305_auth(void *restrict mac,
+                                     void *restrict data,
+                                     size_t len,
+                                     const void *ad,
+                                     size_t adlen,
+                                     const void *key,
+                                     const void *nonce);
 ```
 
 Computes the Poly1305 tag for already-encrypted data without decrypting it.
+
+**Returns:** `0` on success, `-1` on invalid arguments or if `len` exceeds the AEAD limit of `(2^32 - 1) * 64` bytes. On error a writable `mac` is zeroed; reject the message on `-1` and never compare the cleared tag.
 
 ### Standalone ChaCha20 / Poly1305
 
 #### `fio_chacha20`
 
 ```c
-SFUNC void fio_chacha20(void *restrict data,
-                        size_t len,
-                        const void *key,
-                        const void *nonce,
-                        uint32_t counter);
+SFUNC int fio_chacha20(void *restrict data,
+                       size_t len,
+                       const void *key,
+                       const void *nonce,
+                       uint32_t counter);
 ```
 
 In-place ChaCha20 encryption or decryption.
@@ -11982,15 +12134,17 @@ In-place ChaCha20 encryption or decryption.
 - `nonce` — 12-byte nonce.
 - `counter` — block counter; usually `1` unless resuming mid-ciphertext.
 
+**Returns:** `0` on success, `-1` if the block counter would wrap (`counter + ceil(len / 64)` exceeds `2^32`). On error no keystream is reused and `data` is zeroed (it may hold plaintext).
+
 #### `fio_poly1305_auth`
 
 ```c
-SFUNC void fio_poly1305_auth(void *restrict mac_dest,
-                             void *restrict message,
-                             size_t len,
-                             const void *ad,
-                             size_t ad_len,
-                             const void *key256bits);
+SFUNC int fio_poly1305_auth(void *restrict mac_dest,
+                            void *restrict message,
+                            size_t len,
+                            const void *ad,
+                            size_t ad_len,
+                            const void *key256bits);
 ```
 
 Computes a Poly1305 MAC for `message` and `ad` using a 32-byte key.
@@ -11999,27 +12153,29 @@ Computes a Poly1305 MAC for `message` and `ad` using a 32-byte key.
 - `mac_dest` — output buffer; must have at least 16 writable bytes.
 - `message` — message to authenticate; may be `NULL` if `len` is 0.
 - `len` — message length.
-- `ad` — additional data; may be `NULL`.
+- `ad` — additional data; may be `NULL` if `ad_len` is 0.
 - `ad_len` — additional data length.
-- `key256bits` — 32-byte Poly1305 key.
+- `key256bits` — 32-byte one-time Poly1305 key.
+
+**Returns:** `0` on success, `-1` on invalid arguments (`NULL` `mac_dest` or key, or `NULL` `message` / `ad` with a non-zero length). On error nothing is read and a writable `mac_dest` is zeroed (never a MAC from a fallback key); reject the message on `-1` and never compare the cleared tag.
 
 ### XChaCha20-Poly1305 API
 
-XChaCha20 uses a 24-byte nonce, making random nonces safe from birthday-bound collisions.
+XChaCha20 uses a 24-byte nonce, large enough for nonces generated by a cryptographically secure RNG (collision odds are negligible, roughly `2^-96` after `2^48` messages under one key). A key/nonce pair must never be reused.
 
 #### `fio_xchacha20_poly1305_enc`
 
 ```c
-SFUNC void fio_xchacha20_poly1305_enc(void *restrict mac,
-                                      void *restrict data,
-                                      size_t len,
-                                      const void *ad,
-                                      size_t adlen,
-                                      const void *key,
-                                      const void *nonce);
+SFUNC int fio_xchacha20_poly1305_enc(void *restrict mac,
+                                     void *restrict data,
+                                     size_t len,
+                                     const void *ad,
+                                     size_t adlen,
+                                     const void *key,
+                                     const void *nonce);
 ```
 
-Same shape as `fio_chacha20_poly1305_enc`, but `nonce` must be 24 bytes.
+Same shape and return value as `fio_chacha20_poly1305_enc`, but `nonce` must be 24 bytes.
 
 #### `fio_xchacha20_poly1305_dec`
 
@@ -12038,14 +12194,14 @@ Same shape as `fio_chacha20_poly1305_dec`, but `nonce` must be 24 bytes.
 #### `fio_xchacha20`
 
 ```c
-SFUNC void fio_xchacha20(void *restrict data,
-                         size_t len,
-                         const void *key,
-                         const void *nonce,
-                         uint32_t counter);
+SFUNC int fio_xchacha20(void *restrict data,
+                        size_t len,
+                        const void *key,
+                        const void *nonce,
+                        uint32_t counter);
 ```
 
-In-place XChaCha20 encryption or decryption.
+In-place XChaCha20 encryption or decryption. Returns `0` on success, `-1` (with `data` zeroed) if the block counter would wrap, same as `fio_chacha20`.
 
 ### Example
 
@@ -12062,7 +12218,8 @@ int main(void) {
   fio_rand_bytes_secure(key, sizeof(key));
   fio_rand_bytes_secure(nonce, sizeof(nonce));
 
-  fio_chacha20_poly1305_enc(tag, msg, sizeof(msg), NULL, 0, key, nonce);
+  if (fio_chacha20_poly1305_enc(tag, msg, sizeof(msg), NULL, 0, key, nonce))
+    return 1; /* input too long - never happens for small messages */
 
   if (fio_chacha20_poly1305_dec(tag, msg, sizeof(msg), NULL, 0, key, nonce)) {
     printf("authentication failed\n");
@@ -12084,7 +12241,7 @@ HMAC-based Key Derivation Function per [RFC 5869](https://www.rfc-editor.org/rfc
 
 Supports SHA-256 and SHA-384 as the underlying HMAC.
 
-**Note:** HKDF needs `fio_sha256_hmac` and `fio_sha512_hmac`. Define `FIO_SHA2` before `FIO_HKDF`, or use `FIO_CRYPTO` to pull in everything.
+**Note:** HKDF needs the `FIO_SHA2` module (SHA-256 / SHA-384 and their HMAC). Define `FIO_SHA2` before `FIO_HKDF`, or use `FIO_CRYPTO` to pull in everything.
 
 ### Constants
 
@@ -12109,12 +12266,12 @@ SHA-384 hash length in bytes.
 #### `fio_hkdf_extract`
 
 ```c
-SFUNC void fio_hkdf_extract(void *restrict prk,
-                            const void *restrict salt,
-                            size_t salt_len,
-                            const void *restrict ikm,
-                            size_t ikm_len,
-                            int use_sha384);
+SFUNC int fio_hkdf_extract(void *restrict prk,
+                           const void *restrict salt,
+                           size_t salt_len,
+                           const void *restrict ikm,
+                           size_t ikm_len,
+                           int use_sha384);
 ```
 
 HKDF-Extract: `PRK = HMAC-Hash(salt, IKM)`.
@@ -12123,20 +12280,22 @@ HKDF-Extract: `PRK = HMAC-Hash(salt, IKM)`.
 - `prk` — output buffer (32 bytes for SHA-256, 48 for SHA-384).
 - `salt` — optional salt; if `NULL`, a zero string of hash length is used.
 - `salt_len` — salt length.
-- `ikm` — input keying material.
+- `ikm` — input keying material; may be `NULL` only when `ikm_len` is 0.
 - `ikm_len` — IKM length.
 - `use_sha384` — non-zero for SHA-384, zero for SHA-256.
+
+Returns `0` on success, or `-1` (PRK not written) if `prk` is `NULL` or `ikm` is `NULL` with a non-zero length.
 
 #### `fio_hkdf_expand`
 
 ```c
-SFUNC void fio_hkdf_expand(void *restrict okm,
-                           size_t okm_len,
-                           const void *restrict prk,
-                           size_t prk_len,
-                           const void *restrict info,
-                           size_t info_len,
-                           int use_sha384);
+SFUNC int fio_hkdf_expand(void *restrict okm,
+                          size_t okm_len,
+                          const void *restrict prk,
+                          size_t prk_len,
+                          const void *restrict info,
+                          size_t info_len,
+                          int use_sha384);
 ```
 
 HKDF-Expand: `OKM = HKDF-Expand(PRK, info, L)`.
@@ -12145,26 +12304,28 @@ HKDF-Expand: `OKM = HKDF-Expand(PRK, info, L)`.
 - `okm` — output buffer.
 - `okm_len` — desired output length (max `255 * hash_len`).
 - `prk` — pseudorandom key from Extract.
-- `prk_len` — 32 for SHA-256, 48 for SHA-384.
-- `info` — optional context/info string; may be `NULL`.
+- `prk_len` — PRK length; at least 32 for SHA-256, 48 for SHA-384 (RFC 5869 §2.3).
+- `info` — optional context/info string; `NULL` is empty info (`info_len` ignored).
 - `info_len` — info length.
 - `use_sha384` — non-zero for SHA-384, zero for SHA-256.
+
+Returns `0` on success. Returns `-1` without writing `okm` if `okm_len > 255 * hash_len`, `prk_len < hash_len`, `prk` is `NULL`, or `okm` is `NULL` with a non-zero length. Expand does not allocate memory and wipes its intermediate secrets.
 
 #### `fio_hkdf`
 
 ```c
-SFUNC void fio_hkdf(void *restrict okm,
-                    size_t okm_len,
-                    const void *restrict salt,
-                    size_t salt_len,
-                    const void *restrict ikm,
-                    size_t ikm_len,
-                    const void *restrict info,
-                    size_t info_len,
-                    int use_sha384);
+SFUNC int fio_hkdf(void *restrict okm,
+                   size_t okm_len,
+                   const void *restrict salt,
+                   size_t salt_len,
+                   const void *restrict ikm,
+                   size_t ikm_len,
+                   const void *restrict info,
+                   size_t info_len,
+                   int use_sha384);
 ```
 
-Combined HKDF: Extract followed by Expand in one call.
+Combined HKDF: Extract followed by Expand in one call. Returns `0` on success, or `-1` without writing `okm` on any argument error listed above. The intermediate PRK is wiped.
 
 ### Example
 
@@ -12179,8 +12340,9 @@ int main(void) {
   const char *info = "app context";
   uint8_t key[32];
 
-  fio_hkdf(key, sizeof(key), salt, strlen(salt),
-           ikm, strlen(ikm), info, strlen(info), 0);
+  if (fio_hkdf(key, sizeof(key), salt, strlen(salt),
+               ikm, strlen(ikm), info, strlen(info), 0))
+    return 1;
   return 0;
 }
 ```
@@ -12628,11 +12790,11 @@ void fio_sha3_consume(fio_sha3_s *restrict h,
                       size_t len);
 ```
 
-Feeds `len` bytes into a SHA-3 context. May be called repeatedly.
+Feeds `len` bytes into a SHA-3 context. May be called repeatedly, but only before finalizing (`fio_sha3_finalize`) or squeezing (`fio_shake_squeeze`).
 
 **Parameters:**
 - `h` - pointer to the streaming context.
-- `data` - pointer to the data to absorb.
+- `data` - pointer to the data to absorb; may be `NULL` only when `len` is 0.
 - `len` - length of the data in bytes.
 
 #### `fio_sha3_finalize`
@@ -12642,6 +12804,8 @@ void fio_sha3_finalize(fio_sha3_s *restrict h, void *restrict out);
 ```
 
 Pads, permutes, and writes `h->outlen` digest bytes to `out`.
+
+Finalization is terminal: afterwards the Keccak state and input buffer are securely wiped. Re-initialize the context before hashing another message.
 
 **Parameters:**
 - `h` - pointer to the streaming context.
@@ -12743,7 +12907,9 @@ void fio_shake_squeeze(fio_sha3_s *restrict h,
                        size_t outlen);
 ```
 
-Squeezes `outlen` bytes from a SHAKE context. On the first call it applies padding and runs the first permutation; later calls continue squeezing and re-permute as needed.
+Squeezes `outlen` bytes from a SHAKE context. On the first call (even with `outlen == 0`) it applies padding and runs the first permutation; later calls continue squeezing and re-permute as needed. Do not absorb more data after the first squeeze.
+
+The context is not wiped (it may be squeezed again). When it holds secret input, wipe it with `fio_secure_zero(&h, sizeof(h))` when done.
 
 **Parameters:**
 - `h` - pointer to the SHAKE context.
@@ -12825,7 +12991,7 @@ fio_shake_consume(&h, seed, strlen(seed));
 fio_shake_squeeze(&h, out, sizeof(out));
 ```
 
-**Note:** state is caller-owned; no heap allocation occurs. Keep SHA-3 and SHAKE contexts separate at finalization time (`fio_sha3_finalize` vs. `fio_shake_squeeze`).
+**Note:** state is caller-owned; no heap allocation occurs. The one-shot functions and `fio_sha3_finalize` wipe their context; streaming SHAKE contexts are the caller's to wipe. Keep SHA-3 and SHAKE contexts separate at finalization time (`fio_sha3_finalize` vs. `fio_shake_squeeze`).
 
 ------------------------------------------------------------
 # AES-GCM
@@ -12846,13 +13012,13 @@ Hardware acceleration is used when available (x86 AES-NI + PCLMULQDQ, ARM crypto
 #### `fio_aes128_gcm_enc`
 
 ```c
-SFUNC void fio_aes128_gcm_enc(void *restrict mac,
-                              void *restrict data,
-                              size_t len,
-                              const void *ad,
-                              size_t adlen,
-                              const void *key,
-                              const void *nonce);
+SFUNC int fio_aes128_gcm_enc(void *restrict mac,
+                             void *restrict data,
+                             size_t len,
+                             const void *ad,
+                             size_t adlen,
+                             const void *key,
+                             const void *nonce);
 ```
 
 Encrypts `data` in place with AES-128-GCM and writes a 16-byte authentication tag to `mac`.
@@ -12861,10 +13027,16 @@ Encrypts `data` in place with AES-128-GCM and writes a 16-byte authentication ta
 - `mac` — output buffer; must have at least 16 writable bytes.
 - `data` — plaintext buffer; encrypted in place. May be `NULL` if `len` is 0.
 - `len` — plaintext length in bytes.
-- `ad` — additional authenticated data; not encrypted but covered by the tag. May be `NULL`.
+- `ad` — additional authenticated data; not encrypted but covered by the tag. May be `NULL` if `adlen` is 0.
 - `adlen` — length of `ad`.
 - `key` — 16-byte AES-128 key.
-- `nonce` — 12-byte nonce.
+- `nonce` — 12-byte nonce; a key/nonce pair must never be reused.
+
+**Returns:** `0` on success, `-1` on invalid arguments (see below).
+
+`len` must not exceed `2^36 - 32` bytes (the 32-bit block counter would wrap and reuse keystream) and `adlen` must be below `2^61` bytes (its bit length must fit the 64-bit length field); larger values fail safely: the function returns `-1` and `data` and `mac` are zeroed, so no plaintext and no valid tag are produced (the zero tag will not authenticate).
+
+`mac`, `key` and `nonce` must not be `NULL`; `data` / `ad` may be `NULL` only when `len` / `adlen` is 0. Invalid pointers fail the same way (`-1`, with the non-`NULL` `mac` and `data` zeroed); a missing key is never replaced by a default key.
 
 #### `fio_aes128_gcm_dec`
 
@@ -12882,18 +13054,18 @@ Decrypts `data` in place and verifies the 16-byte tag in `mac`.
 
 **Parameters:** same as `fio_aes128_gcm_enc`.
 
-**Returns:** `0` on success, `-1` if authentication fails. On failure `data` is left unchanged.
+**Returns:** `0` on success, `-1` if authentication fails, if `len` / `adlen` exceed the GCM limits above, or on invalid pointer arguments (as for encryption). On failure `data` is left unchanged.
 
 #### `fio_aes256_gcm_enc`
 
 ```c
-SFUNC void fio_aes256_gcm_enc(void *restrict mac,
-                              void *restrict data,
-                              size_t len,
-                              const void *ad,
-                              size_t adlen,
-                              const void *key,
-                              const void *nonce);
+SFUNC int fio_aes256_gcm_enc(void *restrict mac,
+                             void *restrict data,
+                             size_t len,
+                             const void *ad,
+                             size_t adlen,
+                             const void *key,
+                             const void *nonce);
 ```
 
 Same as `fio_aes128_gcm_enc` but uses a 32-byte AES-256 key.
@@ -12995,7 +13167,9 @@ SFUNC int fio_ed25519_verify(const uint8_t signature[64],
                              const uint8_t public_key[32]);
 ```
 
-Verifies a signature. Returns `0` on success, `-1` on failure.
+Verifies a signature. Returns `0` on success, `-1` on failure (including `NULL` inputs).
+
+Verification is strict: it rejects non-canonical public-key encodings (`y >= p`, negative zero), small-order (torsion) public keys and `R` values, and `S >= L`. This blocks identity-key universal forgeries and signature malleability.
 
 ### X25519 Key Exchange
 
@@ -13050,7 +13224,7 @@ SFUNC void fio_ed25519_pk_to_x25519(uint8_t x_public_key[32],
                                     const uint8_t ed_public_key[32]);
 ```
 
-Converts an Ed25519 public key to an X25519 public key.
+Converts an Ed25519 public key to an X25519 public key. Invalid or non-canonical keys produce 32 zero bytes, which `fio_x25519_shared_secret` rejects.
 
 ### ECIES Public-Key Encryption
 
@@ -13090,7 +13264,7 @@ Encrypts a message to an X25519 public key. Ciphertext format: `ephemeral_pk || 
 - `encryption_function` — e.g., `fio_chacha20_poly1305_enc`.
 - `recipient_pk` — recipient's 32-byte X25519 public key.
 
-**Returns:** `0` on success, `-1` on failure.
+**Returns:** `0` on success, `-1` on failure (invalid recipient key, `message_len + 48` overflow, or an `encryption_function` error such as a cipher length limit). When `encryption_function` fails, all `message_len + 48` output bytes are zeroed.
 
 #### `fio_x25519_decrypt`
 
@@ -13111,7 +13285,7 @@ Decrypts a message using the recipient's X25519 secret key.
 - `decryption_function` — e.g., `fio_chacha20_poly1305_dec`.
 - `recipient_sk` — recipient's 32-byte X25519 secret key.
 
-**Returns:** `0` on success, `-1` on failure.
+**Returns:** `0` on success, `-1` on failure. When authentication fails, the `ciphertext_len - 48` plaintext bytes are zeroed, so unauthenticated data is never released.
 
 ### Example
 
@@ -13151,9 +13325,10 @@ P-256 is the NIST `secp256r1` curve used by TLS and certificate tooling. This mo
 | Use | Function | Notes |
 | --- | --- | --- |
 | Sign | `fio_ecdsa_p256_sign` | Creates a DER-encoded ECDSA signature from a 32-byte SHA-256 hash. |
-| Verify DER signature | `fio_ecdsa_p256_verify` | Accepts `SEQUENCE { r INTEGER, s INTEGER }` and a 65-byte uncompressed public key. |
+| Verify DER signature | `fio_ecdsa_p256_verify` | Accepts `SEQUENCE { r INTEGER, s INTEGER }` and a 65-byte uncompressed or 33-byte compressed public key. |
 | Verify raw signature | `fio_ecdsa_p256_verify_raw` | Accepts raw 32-byte `r`, `s`, `x`, and `y` values. |
 | Key pair | `fio_p256_keypair` | Produces a 32-byte secret key and a 65-byte uncompressed public key. |
+| Public key | `fio_p256_public_key` | Derives the 65-byte uncompressed public key from an existing 32-byte secret key. |
 | Shared secret | `fio_p256_shared_secret` | Accepts compressed or uncompressed peer public keys and returns the x-coordinate. |
 
 The curve parameters are the standard P-256 parameters from NIST FIPS 186-4:
@@ -13195,10 +13370,10 @@ SFUNC int fio_ecdsa_p256_verify(const uint8_t *sig,
 
 Verifies a DER-encoded ECDSA signature against a 32-byte SHA-256 hash.
 
-- `sig` is a DER `SEQUENCE { r INTEGER, s INTEGER }`.
+- `sig` is a strict DER `SEQUENCE { r INTEGER, s INTEGER }`: short-form lengths, positive minimal INTEGERs, and no trailing data. Non-canonical encodings are rejected on purpose (no signer emits them; accepting them would make signatures malleable).
 - `msg_hash` is exactly 32 bytes.
-- `pubkey` must be an uncompressed P-256 public key: `0x04 || x || y`.
-- `pubkey_len` must be `65`.
+- `pubkey` is a SEC 1 P-256 public key: uncompressed (`pubkey_len == 65`, `0x04 || x || y`) or compressed (`pubkey_len == 33`, `0x02/0x03 || x`). Other lengths, the hybrid forms (`0x06/0x07`) and the identity are rejected.
+- Coordinates must be canonical (`< p`) and the point must be on the curve; a compressed `x` without a curve point is rejected.
 - Returns `0` for a valid signature, `-1` for invalid input or a bad signature.
 
 ### `fio_ecdsa_p256_verify_raw`
@@ -13213,7 +13388,7 @@ SFUNC int fio_ecdsa_p256_verify_raw(const uint8_t r[32],
 
 Verifies a signature when `r` and `s` are already decoded. Public-key coordinates are 32-byte big-endian values.
 
-The verifier checks that `r` and `s` are in range, checks the public point is on the P-256 curve, performs the ECDSA verification equation, and returns `0` only when the signature matches.
+The verifier checks that `r` and `s` are in range, checks the public-key coordinates are canonical (`< p`) and the point is on the P-256 curve, performs the ECDSA verification equation, and returns `0` only when the signature matches.
 
 ## ECDH Key Exchange
 
@@ -13227,7 +13402,20 @@ Generates a P-256 key pair.
 
 - `secret_key` receives a 32-byte scalar.
 - `public_key` receives `0x04 || x || y` (65 bytes).
-- Returns `0` on success, `-1` on bad arguments or random generation failure.
+- Returns `0` on success, `-1` on bad arguments or random generation failure (a bounded number of draws; callers must check the result).
+
+### `fio_p256_public_key`
+
+```c
+SFUNC int fio_p256_public_key(uint8_t public_key[65],
+                              const uint8_t secret_key[32]);
+```
+
+Derives the public key `Q = d * G` for an existing secret key (e.g., one loaded from a PEM file without an embedded public key), using the constant-time scalar multiplication ladder.
+
+- `secret_key` is a 32-byte big-endian scalar in the valid range `1..n-1`.
+- `public_key` receives `0x04 || x || y` (65 bytes).
+- Returns `0` on success, `-1` on NULL arguments or an out-of-range scalar; `public_key` (when not NULL) is zeroed on failure.
 
 ### `fio_p256_shared_secret`
 
@@ -13242,7 +13430,7 @@ Computes a P-256 ECDH shared secret using your secret key and their public key.
 
 - `secret_key` is a 32-byte scalar in the valid range `1..n-1`.
 - `their_public_key` may be uncompressed (`65` bytes, `0x04 || x || y`) or compressed (`33` bytes, `0x02/0x03 || x`).
-- The peer point is decompressed when needed and checked against the curve.
+- Peer coordinates must be canonical (`< p`); the point is decompressed when needed and checked against the curve.
 - `shared_secret` receives the 32-byte x-coordinate of the result.
 - Returns `0` on success, `-1` on invalid input, invalid point, point at infinity, or all-zero result.
 
@@ -13284,18 +13472,19 @@ int main(void) {
 #include "fio-stl.h"
 ```
 
-P-384 is the NIST `secp384r1` curve. In this STL, it is a verifier: it checks ECDSA P-384 signatures, mainly for TLS 1.3 certificate chains and CA roots that use P-384.
+P-384 is the NIST `secp384r1` curve. This module covers ECDSA P-384 over SHA-384 message hashes: verification (TLS 1.3 certificate chains and CA roots that use P-384) and signing (TLS 1.3 servers and clients with a P-384 certificate key).
 
-There is no signing or key-generation API here. Just verification. Nice and focused.
-
-**Security note:** this implementation has not been independently audited. It is meant for verification of public data; prefer a tested crypto library when certificate trust is central to your application.
+**Security note:** this implementation has not been independently audited. Use it when the zero-dependency STL path matters; prefer a tested crypto library for long-lived keys, compliance, or high-value trust decisions.
 
 ## What It Provides
 
 | Use | Function | Notes |
 | --- | --- | --- |
-| Verify DER signature | `fio_ecdsa_p384_verify` | Accepts `SEQUENCE { r INTEGER, s INTEGER }` and a 97-byte uncompressed public key. |
+| Sign | `fio_ecdsa_p384_sign` | Creates a DER-encoded ECDSA signature from a 48-byte SHA-384 hash. |
+| Verify DER signature | `fio_ecdsa_p384_verify` | Accepts `SEQUENCE { r INTEGER, s INTEGER }` and a 97-byte uncompressed or 49-byte compressed public key. |
 | Verify raw signature | `fio_ecdsa_p384_verify_raw` | Accepts raw 48-byte `r`, `s`, `x`, and `y` values. |
+| Key pair | `fio_p384_keypair` | Produces a 48-byte secret key and a 97-byte uncompressed public key. |
+| Public key | `fio_p384_public_key` | Derives the 97-byte uncompressed public key from an existing 48-byte secret key. |
 
 Curve parameters from NIST FIPS 186-4:
 
@@ -13303,6 +13492,54 @@ Curve parameters from NIST FIPS 186-4:
 - `n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973`
 - curve equation: `y² = x³ - 3x + b (mod p)`
 - coordinate size: 48 bytes
+
+## Signing API
+
+### `fio_ecdsa_p384_sign`
+
+```c
+SFUNC int fio_ecdsa_p384_sign(uint8_t *sig,
+                              size_t *sig_len,
+                              size_t sig_capacity,
+                              const uint8_t msg_hash[48],
+                              const uint8_t secret_key[48]);
+```
+
+Signs a 48-byte SHA-384 message hash. The function writes a DER-encoded signature (`SEQUENCE { r INTEGER, s INTEGER }`) to `sig` and stores the actual length in `sig_len`.
+
+- `sig_capacity` must be at least `104` bytes (the largest P-384 DER signature); a smaller buffer is rejected up front.
+- `secret_key` is a 48-byte big-endian scalar in `[1, n-1]`; other values are rejected.
+- The function draws a random ECDSA nonce internally (`fio_rand_bytes_secure`, falling back to `fio_rand_bytes`) and retries invalid nonces, at most 100 draws.
+- Returns `0` on success, `-1` on invalid input or signing failure.
+
+It signs the hash you give it; it does not hash the original message.
+
+## Key API
+
+### `fio_p384_keypair`
+
+```c
+SFUNC int fio_p384_keypair(uint8_t secret_key[48], uint8_t public_key[97]);
+```
+
+Generates a random P-384 key pair.
+
+- `secret_key` receives a 48-byte big-endian scalar in `[1, n-1]`.
+- `public_key` receives `0x04 || x || y` (97 bytes).
+- Returns `0` on success, `-1` on NULL arguments or a failing random source (the secret key is then zeroed).
+
+### `fio_p384_public_key`
+
+```c
+SFUNC int fio_p384_public_key(uint8_t public_key[97],
+                              const uint8_t secret_key[48]);
+```
+
+Derives the public key `Q = d * G` for an existing secret key (e.g., one loaded from a PEM file without an embedded public key), using the constant-time scalar multiplication ladder.
+
+- `secret_key` is a 48-byte big-endian scalar in `[1, n-1]`.
+- `public_key` receives `0x04 || x || y` (97 bytes).
+- Returns `0` on success, `-1` on NULL arguments or an out-of-range scalar; `public_key` (when not NULL) is zeroed on failure.
 
 ## Verification API
 
@@ -13318,16 +13555,14 @@ SFUNC int fio_ecdsa_p384_verify(const uint8_t *sig,
 
 Verifies a DER-encoded ECDSA P-384 signature over a 48-byte SHA-384 hash.
 
-- `sig` is a DER `SEQUENCE { r INTEGER, s INTEGER }`.
+- `sig` is a strict DER `SEQUENCE { r INTEGER, s INTEGER }`: short-form lengths, positive minimal INTEGERs, and no trailing data. Non-canonical encodings are rejected on purpose (no signer emits them; accepting them would make signatures malleable).
 - `sig_len` is the signature length in bytes.
 - `msg_hash` is the SHA-384 hash of the message, exactly 48 bytes.
-- `pubkey` must be an uncompressed public key: `0x04 || x || y`.
-- `pubkey_len` must be `97`.
+- `pubkey` is a SEC 1 public key: uncompressed (`pubkey_len == 97`, `0x04 || x || y`) or compressed (`pubkey_len == 49`, `0x02/0x03 || x`). Other lengths, the hybrid forms (`0x06/0x07`) and the identity are rejected.
+- Coordinates must be canonical (`< p`) and the point must be on the curve; a compressed `x` without a curve point is rejected.
 - Returns `0` for a valid signature, `-1` for invalid input or a bad signature.
 
-The function validates the public-key wrapper, decodes `r` and `s` from DER, then calls `fio_ecdsa_p384_verify_raw`.
-
-Compressed public keys are not accepted by this API.
+The function validates the public-key encoding (decompressing a compressed key), decodes `r` and `s` from DER, then calls `fio_ecdsa_p384_verify_raw`.
 
 ### `fio_ecdsa_p384_verify_raw`
 
@@ -13352,6 +13587,27 @@ The verifier checks that `r` and `s` are in range, checks the public point is on
 ## Example
 
 ```c
+#define FIO_SHA2
+#define FIO_P384
+#include "fio-stl.h"
+
+int sign_and_verify(const void *msg, size_t len) {
+  uint8_t secret_key[48], public_key[97], sig[104];
+  size_t sig_len = 0;
+  fio_u512 hash = fio_sha384(msg, len);
+  int r = -1;
+  if (fio_p384_keypair(secret_key, public_key))
+    return -1;
+  if (!fio_ecdsa_p384_sign(sig, &sig_len, sizeof(sig), hash.u8, secret_key))
+    r = fio_ecdsa_p384_verify(sig, sig_len, hash.u8, public_key, 97);
+  fio_secure_zero(secret_key, sizeof(secret_key));
+  return r;
+}
+```
+
+Verifying a certificate signature with a known public key:
+
+```c
 #define FIO_P384
 #include "fio-stl.h"
 
@@ -13369,7 +13625,14 @@ int verify_cert_sig(const uint8_t *sig,
 
 The implementation uses 6 × 64-bit limbs for field elements, Jacobian coordinates for point work, P-384-specific modular reduction, and a double-scalar multiplication path for ECDSA verification.
 
-The scalar multiplication is for public verification data. Do not treat this header as a P-384 signing toolkit; there is no public signing API, and private-key use should go to an audited library.
+Secret scalars (signing nonces, secret keys) go through a constant-time path, the same design as P-256:
+
+- scalar multiplication is a Montgomery ladder over all 384 bits with masked conditional swaps and branch-free (mask-selecting) point doubling and mixed addition;
+- field reduction folds the high half with two signed carry passes (`2^384 = 2^128 + 2^96 - 2^32 + 1 mod p`) followed by one branch-free conditional subtraction of `p`;
+- scalar reduction modulo `n` uses Barrett reduction (fixed two correction rounds) and inversion uses Fermat's little theorem with a fixed exponent;
+- range checks on secret values (`0 < d < n`, `0 < k < n`) are branch-free comparisons, and secret temporaries are wiped before returning.
+
+Verification works on public data only and keeps a faster variable-time double-scalar multiplication. No timing measurements back the constant-time claim; it is a property of the code's structure (no secret-dependent branches or memory indexing), not an audited guarantee.
 
 ------------------------------------------------------------
 # ASN.1 DER
@@ -13449,7 +13712,7 @@ SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
 
 Parses one DER element. On success, fills `elem` and returns a pointer to the next element. On error, returns `NULL`.
 
-It rejects invalid DER lengths, truncated buffers, unsupported high-tag-number encodings, and indefinite lengths.
+It parses exactly one element; the returned position lets callers decide whether trailing data is an error. It is lenient where the decode is unambiguous: non-minimal definite lengths and long-form tags (normalized to the low-tag identifier when the number is below 31) are accepted. It rejects truncated buffers, indefinite lengths, unterminated tags and tag numbers above 255 (not representable in `tag_number`). Code that needs strict DER canonicality (e.g., for signed structures) checks it itself, for example by comparing the header size (`elem->data - start`) against the minimal header.
 
 ### `fio_der_element_total_len`
 
@@ -13469,7 +13732,7 @@ SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
                                  uint64_t *value);
 ```
 
-Parses an ASN.1 `INTEGER`. For small integers, pass `value` and receive the 64-bit value. For large integers such as RSA moduli, pass `NULL` and use `elem->data` / `elem->len` directly. Leading zero bytes for positive integers are handled.
+Parses an ASN.1 `INTEGER`. Empty content is rejected; non-minimal encodings (redundant leading `0x00` / `0xFF`) are accepted, so callers that need DER canonicality check `elem->data` themselves (X.509 does). For small integers, pass `value` and receive the 64-bit value; the INTEGER must then be non-negative and fit in 64 bits after skipping leading zero bytes. For large integers such as RSA moduli, pass `NULL` and use `elem->data` / `elem->len` directly (sign is not checked).
 
 Returns `0` on success, `-1` on error.
 
@@ -13494,7 +13757,7 @@ SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
 
 Converts an ASN.1 `OBJECT IDENTIFIER` into dotted text such as `1.2.840.113549.1.1.11`.
 
-Returns the number of characters written, excluding the NUL byte, or `-1` on error.
+Returns the number of characters written, excluding the NUL byte, or `-1` on error (including truncated output, non-minimal arcs, or arcs above 64 bits).
 
 ### `fio_der_parse_time`
 
@@ -13503,7 +13766,7 @@ SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
                               int64_t *unix_time);
 ```
 
-Parses `UTCTime` or `GeneralizedTime` into a Unix timestamp. Times must be UTC (`Z`). Fractional seconds are skipped when present.
+Parses `UTCTime` or `GeneralizedTime` into a Unix timestamp. All reads stay within the element. Lenient X.680 forms are accepted: minutes and seconds may be omitted, a fraction of a second (`.` or `,`) is truncated, and the zone may be `Z` or a `+hhmm` / `-hhmm` offset. Local time (no zone), fractions of minutes or hours, trailing data and invalid calendar values (month, day incl. leap years, hour, minute, second) return `-1`. RFC 5280's stricter profile (`Z` with seconds, no fraction) is the X.509 layer's concern.
 
 ### `fio_der_parse_string`
 
@@ -13562,9 +13825,9 @@ FIO_IFUNC uint8_t fio_der_tag_number(const fio_der_element_s *elem);
 
 Use these to keep parser code readable:
 
-- `fio_der_is_tag` checks a universal tag such as `FIO_DER_INTEGER`.
-- `fio_der_is_context_tag` checks `[0]`, `[1]`, and friends.
-- `fio_der_tag_number` returns the decoded tag number.
+- `fio_der_is_tag` compares the full identifier (class, constructed bit, number). Universal numbers such as `FIO_DER_INTEGER` imply the DER form (SEQUENCE/SET constructed, scalars and strings primitive), so a primitive `0x10` is not a SEQUENCE and a constructed `0x22` is not an INTEGER. The typed `fio_der_parse_*` helpers likewise reject constructed or non-universal encodings.
+- `fio_der_is_context_tag` checks `[0]`, `[1]`, and friends (any tag number up to 255) in either form, since EXPLICIT tags are constructed and IMPLICIT tags take the underlying type's form. When the form matters, use `fio_der_is_tag` with the full identifier: `FIO_DER_CONTEXT_0` (`0xA0`) for constructed `[0]`, `0x82` for primitive `[2]`.
+- `fio_der_tag_number` returns the decoded tag number (high-tag form included).
 
 ## Encoding
 
@@ -13628,7 +13891,7 @@ SFUNC size_t fio_der_encode_utc_time(uint8_t *buf, int64_t unix_time);
 SFUNC size_t fio_der_encode_generalized_time(uint8_t *buf, int64_t unix_time);
 ```
 
-These encode Unix timestamps as DER `UTCTime` or `GeneralizedTime`.
+These encode Unix timestamps as DER `UTCTime` or `GeneralizedTime` (64-bit civil time; no `time_t` narrowing). They return `0` when the time can't be represented: `UTCTime` covers 1950-2049 only, `GeneralizedTime` years 0000-9999. X.509 validity encoding picks `UTCTime` through 2049 and `GeneralizedTime` afterwards (RFC 5280).
 
 ## Example
 
@@ -13707,6 +13970,8 @@ typedef struct {
 
 Public key for verification. `n` is the modulus and `e` is the public exponent, both as big-endian byte arrays. This matches the DER layout used in X.509 certificates.
 
+Leading zero bytes are stripped before use. Keys are rejected (functions return `-1`, never abort) unless `n` is odd and 256–512 bytes long, and `e` is odd, at least 3 and at most 64 bits.
+
 ### `fio_rsa_privkey_s`
 
 ```c
@@ -13724,7 +13989,9 @@ typedef struct {
 
 Private key for RSA-PSS signing. `n` and `d` are required. The public exponent `e` and CRT fields (`p`, `q`, `dP`, `dQ`, `qInv`) are optional.
 
-When CRT parameters are available, signing uses CRT with message blinding. If only `n` and `d` are available, signing falls back to the non-CRT path.
+When CRT parameters and `e` are available, signing uses CRT with message blinding. If only `n` and `d` are available, signing falls back to the non-CRT path.
+
+Whenever `e` is supplied, each signature is checked against the public key before it is returned. Faulty computations and inconsistent keys therefore fail with `-1` and never emit a signature. A supplied `e` must satisfy the public-key rules above. `d`, `dP`, `dQ`, and `qInv` may not be wider than `n`, `p`, `q`, and `p`, respectively.
 
 ## Verification
 
@@ -13795,7 +14062,7 @@ SFUNC int fio_rsa_sign_pss(uint8_t *signature,
 Creates an RSA-PSS signature using `RSASSA-PSS-SIGN` from RFC 8017, with the TLS 1.3 settings listed above.
 
 - `signature` must have room for `key->n_len` bytes.
-- `sig_len` receives the signature length, which equals `key->n_len` on success.
+- `sig_len` receives the signature length (the modulus length without leading zero bytes) on success and is left unchanged on error.
 - `msg_hash` is already hashed; this function does not hash the message.
 - `key` must include `n` and `d`; CRT fields are optional.
 
@@ -13833,8 +14100,10 @@ int verify_pss(const uint8_t *sig,
 
 ## Practical Notes
 
-- The signature length must match the modulus length.
-- The public exponent is usually `65537` (`0x010001`), but the API accepts DER-style big-endian bytes.
+- The signature length must match the modulus length (without leading zero bytes).
+- The public exponent is usually `65537` (`0x010001`), but the API accepts DER-style big-endian bytes for any odd exponent of 3 or more, up to 64 bits.
+- All failures, including malformed keys and unsupported sizes, return `-1`; nothing in this module aborts the process.
+- Private-key arithmetic never divides by secret values, and its branches depend only on public data and key bit lengths. Public verification may run in variable time with respect to the public exponent.
 - The module works on pre-computed hashes. Pick the hash to match the certificate or protocol signature algorithm.
 - For X.509 parsing, this module is normally used through [X.509](./155%20x509.md), which extracts the RSA key and dispatches verification.
 
@@ -13892,6 +14161,8 @@ SFUNC int fio_mlkem768_encaps(uint8_t ct[1088],
 
 Creates a ciphertext and shared secret for the holder of `pk`. Randomness comes from the system CSPRNG. Send `ct`; keep `ss` as the shared secret input to your KDF or protocol.
 
+Returns `-1` (without writing `ct`/`ss`) if `pk` fails the FIPS 203 modulus check (any encoded coefficient `>= q`); treat this as a malformed peer key.
+
 ### `fio_mlkem768_encaps_derand`
 
 ```c
@@ -13916,6 +14187,8 @@ Recovers the shared secret from a ciphertext and secret key.
 ML-KEM uses implicit rejection: invalid ciphertexts produce a pseudorandom shared secret derived from the secret key and ciphertext instead of a loud failure. That prevents chosen-ciphertext games from turning your error path into an oracle.
 
 Returns `0` for well-formed inputs.
+
+`sk` is trusted: it must come from `fio_mlkem768_keypair*` (or be validated on import). The FIPS 203 decapsulation-key hash check is not repeated per call.
 
 ## X25519MLKEM768 Hybrid
 
@@ -14012,9 +14285,10 @@ It is non-allocating while parsing: `fio_x509_cert_s` stores pointers into the o
 - RSA, ECDSA P-256, ECDSA P-384, and Ed25519 public keys.
 - RSA PKCS#1 v1.5, RSA-PSS, ECDSA, and Ed25519 signature verification.
 - Validity period checks.
-- Hostname matching using SAN DNS names and CN fallback, with one-label wildcards.
-- Basic Constraints and Key Usage.
+- Hostname matching using SAN DNS names and CN fallback, with one-label wildcards; IP-literal hostnames match SAN iPAddress entries only.
+- Basic Constraints (including pathLenConstraint), Key Usage, Extended Key Usage (serverAuth / clientAuth / any), and Name Constraints (dNSName, iPAddress, permitted directoryName; other forms fail closed).
 - Certificate chain validation against an optional trust store.
+- Strict where it matters, lenient where decoding is unambiguous: extra elements or trailing bytes inside RFC 5280 structures, non-zero BIT STRING padding in keys and signatures, negative or even RSA moduli, inner/outer signature algorithms with different meanings (supported algorithms are compared by decoded value; unsupported ones must be byte-equal), and duplicate or malformed recognized extensions are parse errors. Non-minimal lengths (anywhere) and INTEGERs, KU padding bits (masked off), an explicit GeneralSubtree minimum of 0, and empty SAN or EKU lists (which grant nothing) are accepted.
 - TLS 1.3 Certificate message parsing.
 - Self-signed certificate generation for Ed25519 and P-256 keys.
 
@@ -14051,7 +14325,9 @@ typedef enum {
 
 `fio_x509_key_usage_e` defines RFC 5280 key-usage bits such as `FIO_X509_KU_DIGITAL_SIGNATURE`, `FIO_X509_KU_KEY_ENCIPHERMENT`, and `FIO_X509_KU_KEY_CERT_SIGN`. ASN.1 bit strings use MSB-first ordering, so the constants look a little backwards until they save you from off-by-one sadness.
 
-`fio_x509_error_e` gives chain validation results: `FIO_X509_OK`, parse failure, expired/not-yet-valid, signature failure, issuer mismatch, not-a-CA, no trust anchor, hostname mismatch, empty chain, and chain-too-long.
+`fio_x509_error_e` gives chain validation results: `FIO_X509_OK`, parse failure, expired/not-yet-valid, signature failure, issuer mismatch, not-a-CA, no trust anchor, hostname mismatch, empty chain, chain-too-long, `FIO_X509_ERR_KEY_USAGE` (Key Usage / EKU forbids the use), `FIO_X509_ERR_PATH_LENGTH`, `FIO_X509_ERR_NAME_CONSTRAINTS`, and `FIO_X509_ERR_CRITICAL_EXTENSION` (an unrecognized critical extension).
+
+`fio_x509_purpose_e` selects the Extended Key Usage required by chain validation: `FIO_X509_PURPOSE_TLS` (serverAuth or clientAuth), `FIO_X509_PURPOSE_SERVER`, or `FIO_X509_PURPOSE_CLIENT`. Certificates without an EKU extension, or listing anyExtendedKeyUsage, allow every purpose.
 
 ### `fio_x509_trust_store_s`
 
@@ -14083,22 +14359,30 @@ typedef struct fio_x509_cert_s fio_x509_cert_s;
 ```
 
 The parsed certificate structure uses non-owning buffer views
-(`fio_buf_info_s` / `fio_ubuf_info_s`) and packs to 256 bytes with no
-interior padding:
+(`fio_buf_info_s` / `fio_ubuf_info_s`) and has no interior padding
+(280 bytes on 64-bit targets):
 
 - `verified`: non-zero when a TLS backend verified this certificate's chain
   (peer inspection only; always zero after `fio_x509_parse`);
-- `der`: a reference to the original DER bytes (not a copy);
+- `der`: a reference to the Certificate TLV in the original bytes (not a copy). Bytes after the Certificate are not parsed; compare `der.len` with the input length to reject them;
 - `fingerprint`: 32-byte SHA-256 of the DER bytes (see `fio_x509_fingerprint`);
 - `version`, `serial`, and validity timestamps;
 - raw subject and issuer DNs;
 - subject CN;
-- public key type and key data;
+- public key type and key data (`pubkey.ecdsa.point` is the SEC 1 point as
+  encoded: uncompressed `04 || x || y` or compressed `02/03 || x`; it is
+  decoded and checked against the curve when a signature is verified);
 - signature algorithm and signature bytes;
 - TBS certificate bytes used for verification;
 - Basic Constraints (`is_ca`), Key Usage (`has_key_usage`, `key_usage`), and
   SAN data (first DNS name, first IP address, and the raw SAN extension for
-  iterating the rest).
+  iterating the rest);
+- `name_constraints`: raw NameConstraints extension value (empty if absent);
+- `path_len`: Basic Constraints pathLenConstraint, or
+  `FIO_X509_PATH_LEN_NONE` (`0xFF`) when absent or not a CA;
+- `ext_flags`: `FIO_X509_EXT_EKU`, `FIO_X509_EXT_EKU_SERVER`,
+  `FIO_X509_EXT_EKU_CLIENT`, `FIO_X509_EXT_EKU_ANY`, and
+  `FIO_X509_EXT_UNKNOWN_CRITICAL` bits.
 
 All view pointers reference the original DER buffer.
 
@@ -14114,6 +14398,8 @@ SFUNC int fio_x509_parse(fio_x509_cert_s *cert,
 
 Parses one DER certificate. `cert` is zeroed first. Returns `0` on success, `-1` on parse error.
 
+Parsing is strict about structure (see Supported Pieces) but tolerant about semantics: unknown key algorithms parse as `FIO_X509_KEY_UNKNOWN`, unsupported signature algorithms (including RSA-PSS parameter sets other than SHA-256/384/512 with matching MGF1, salt length equal to the hash length, and trailer 1) parse as unknown and are rejected by verification, and unknown critical extensions only set `FIO_X509_EXT_UNKNOWN_CRITICAL` (chain validation rejects them). RSA keys must have a positive, odd modulus and an odd exponent `>= 3` that fits in 64 bits. Leading zero octets of RSA parameters are stripped. Negative serial numbers are tolerated (RFC 5280 4.1.2.2). An empty SAN extension still counts as present, so hostname matching never falls back to the CN.
+
 ### `fio_x509_fingerprint`
 
 ```c
@@ -14124,6 +14410,8 @@ Computes the SHA-256 of the certificate's DER bytes into
 `cert->fingerprint` (32 raw bytes). Call after `fio_x509_parse`; hashing is
 lazy so parsing never pays for it. Requires the SHA2 module.
 
+This is the standard fingerprint of the exact certificate bytes, not an issuer/serial or public-key identity. A signed certificate can have more than one valid encoding: lengths outside the signed TBS may be encoded non-minimally, the outer signatureAlgorithm may use an equivalent encoding, and ECDSA signatures remain valid as `(r, n - s)` (high-S signatures are accepted for interoperability). So do not blocklist certificates by fingerprint; use issuer + serial or an SPKI hash. Pinning (allow-listing) by fingerprint is unaffected, since a different encoding simply fails the pin.
+
 ### `fio_x509_verify_signature`
 
 ```c
@@ -14131,7 +14419,7 @@ SFUNC int fio_x509_verify_signature(const fio_x509_cert_s *cert,
                                     const fio_x509_cert_s *issuer);
 ```
 
-Verifies that `issuer` signed `cert`, using the issuer public key and the certificate signature algorithm. Returns `0` when the signature is valid, `-1` otherwise.
+Verifies that `issuer` signed `cert`, using the issuer public key and the certificate signature algorithm. The algorithm must fit the key: P-256 requires ECDSA-SHA256, P-384 requires ECDSA-SHA384, Ed25519 requires Ed25519, and RSA keys require an RSA algorithm. Returns `0` when the signature is valid, `-1` otherwise.
 
 ### `fio_x509_check_validity`
 
@@ -14150,7 +14438,9 @@ SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
                                   size_t hostname_len);
 ```
 
-Checks whether a certificate matches a hostname. SAN DNS entries are supported, with CN fallback. Wildcards are one-label wildcards such as `*.example.com`; they do not swallow `a.b.example.com`.
+Checks whether a certificate matches a hostname. SAN DNS entries are supported, with CN fallback when no SAN extension is present. Wildcards are one-label wildcards such as `*.example.com`; they do not swallow `a.b.example.com`.
+
+IPv4 (dotted quad, no leading zeros) and IPv6 (including `::` and an IPv4 tail) literals match only SAN iPAddress entries, never DNS names or the CN.
 
 Returns `0` for a match, `-1` for no match.
 
@@ -14163,15 +14453,21 @@ Distinguished Names are compared as raw DER with the core
 ### `fio_x509_verify_chain`
 
 ```c
-SFUNC int fio_x509_verify_chain(const uint8_t **certs,
-                                const size_t *cert_lens,
+SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
                                 size_t cert_count,
                                 const char *hostname,
                                 int64_t current_time,
                                 fio_x509_trust_store_s *trust_store);
+
+SFUNC int fio_x509_verify_chain_purpose(const fio_ubuf_info_s *certs,
+                                        size_t cert_count,
+                                        const char *hostname,
+                                        int64_t current_time,
+                                        fio_x509_trust_store_s *trust_store,
+                                        fio_x509_purpose_e purpose);
 ```
 
-Validates a certificate chain for TLS-style use.
+Validates a certificate chain for TLS-style use. `fio_x509_verify_chain` uses `FIO_X509_PURPOSE_SERVER` when `hostname` is set and `FIO_X509_PURPOSE_TLS` otherwise; servers validating client certificates should call `fio_x509_verify_chain_purpose` with `FIO_X509_PURPOSE_CLIENT`.
 
 Expected order:
 
@@ -14179,11 +14475,16 @@ Expected order:
 2. `certs[1]`: intermediate that signed `certs[0]`.
 3. `certs[n-1]`: closest-to-root certificate.
 
-Validation parses all certificates, checks validity periods, optionally matches the hostname, verifies each signature with the next certificate, checks issuer/subject DN links, requires CA certificates where needed, and optionally checks the final certificate against `trust_store`.
+Validation parses all certificates, checks validity periods, optionally matches the hostname, verifies each signature with the next certificate, checks issuer/subject DN links, and optionally checks the final certificate against `trust_store`. It also enforces:
 
-Trust anchors are matched by (subject DN, public key): the anchor's key must
-verify the final certificate's signature. This also covers self-signed
-certificates — a same-named impostor with a different key is rejected.
+- issuers must be CAs (Basic Constraints cA; legacy self-issued v1/v2 certificates excepted) and, when Key Usage is present, assert keyCertSign;
+- pathLenConstraint, counting non-self-issued intermediates below each issuer;
+- the leaf must assert digitalSignature when Key Usage is present;
+- every chain certificate's EKU (if present) must allow the purpose;
+- Name Constraints of each issuer (and of the trust anchor) against the subject DN, all SAN entries, and the matched hostname of the leaf; self-issued intermediates are exempt;
+- no certificate may carry an unrecognized critical extension.
+
+Trust anchors are matched either byte-for-byte or by (subject DN, public key): an anchor whose subject equals the final certificate's issuer must verify its signature. Every same-DN anchor is tried. A same-named impostor with a different key fails with `FIO_X509_ERR_SIGNATURE`. Anchor Key Usage, EKU and pathLen are not checked.
 
 Returns `FIO_X509_OK` (`0`) on success, or a `FIO_X509_ERR_*` code.
 
@@ -14194,7 +14495,7 @@ SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
                               fio_x509_trust_store_s *trust_store);
 ```
 
-Checks whether `cert` appears in the trust store by subject DN match. Returns `0` if trusted, `-1` if not found.
+Checks whether `cert` is a trust-store anchor (byte-identical) or is signed by one (anchor subject equals `cert`'s issuer and the anchor key verifies `cert`'s signature). A DN match alone is never enough. Returns `0` if trusted, `-1` otherwise.
 
 ### `fio_x509_error_str`
 
@@ -14221,7 +14522,7 @@ SFUNC size_t fio_tls_parse_certificate_message(fio_tls_cert_entry_s *entries,
 
 Parses a TLS 1.3 `Certificate` message body, after the handshake header. It extracts certificate entries and skips per-certificate extensions.
 
-Returns the number of certificates parsed, or `FIO_TLS_CERT_PARSE_ERROR` on malformed input.
+Returns the number of certificates parsed, or `FIO_TLS_CERT_PARSE_ERROR` on malformed input. The certificate list length must account for exactly the remaining bytes, and a message holding more than `max_entries` certificates is an error (never silently truncated).
 
 ## Self-Signed Certificate Generation
 
@@ -14265,7 +14566,9 @@ SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
 
 Writes a DER-encoded self-signed X.509v3 certificate. Call with `buf == NULL` to get a worst-case buffer size, then call again with a real buffer.
 
-Returns bytes written, or `0` on error.
+Dates use UTCTime through 2049 and GeneralizedTime afterwards. IP literals listed in `san_dns` are encoded as SAN iPAddress entries. The EKU extension lists both serverAuth and clientAuth.
+
+Returns bytes written, or `0` on error (including `not_before > not_after`).
 
 ### `fio_x509_keypair_clear`
 
@@ -14297,7 +14600,7 @@ int check_cert(const uint8_t *der, size_t der_len, int64_t now) {
 
 - Define the crypto modules you need before including the STL: RSA, P-256, P-384, Ed25519, SHA-2, and ASN.1 may all matter depending on certificate algorithms.
 - `trust_store == NULL` skips root trust checking in `fio_x509_verify_chain`; useful for structural tests, not for real trust decisions.
-- Hostname checks are DNS-name focused. IP address SAN handling is not a full replacement for platform certificate validation.
+- Hostname checks cover DNS names and IP literals. This is still not a full replacement for platform certificate validation (no revocation, policy, or AIA processing).
 - Parsed strings and DNs are raw certificate data. Normalize policy elsewhere if your application needs browser-grade PKI behavior.
 
 ------------------------------------------------------------
@@ -14327,7 +14630,7 @@ This module extracts PEM blocks, decodes certificates, and parses private keys u
 - `RSA PRIVATE KEY` (legacy PKCS#1)
 - `EC PRIVATE KEY` (legacy SEC1)
 
-Private-key parsing supports RSA, P-256, and Ed25519 where the required crypto modules are available.
+Private-key parsing supports RSA, P-256, P-384, and Ed25519 where the required crypto modules are available.
 
 ## Types
 
@@ -14339,6 +14642,7 @@ typedef enum {
   FIO_PEM_KEY_RSA = 1,
   FIO_PEM_KEY_ECDSA_P256 = 2,
   FIO_PEM_KEY_ED25519 = 3,
+  FIO_PEM_KEY_ECDSA_P384 = 4,
 } fio_pem_key_type_e;
 ```
 
@@ -14364,7 +14668,8 @@ typedef struct fio_pem_private_key_s fio_pem_private_key_s;
 Parsed private-key material. The active union member depends on `type`:
 
 - RSA: fixed-size byte arrays for `n`, `e`, `d`, optional `p`, `q`, `dP`, `dQ`, and `qInv`, each with a length.
-- P-256: 32-byte private scalar, optional 65-byte uncompressed public key.
+- P-256 (`ecdsa_p256`): 32-byte private scalar, optional embedded public key: `has_public_key` is set and the first `public_key_len` bytes of `public_key` hold it, either uncompressed (65 bytes, `0x04 || x || y`) or compressed (33 bytes, `0x02/0x03 || x`).
+- P-384 (`ecdsa_p384`): 48-byte private scalar, optional embedded public key in the first `public_key_len` bytes of `public_key`, uncompressed (97 bytes) or compressed (49 bytes).
 - Ed25519: 32-byte seed, optional 32-byte public key.
 
 Call `fio_pem_private_key_clear` when done.
@@ -14383,7 +14688,9 @@ SFUNC size_t fio_pem_parse(fio_pem_s *out,
 
 Finds the next PEM block, decodes its Base64 body into `der_buf`, and fills `out`.
 
-Returns the number of bytes consumed from `pem_data`, or `0` on error. To parse a file with multiple PEM blocks, advance by the returned count and call again.
+Returns the number of bytes consumed from `pem_data` (through the END marker and any whitespace after it), or `0` on error. To parse a file with multiple PEM blocks, advance by the returned count and call again.
+
+The Base64 body is decoded leniently where the result is unambiguous: standard or URL-safe alphabet, any whitespace (blank lines, `\v`, `\f`), optional/short/extra `=` padding, and non-zero trailing bits are ignored. Text before `BEGIN` and after `END` is skipped; labels may be any single-line text. Errors: bytes that cannot be decoded (including RFC 1421 `Proc-Type:` headers of encrypted PEM), data after padding, and a dangling single Base64 character. `der_buf` needs room for the decoded bytes only.
 
 ### `fio_pem_parse_certificate`
 
@@ -14395,7 +14702,15 @@ SFUNC int fio_pem_parse_certificate(fio_x509_cert_s *cert,
 
 Finds a `CERTIFICATE` block, decodes it, and parses the DER certificate with the X.509 parser. Returns `0` on success, `-1` on error.
 
-Requires the X.509 module for the certificate parse.
+On success `cert` owns a heap copy of the DER data (`cert->der`), which every view in `cert` points into. Release it with `fio_pem_certificate_free`. Nothing is retained on error.
+
+### `fio_pem_certificate_free`
+
+```c
+SFUNC void fio_pem_certificate_free(fio_x509_cert_s *cert);
+```
+
+Frees the DER buffer owned by a certificate returned by `fio_pem_parse_certificate` and zeroes `cert`. Do not use it for certificates parsed with `fio_x509_parse` (their DER belongs to the caller).
 
 ### `fio_pem_parse_private_key`
 
@@ -14411,11 +14726,13 @@ Supported forms:
 
 | PEM label | Format | Supported keys |
 | --- | --- | --- |
-| `PRIVATE KEY` | PKCS#8 | RSA, P-256, Ed25519 |
+| `PRIVATE KEY` | PKCS#8 | RSA, P-256, P-384, Ed25519 |
 | `RSA PRIVATE KEY` | PKCS#1 | RSA |
-| `EC PRIVATE KEY` | SEC1 | P-256 |
+| `EC PRIVATE KEY` | SEC1 | P-256, P-384 |
 
 Returns `0` on success, `-1` on unsupported format, missing dependency, encrypted key, or malformed input.
+
+Key structures are parsed strictly: exact DER tags, every SEQUENCE must be consumed exactly, unknown or extra fields are rejected, versions are checked (PKCS#8 v1/v2, PKCS#1 two-prime v0 with all CRT fields, SEC1 v1), INTEGERs must be positive and minimally encoded, EC scalars must be exactly the curve's length (32 bytes for P-256, 48 for P-384), and embedded EC public keys must be an uncompressed (65 or 97 bytes) or compressed (33 or 49 bytes) SEC 1 point with no unused bits (the point itself is not validated here; the TLS backend compares it with the public key derived from the scalar). The EC curve is the SEC1 `parameters` namedCurve (secp256r1 or secp384r1); under PKCS#8 it is the AlgorithmIdentifier's namedCurve, which an inner `parameters` field must match; a legacy SEC1 key without `parameters` is identified by its scalar length. The temporary decoded DER is wiped before it is freed. Ed25519 public keys are never imported (`has_public_key` is always 0); derive them from the seed.
 
 ### `fio_pem_get_certificate_der`
 
@@ -14472,9 +14789,7 @@ void scan_pem(const char *pem, size_t len) {
 
 ## Dependency Notes
 
-- Generic `fio_pem_parse` needs only the PEM/base64 helpers.
-- Certificate parsing needs X.509 support.
-- Private key parsing uses ASN.1, and RSA/P-256/Ed25519 support depends on the matching crypto headers.
+- `FIO_PEM` automatically enables X.509 (and with it DER, RSA, P-256, P-384 and Ed25519); the PEM types use `FIO_RSA_MAX_BYTES` and the X.509 OIDs.
 
 ------------------------------------------------------------
 # Argon2
@@ -14532,7 +14847,7 @@ Arguments:
 | `ad` | Optional associated data `X`. |
 | `t_cost` | Pass count, minimum `1`. |
 | `m_cost` | Memory cost in KiB, minimum `8 * parallelism`. |
-| `parallelism` | Lane count, minimum `1`; processed sequentially here. |
+| `parallelism` | Lane count, `1` to `2^24-1` (`0` selects `1`); processed sequentially here. |
 | `outlen` | Output length in bytes, minimum `4`, default `32`. |
 | `type` | `FIO_ARGON2D`, `FIO_ARGON2I`, or `FIO_ARGON2ID`. |
 
@@ -14549,6 +14864,8 @@ Computes an Argon2 hash and returns up to 64 bytes in `fio_u512`. Use the first 
 
 For outputs longer than 64 bytes, use `fio_argon2_hash`.
 
+On error (invalid arguments or allocation failure) the returned value is all zeros. This still fails closed when comparing against a stored hash, but when the output is used as a key, call `fio_argon2_hash` and check its return value.
+
 ### `fio_argon2_hash`
 
 ```c
@@ -14557,9 +14874,9 @@ SFUNC int fio_argon2_hash(void *out, fio_argon2_args_s args);
   fio_argon2_hash(out, (fio_argon2_args_s){__VA_ARGS__})
 ```
 
-Writes the Argon2 output into a caller-provided buffer. Supports arbitrary output lengths of at least 4 bytes.
+Writes the Argon2 output into a caller-provided buffer, which must hold `outlen` bytes (`0` selects 32). Supports arbitrary output lengths of at least 4 bytes.
 
-Returns `0` on success, `-1` on error.
+Returns `0` on success, `-1` on error, leaving `out` untouched. Errors: `out` is `NULL`, `outlen` is 1-3, `type` is invalid, `parallelism` exceeds `2^24-1`, an input is longer than `2^32-1` bytes, the memory matrix exceeds the address space, or allocation fails. Large `m_cost` values from untrusted sources fail gracefully on allocation failure, but applications should still cap costs.
 
 ## Example
 
@@ -14641,6 +14958,8 @@ Computes a Lyra2 hash and returns up to 64 bytes in `fio_u512`. Use the first `o
 
 For outputs longer than 64 bytes, use `fio_lyra2_hash`.
 
+On error (invalid arguments or allocation failure) the returned value is all zeros. This still fails closed when comparing against a stored hash, but when the output is used as a key, call `fio_lyra2_hash` and check its return value.
+
 ### `fio_lyra2_hash`
 
 ```c
@@ -14651,7 +14970,7 @@ SFUNC int fio_lyra2_hash(void *out, fio_lyra2_args_s args);
 
 Writes the Lyra2 output into a caller-provided buffer. Supports arbitrary output lengths.
 
-Returns `0` on success, `-1` on error.
+Returns `0` on success, `-1` on error, leaving `out` untouched. Errors: `out` is `NULL`, `outlen`, `t_cost`, `m_cost`, `n_cols`, or a password / salt length exceeds `2^32-1`, the memory matrix exceeds the address space, or allocation fails. A `NULL` password or salt is treated as empty. Large costs from untrusted sources fail gracefully on allocation failure, but applications should still cap costs.
 
 ## Example
 
@@ -14731,14 +15050,14 @@ Generates a cryptographically secure random 128-bit key.
 FIO_IFUNC size_t fio_otp_print_key(char *dest, uint8_t *key, size_t len);
 ```
 
-Encodes a key as a Base32 string for sharing with authenticator apps.
+Encodes a key as an unpadded (no `=`) RFC 4648 Base32 string for sharing with authenticator apps.
 
 **Parameters:**
-- `dest` — output buffer. Must be at least `len * 2 + 1` bytes.
-- `key` — key bytes; if `NULL`, a new random key is generated and encoded.
+- `dest` — output buffer. Must be at least `len * 2 + 1` bytes (33 bytes when `key` is `NULL`).
+- `key` — key bytes; if `NULL`, a new random 16-byte key is generated and encoded (`len` is ignored).
 - `len` — key length in bytes.
 
-**Returns:** length of the encoded string written to `dest`.
+**Returns:** length of the encoded string written to `dest`, or `0` on error (`dest` is then an empty string when not `NULL`).
 
 #### `fio_otp`
 
@@ -14757,12 +15076,16 @@ Computes a TOTP for the current wall-clock time.
 | Argument | Type | Description |
 |---|---|---|
 | `interval` | `size_t` | rotation interval in seconds; defaults to 30 |
-| `digits` | `size_t` | number of output digits; defaults to 6 |
+| `digits` | `size_t` | number of output digits (1-10); defaults to 6 |
 | `offset` | `int64_t` | interval offset from now; defaults to 0 |
-| `is_hex` | `uint8_t` | set if `secret` is Hex encoded |
+| `is_hex` | `uint8_t` | set if `secret` is Hex encoded (any case) |
 | `is_raw` | `uint8_t` | set if `secret` is raw bytes |
 
-**Returns:** the OTP value.
+**Returns:** the OTP value, or `FIO_OTP_ERROR` (`0xFFFFFFFF`, never a valid OTP) when `digits` exceeds 10, the secret is `NULL` with a non-zero length, or a Hex / Base32 secret is malformed (any invalid character, data after `=` padding) or decodes to more than 128 bytes. Verifiers must reject `FIO_OTP_ERROR` before comparing codes.
+
+Hex and Base32 secrets are parsed leniently: any letter case, separators (whitespace, `-`, `:`) are ignored, and for Base32 `=` padding is optional (missing, partial or extra) and unused trailing bits are ignored.
+
+Keys longer than 64 bytes are hashed by HMAC-SHA-1 (RFC 2104), as authenticator apps do.
 
 #### `fio_otp_at`
 
@@ -14783,7 +15106,7 @@ Computes a TOTP for a specific Unix timestamp. Useful for tests and RFC vectors.
 
 **Named Arguments:** same as `fio_otp`.
 
-**Returns:** the OTP value.
+**Returns:** the OTP value, or `FIO_OTP_ERROR` (see `fio_otp`).
 
 ### Example
 
@@ -14821,9 +15144,9 @@ This is **not** a key-management vault — it is a convenience for deriving a st
 At startup (via `FIO_CONSTRUCTOR`), the module checks:
 
 - `SECRET` — the secret value, plain text or Hex encoded.
-- `SECRET_LENGTH` — optional byte length; if omitted, `strlen` is used.
+- `SECRET_LENGTH` — optional byte length (`1..strlen(SECRET)`) that truncates `SECRET`; if omitted, `strlen` is used. Invalid values (non-numeric, negative, zero or longer than `SECRET`) are ignored with a warning.
 
-If `SECRET` is unset or empty, a random 512-bit secret is generated.
+If `SECRET` is unset, empty or whitespace only, a random 512-bit secret is generated.
 
 ### API Functions
 
@@ -14854,11 +15177,13 @@ SFUNC void fio_secret_set(char *str, size_t len, bool is_random);
 Sets the global secret from `str` and stores its masked SHA-512 hash.
 
 **Parameters:**
-- `str` — secret bytes; may be plain text or Hex encoded. Whitespace is ignored during Hex decoding.
+- `str` — secret bytes; may be plain text or Hex encoded. Whitespace between Hex byte pairs is ignored during Hex decoding.
 - `len` — length of `str` in bytes.
 - `is_random` — set `true` if the secret is randomly generated.
 
-If `str` is `NULL` or `len` is `0`, a random secret is generated and `is_random` is forced to `true`.
+If `str` is `NULL`, `len` is `0` or `str` contains only whitespace, a random secret is generated and `is_random` is forced to `true`.
+
+Setters are meant for initialization (before threads are started); they are not synchronized with concurrent readers.
 
 #### `fio_secret_set_at`
 
@@ -14873,7 +15198,9 @@ Hashes `str` with SHA-512 and stores the masked result in `secret`.
 - `str` — secret bytes; Hex decoding and whitespace handling apply as in `fio_secret_set`.
 - `len` — length of `str`.
 
-If `str` is `NULL` or `len` is `0`, random bytes are hashed instead.
+If `str` is `NULL`, `len` is `0` or `str` contains only whitespace, random bytes are hashed instead.
+
+All values share one process-lifetime mask, so values stored earlier remain valid after later `fio_secret_set` / `fio_secret_set_at` calls.
 
 #### `fio_secret_at`
 
@@ -14886,7 +15213,7 @@ Unmasks a secret hash stored by `fio_secret_set_at`.
 **Parameters:**
 - `secret` — pointer to a masked `fio_u512`.
 
-**Returns:** the unmasked SHA-512 hash.
+**Returns:** the unmasked SHA-512 hash (all zeros if `secret` is `NULL`).
 
 ### Example
 
@@ -14932,11 +15259,11 @@ Return values:
 | Condition | Return value |
 | --- | --- |
 | Success | Decompressed byte count, `<= out_len`. |
-| Output too small | Required buffer size, `> out_len`. |
+| Output too small | Required-size lower bound, `> out_len`; retrying may require further growth. |
 | Corrupt input | `0`. |
 | Size query | Required size, or `0` if corrupt / not knowable by scan. |
 
-Pass `out == NULL` or `out_len == 0` to query the decompressed size. The query path scans meta-block lengths without allocating.
+Pass `out == NULL` or `out_len == 0` to query the decompressed size. Header scans do not validate compressed bodies. Multiple compressed meta-blocks require decoding with growing temporary storage. For untrusted streams, decode into a caller-bounded buffer instead of using an unrestricted size query.
 
 ### `fio_brotli_decompress_bound`
 
@@ -14944,7 +15271,7 @@ Pass `out == NULL` or `out_len == 0` to query the decompressed size. The query p
 FIO_IFUNC size_t fio_brotli_decompress_bound(size_t in_len);
 ```
 
-Returns a conservative decompression bound. The practical formula is `in_len * 1032 + 1024`, capped at 4GB for very large inputs. Prefer the size-query mode of `fio_brotli_decompress` when possible.
+Returns a practical allocation estimate, **not** an upper bound for arbitrary streams. The formula is `in_len * 1032 + 1024`, with a 4GB estimate for inputs above 1GB on 64-bit systems; arithmetic saturates on 32-bit systems. Use bounded decoding for untrusted streams.
 
 ### `fio_brotli_compress`
 
@@ -14970,7 +15297,7 @@ Use an output buffer sized with `fio_brotli_compress_bound`. Returns compressed 
 FIO_IFUNC size_t fio_brotli_compress_bound(size_t in_len);
 ```
 
-Returns a generous compression bound: `in_len + (in_len >> 2) + 1024`.
+Returns a generous compression bound: `in_len + (in_len >> 2) + 1024`, saturated at `SIZE_MAX` if the calculation would overflow.
 
 ## Example
 
@@ -15065,7 +15392,7 @@ SFUNC size_t fio_deflate_compress(void *out,
                                   int level);
 ```
 
-Compresses raw DEFLATE data.
+Compresses raw DEFLATE data. Inputs larger than `0xFFFFFF00` bytes are rejected (the matcher uses 32-bit offsets). Levels 1–9 also reject token allocation sizes that cannot be represented by `size_t`; input is never silently shortened.
 
 Compression levels:
 
@@ -15082,7 +15409,7 @@ Returns compressed length on success, `0` on error.
 FIO_IFUNC size_t fio_deflate_compress_bound(size_t in_len);
 ```
 
-Returns an upper bound for raw DEFLATE output size.
+Returns an upper bound for raw DEFLATE output size, or `SIZE_MAX` if the bound cannot be represented.
 
 ## Gzip Wrappers
 
@@ -15207,6 +15534,8 @@ sync-flush trailer only on the message-final chunk.
 - `flush == 0`: normal streaming (buffered up to 32KB, then auto-compressed).
 - `flush == 1`: sync flush, useful at WebSocket frame boundaries.
 
+Compression rejects individual input chunks larger than `0xFFFF0000` bytes. On compression failure, buffered input and takeover history are preserved; output bytes written by a failed call must be discarded. A zero return while buffering (`flush == 0`) is not an error.
+
 For decompression, a return value greater than `out_len` means “retry with this much output space”; buffered input is preserved for that retry. Multi-block peer streams (e.g. zlib at any memLevel) inflate fully; the 9 completion bytes are appended internally.
 
 ## Example: Raw Roundtrip
@@ -15312,7 +15641,7 @@ These functions implement RFC 8446 section 7 derivation rules:
 | `fio_tls13_compute_finished` | Compute Finished verify data. |
 | `fio_tls13_update_traffic_secret` | Advance application traffic secret for KeyUpdate. |
 
-`use_sha384 != 0` selects SHA-384; otherwise SHA-256 is used.
+`use_sha384 != 0` selects SHA-384; otherwise SHA-256 is used. All derivation functions except `fio_tls13_compute_finished` return `0` on success and `-1` on invalid arguments; never install keys after a failed derivation.
 
 ## Record Layer
 
@@ -15324,7 +15653,7 @@ These functions implement RFC 8446 section 7 derivation rules:
 | `fio_tls13_record_encrypt` | Encrypt one TLS record and advance sequence number. |
 | `fio_tls13_record_decrypt` | Decrypt one TLS record, recover inner content type, and advance sequence number. |
 
-Record encryption appends the inner content type before AEAD protection. Decryption strips padding and reports the recovered `fio_tls13_content_type_e`.
+Record encryption appends the inner content type before AEAD protection. Decryption is performed in place (the ciphertext buffer is modified), strips padding, reports the recovered `fio_tls13_content_type_e`, and fails if the plaintext exceeds `out_capacity`. Both directions fail (instead of wrapping and reusing a nonce) once the sequence number reaches `UINT64_MAX`; rotate keys with KeyUpdate first. A key length that doesn't match the cipher (16 bytes for AES-128-GCM, 32 for AES-256-GCM and ChaCha20-Poly1305) makes both directions fail.
 
 ## Handshake Helpers
 
@@ -15362,16 +15691,17 @@ Record encryption appends the inner content type before AEAD protection. Decrypt
 | `fio_tls13_client_set_trust_store` | Attach an X.509 trust store pointer. |
 | `fio_tls13_client_skip_verification` | Enable/disable certificate verification skipping. Handle with tongs. |
 | `fio_tls13_client_get_cert_error` | Return the last certificate validation error. |
-| `fio_tls13_client_is_cert_verified` | Report certificate and chain verification status. |
+| `fio_tls13_client_is_cert_verified` | Report certificate and chain verification status (`0` when verification was skipped). |
 | `fio_tls13_client_start` | Build the initial ClientHello. |
 | `fio_tls13_client_process` | Process incoming handshake/record bytes and optionally emit output. |
-| `fio_tls13_client_encrypt` | Encrypt application data. |
+| `fio_tls13_client_encrypt` | Encrypt application data; a pending KeyUpdate response is emitted first. |
 | `fio_tls13_client_decrypt` | Decrypt application data. |
 | `fio_tls13_client_is_connected` | Test for connected state. |
 | `fio_tls13_client_is_error` | Test for error state. |
 | `fio_tls13_client_alpn_set` | Configure ALPN protocols. |
-| `fio_tls13_client_set_cert` | Configure client certificate/private key. |
-| `fio_tls13_client_set_public_key` | Configure client public key. |
+| `fio_tls13_client_set_cert` | Configure the client certificate (leaf only) and private key (Ed25519, P-256, P-384 or RSA). |
+| `fio_tls13_client_set_cert_chain` | Configure a client certificate chain (leaf first, then intermediates) and private key; the whole chain is sent. |
+| `fio_tls13_client_set_public_key` | Optional; stores a P-256 public key (signing needs only the private key). |
 | `fio_tls13_client_cert_requested` | Report whether the server requested a client certificate. |
 
 ## Standalone Server API
@@ -15381,16 +15711,23 @@ Record encryption appends the inner content type before AEAD protection. Decrypt
 | `fio_tls13_server_init` | Initialize server state. |
 | `fio_tls13_server_destroy` | Clear server state. |
 | `fio_tls13_server_set_cert_chain` | Configure the server certificate chain. |
-| `fio_tls13_server_set_private_key` | Configure the private key. |
+| `fio_tls13_server_set_private_key` | Configure the private key (Ed25519, P-256, P-384 or RSA). |
+| `fio_tls13_server_on_hello` | Set a callback that selects the credentials once the ClientHello is parsed (receives the SNI host name, may call the two setters above; non-zero aborts with `handshake_failure`). SNI host names over 255 bytes or with a NUL byte always abort with `unrecognized_name`. |
 | `fio_tls13_server_process` | Process incoming handshake/record bytes and optionally emit output. |
-| `fio_tls13_server_encrypt` | Encrypt application data. |
+| `fio_tls13_server_encrypt` | Encrypt application data; a pending KeyUpdate response is emitted first. |
 | `fio_tls13_server_decrypt` | Decrypt application data. |
 | `fio_tls13_server_is_connected` | Test for connected state. |
 | `fio_tls13_server_is_error` | Test for error state. |
 | `fio_tls13_server_alpn_set` | Configure ALPN protocols. |
-| `fio_tls13_server_require_client_cert` | Configure client-certificate request/require mode. |
+| `fio_tls13_server_require_client_cert` | Configure client-certificate request/require mode. A client certificate is only accepted with a trust store (`fio_tls13_server_set_trust_store`); without one the handshake fails closed. |
 | `fio_tls13_server_client_cert_received` | Report whether a client certificate arrived. |
 | `fio_tls13_server_client_cert_verified` | Report whether the client certificate verified. |
+
+## Buffer Sizes
+
+| Function | Purpose |
+| --- | --- |
+| `fio_tls13_flight_size` | Output capacity sufficient for every handshake step of an endpoint presenting the given certificate chain (`count` may be 0). Flights grow with the chain and span several records. |
 
 ## Example Shape
 
@@ -15417,6 +15754,18 @@ void client_start(uint8_t *out, size_t cap) {
 - `190 tls13.md` documents the standalone TLS 1.3 implementation.
 - [`405 tls13.md`](./405%20tls13.md) is the IO-layer integration point.
 - Skipping certificate verification is for tests and controlled environments, not normal trust.
+- Server certificates are verified for the serverAuth purpose and client certificates for clientAuth. RSA PKCS#1 v1.5 is accepted only in certificate signatures, never in CertificateVerify (RFC 8446).
+- ECDSA certificate keys (P-256, P-384) may use uncompressed or compressed SEC 1 points (RFC 5480), in the peer leaf and in the chain. Key share points stay uncompressed, as RFC 8446 requires.
+- A server-selected ALPN protocol that the client did not offer aborts the handshake (`illegal_parameter`).
+- After a HelloRetryRequest, ClientHello2 repeats ClientHello1 (ALPN, groups, signature algorithms) except for the key share and cookie. A cookie-only HRR resends the original key shares (hybrid included). Only an HRR selecting P-256 changes the share, because X25519 and X25519MLKEM768 shares were already sent. ServerHello2 must keep the HRR's cipher suite and group.
+- Handshake messages may span records or share one record. Partial messages are buffered up to `FIO_TLS13_MAX_HANDSHAKE_MSG` (default 64 KiB per message). Data after a message that precedes a key change (ServerHello, HRR, ClientHello, Finished) is rejected (`unexpected_message`).
+- Post-handshake records are processed message by message. Each message must be complete within its record, and KeyUpdate (exactly 1 byte) must end the record. NewSessionTicket is ignored. Any other message type fails the connection.
+- Certificate lists must be well formed to their last byte (`decode_error`). At most 10 certificates are kept; longer chains are still validated.
+- The client offers, and the server's CertificateRequest lists, the same signature schemes: Ed25519, ECDSA P-256/P-384, RSA-PSS SHA-256/384, plus RSA PKCS#1 v1.5 for certificate signatures only.
+- Both endpoints sign CertificateVerify the same way, with the scheme chosen per handshake from the peer's `signature_algorithms`: Ed25519 and EC keys have one scheme each (P-256 `0x0403`, P-384 `0x0503`), RSA keys sign RSA-PSS (rsae) with SHA-256 or SHA-384, the configured hash preferred. A server whose key matches none of the client's schemes fails the handshake (`handshake_failure`); a client in that position answers a CertificateRequest with an empty Certificate and no CertificateVerify (RFC 8446 4.4.2.3), leaving the decision to the server.
+- Peer `signature_algorithms` lists (ClientHello, CertificateRequest) keep the first 16 schemes this implementation knows, so long lists of unknown schemes (e.g., post-quantum ones) can't crowd out supported ones.
+- A client sends its whole configured chain. Handshake flights (the server's EncryptedExtensions ... Finished and the client's Certificate ... Finished) are sized from the certificate chain and split into records of at most 16 KiB of plaintext, so chains larger than one record work in both directions. The buffer passed as `out_capacity` must fit the flight: `fio_tls13_flight_size(chain, count)` returns a sufficient size. Small flights (up to 8 KiB) are built on the stack; longer ones allocate and are wiped before being freed. The IO layer (405) reserves this space itself.
+- Missing trust store or X.509 support is logged once as a warning (later at debug level), not once per connection.
 - Keep traffic secrets and record keys out of logs. They are not collectibles.
 
 ------------------------------------------------------------
@@ -15470,8 +15819,6 @@ Optional companion macros (e.g. `FIO_ARRAY_TYPE`, `FIO_MAP_KEY`, `FIO_MAP_VALUE`
 | Hash Maps / Sets | `FIO_MAP_NAME` | [→ 210 map.md](./210 map.md) |
 | Reference Counting | `FIO_REF_NAME` | [→ 249 reference counter.md](./249 reference counter.md) |
 | FIOBJ Soft Types | `FIO_FIOBJ` | [→ 250 fiobj.md](./250 fiobj.md) |
-
-> **Note:** `210 map2.h` is a legacy file kept for backward compatibility and is not part of this active module group.
 
 ---
 
@@ -16102,26 +16449,28 @@ uint32_t ARY_each(ARY_PTR ary,
                   int64_t start_at);
 ```
 
-### Pointer iteration
+### Index-based iteration
 
 ```c
-/* Returns a pointer to the next element.
-   Pass NULL for `pos` to get the first element.
-   `first` tracks the base pointer across reallocations.
-   Returns NULL when the end is reached. */
-FIO_ARRAY_TYPE *ARY_each_next(ARY_PTR ary,
-                               FIO_ARRAY_TYPE **first,
-                               FIO_ARRAY_TYPE *pos);
+typedef struct ARY_iterator_s {
+    size_t i;            /* logical index */
+    FIO_ARRAY_TYPE *p;   /* element pointer; NULL when invalid */
+} ARY_iterator_s;
+
+/* Zero-init to start; advance previous.i when previous.p is non-NULL. */
+ARY_iterator_s ARY_each_next(ARY_PTR ary, ARY_iterator_s previous);
 ```
+
+Start with `(ARY_iterator_s){0}`. `each_next` reacquires the element pointer from current storage using the saved index; a NULL `previous.p` leaves the index unchanged, and a NULL returned `.p` means invalid or at the end. Reset the iterator explicitly to restart. The index survives `reserve`/`compact`; never dereference a saved `.p` after **any** mutation. Appending before reaching the end makes new elements visitable. Insertion/removal can change which element follows; destroying the array during iteration is unsupported.
 
 ### Loop macro
 
 ```c
-/* Iterates with a typed `pos` pointer.
-   `array_name` must be the literal macro name used when generating the type.
-   Avoid structural mutations inside the loop (push/pop/remove may invalidate pos). */
-FIO_ARRAY_EACH(array_name, array_ptr, pos) { /* pos is a FIO_ARRAY_TYPE * */ }
+/* array_name is the literal name used when generating the array type. */
+FIO_ARRAY_EACH(array_name, array_ptr, i) { /* i is an ARY_iterator_s */ }
 ```
+
+`break` and `continue` retain their usual `for`-loop behavior. As with `each_next`, `.i` is stable across relocation and `.p` must not be used after mutation until the next iteration reacquires it.
 
 ```c
 #define FIO_ARRAY_NAME fio_ary
@@ -16129,8 +16478,8 @@ FIO_ARRAY_EACH(array_name, array_ptr, pos) { /* pos is a FIO_ARRAY_TYPE * */ }
 #include "fio-stl.h"
 
 void print_all(fio_ary_s *a) {
-    FIO_ARRAY_EACH(fio_ary, a, pos) {
-        printf("%d\n", *pos);
+    FIO_ARRAY_EACH(fio_ary, a, i) {
+        printf("%zu: %d\n", i.i, *i.p);
     }
 }
 ```
@@ -16161,8 +16510,8 @@ void example(void) {
     str_list_push(&list, "banana");
     str_list_push(&list, "cherry");
 
-    FIO_ARRAY_EACH(str_list, &list, pos) {
-        printf("%s\n", *pos);
+    FIO_ARRAY_EACH(str_list, &list, i) {
+        printf("%s\n", *i.p);
     }
 
     str_list_destroy(&list);
@@ -16551,7 +16900,6 @@ static inline void cache_put(cache_s *c, fio_str_info_s k, void *v) {
 
 ## Notes
 
-- **`210 map2.h`** is a legacy implementation. It is not documented here and should not be used in new code.
 - Pointer tagging (`FIO_PTR_TAG`) and reference counting (`FIO_REF_NAME`) are supported, same as all 200-range modules.
 - The map internally stores a compact 8-bit hash fingerprint alongside each node to speed up probing. Full hash is cached per-node unless `FIO_MAP_RECALC_HASH 1` is set.
 - Against hash-flooding: after `FIO_MAP_ATTACK_LIMIT` full collisions the map falls back to overwriting stale entries. Always salt hashes with a per-map value (e.g., the map pointer) when keys come from untrusted input.
@@ -16622,7 +16970,7 @@ Set these **before** `#include`, after `FIO_REF_NAME`.
 |---|---|---|
 | `FIO_REF_FLEX_TYPE` | _(not defined)_ | When defined, the constructor allocates extra memory for a `FIO_REF_FLEX_TYPE[]` array immediately after the main struct. The constructor accepts a `size_t members` argument and stores the count internally. The `members` value is also available inside `FIO_REF_INIT`. |
 
-> **Note:** `FIO_REF_FLEX_TYPE` shrinks the reference counter to 32 bits (instead of the native word size). Do not combine this with a custom `FIO_MEM_FREE` that depends on the byte-count argument, because the flex free call reports a size that omits `sizeof(FIO_REF_TYPE)`.
+> **Note:** `FIO_REF_FLEX_TYPE` shrinks the reference counter to 32 bits (instead of the native word size). The constructor rejects counts above `UINT32_MAX` and allocations whose byte size would overflow `size_t`. A flex suffix must be naturally aligned immediately after the wrapped type (enforced at compile time). Allocation and deallocation report the same byte size to custom allocators.
 
 ### Pointer tagging
 
@@ -16653,7 +17001,7 @@ FIO_REF_TYPE *REF_dup(const FIO_REF_TYPE *obj);    /* FIO_REF_CONSTRUCTOR_ONLY *
 FIO_REF_TYPE *REF_dup2(const FIO_REF_TYPE *obj);   /* default */
 ```
 
-Atomically increments the reference count. Returns the same pointer, or `NULL` if the input is `NULL`. Thread-safe.
+Atomically increments the reference count. Returns the same pointer, or `NULL` if the input is `NULL`. Thread-safe. The caller must hold a live reference while duplicating it; neither this function nor the debugging helper can safely operate on an object already being destroyed.
 
 ### Decrement reference count / free
 
@@ -16784,7 +17132,7 @@ void example(void) {
 
 The `_wrapper_s` header holds the reference count (and optional `flx_size` / `metadata` fields). Callers never see it — they only receive a pointer to the `FIO_REF_TYPE` that immediately follows.
 
-The header's declared alignment matches `_Alignof(FIO_REF_TYPE)`, so its size rounds up to a multiple of that alignment and the object that follows it is always correctly aligned. Allocation goes through `FIO_MEM_REALLOC_ALIGNED_` with the type's alignment (the allocator treats smaller-than-default requests as the default), so over-aligned types work in every allocator configuration.
+The header's declared alignment is at least `_Alignof(FIO_REF_TYPE)` and may be greater if metadata needs it. Its size is a multiple of the wrapped type's alignment, keeping the object aligned. Allocation goes through `FIO_MEM_REALLOC_ALIGNED_` with the header's alignment (the allocator treats smaller-than-default requests as the default), so over-aligned types and metadata work in every allocator configuration.
 
 ---
 
@@ -17495,8 +17843,9 @@ thread pool for CPU-heavy or blocking work that must not block the IO loop.
 **Docs:** [./405 openssl.md](./405 openssl.md) · [./405 tls13.md](./405 tls13.md) *(planned)*
 
 TLS is plugged into the reactor through `fio_io_functions_s` — a set of
-transport callbacks (`build_context`, `free_context`, `start`, `read`, `write`,
-`flush`, `finish`, `cleanup`) that replace the default socket calls.
+transport callbacks (`build_context`, `free_context`, `dup_context`, `start`,
+`read`, `write`, `flush`, `finish`, `cleanup`) that replace the default socket
+calls.
 
 The `fio_io_tls_s` context carries certificates, ALPN negotiation entries, and
 trusted CA chains. It is built from `fio_io_tls_new()` / `fio_io_tls_cert_add()`
@@ -17506,6 +17855,12 @@ URL query string:
 ```c
 fio_io_listen(.url = "0.0.0.0:443/?tls=./certs/", .protocol = &my_proto);
 ```
+
+Ownership moves with the data: `fio_io_listen` / `fio_io_connect` take (and
+free) the `.tls` object they are given (`fio_io_tls_dup` to keep one), and
+`fio_io_attach_fd` takes its built `tls` context reference, on success or
+failure. A listener passes each accepted connection its own
+`dup_context` reference.
 
 Two backends are available — OpenSSL 3.x (`fio_openssl_io_functions()`) and
 the native TLS 1.3 engine (`fio_tls13_io_functions()`). The default is
@@ -17807,6 +18162,13 @@ size_t fio_io_shutdown_timeout_set(size_t milliseconds);
 stop. `fio_io_add_workers` and `fio_io_restart` are cluster/process helpers;
 `fio_io_restart_on_signal` binds hot restart to a signal.
 
+SIGINT/SIGTERM handlers only publish an atomic stop request; the reactor logs
+and starts graceful shutdown on its next review. A second stop signal exits
+the receiving process immediately without cleanup. Required signal-monitor
+registration failure is fatal rather than starting without stop protection.
+SIGPIPE suppression is process-lifetime, shared with OpenSSL, and remains
+active after reactor shutdown.
+
 `fio_io_shutdown_timeout_set` changes the hard shutdown grace period and returns
 the value that will be used.
 
@@ -17824,8 +18186,9 @@ int64_t fio_io_last_tick_time(void);
 ```
 
 `fio_io_last_tick()` is the cached millisecond value from the last reactor poll.
-`fio_io_last_tick_time()` is the cached wall-clock millisecond timestamp,
-useful for approximate log and HTTP date values.
+`fio_io_last_tick_time()` is the cached wall-clock millisecond timestamp (ms
+since epoch), useful for approximate log and HTTP date values and for
+timestamps compared across machines (IPC cluster, pub/sub).
 
 ---
 
@@ -17865,7 +18228,9 @@ Callback flow:
 1. `on_attach` after an IO is attached to the protocol.
 2. `on_data` when incoming data can be read.
 3. `on_ready` after all pending writes drain.
-4. `on_timeout` when the connection timeout is reached.
+4. `on_timeout` when the connection timeout is reached. An IO already closing
+   with `fio_io_close` (still draining output) is closed immediately on
+   timeout instead, dropping unsent data.
 5. `on_shutdown` immediately before reactor shutdown closes the connection.
 6. `on_close(iobuf, udata)` after the connection is closed.
 
@@ -17899,6 +18264,7 @@ typedef struct fio_io_functions_s fio_io_functions_s;
 struct fio_io_functions_s {
   void *(*build_context)(fio_io_tls_s *tls, uint8_t is_client);
   void (*free_context)(void *context);
+  void *(*dup_context)(void *context);
   void (*start)(fio_io_s *io);
   ssize_t (*read)(fio_socket_i fd, void *buf, size_t len, void *context);
   ssize_t (*write)(fio_socket_i fd, const void *buf, size_t len, void *context);
@@ -17914,6 +18280,10 @@ operations; the `fio_io_s` handle is the long-lived identity.
 
 Return conventions:
 
+- When `tls` is non-NULL, the functions are a TLS variant (set by the user, or
+  by the reactor's protocol validation when TLS is given). `build_context`
+  returning `NULL` then means the TLS context couldn't be built, and
+  `fio_io_listen` / `fio_io_connect` fail rather than continue without TLS.
 - `read` behaves like non-blocking `read(2)`.
 - `write` returns plaintext bytes accepted (`N > 0`), `0` for zero-length
   input, or `-1` with `errno` set. If data was transformed (for example,
@@ -17922,8 +18292,28 @@ Return conventions:
 - `flush` returns `0` only when all internal output is empty. Non-zero (`N > 0`
   or `-1`) means pending data remains and the reactor should keep watching for
   writability.
-- `finish` runs before closing after output is sent; `cleanup` releases the
-  per-connection transport context after close.
+- On graceful close (`fio_io_close`) the reactor waits until `flush` returns
+  `0`, calls `finish` once (for example, to queue a TLS `close_notify`), then
+  waits for `flush` to return `0` again before closing. The wait is bounded by
+  the connection timeout. `cleanup` releases the per-connection transport
+  context after close.
+- Context references: `build_context` and `dup_context` each return a
+  reference, released with `free_context`. `build_context` must duplicate its
+  settings reference with `fio_io_tls_dup` if it needs the settings after the
+  callback returns. A listener keeps its own context reference
+  and passes the `dup_context` result to every accepted connection as is.
+  `dup_context` may return `NULL` (it defaults to returning `NULL`, which also
+  suits plaintext's `NULL` context); `start` then sees a `NULL` context (the
+  bundled TLS backends close such connections).
+  Adding `dup_context` changes the struct layout; rebuild code embedding it.
+- `fio_io_attach_fd` takes ownership of its `tls` reference. `start` either
+  replaces it (`fio_io_tls_set`) with per-connection state that takes over
+  the reference (for example, a connection that keeps its parent context
+  alive) or releases it; `cleanup` releases the IO's `tls` after close.
+- `free_context` may run while connections started from the context are still
+  open (for example, after a listener stops). Keep any context state those
+  connections use alive until their `cleanup`, for example by reference
+  counting.
 
 Set default TLS transport functions before the reactor starts:
 
@@ -17973,9 +18363,15 @@ fio_io_listen(.url = "0.0.0.0:3000/?key=./key.pem&cert=./cert.pem",
               .protocol = &MY_PROTOCOL);
 ```
 
-`.tls` ownership is moved to the listener. If you need to share a TLS settings
-object, duplicate it first with `fio_io_tls_dup` and free your own references
-with `fio_io_tls_free`.
+TLS is a must when requested: if a TLS object is in effect (`.tls`, a TLS
+scheme or URL hints) but the context can't be built (for example, a missing
+certificate file), `fio_io_listen` returns `NULL` instead of creating a
+listener that refuses every connection. As with a failed bind, `on_stop` (if
+set) is called so `protocol` / `udata` state can be released.
+
+`.tls` ownership moves to `fio_io_listen` (success or failure; the same applies
+to `fio_io_connect`). If you need to share a TLS settings object, pass
+`fio_io_tls_dup(tls)` and free your own reference with `fio_io_tls_free`.
 
 Listener helpers:
 
@@ -17998,6 +18394,7 @@ typedef struct {
   void *udata;
   fio_io_tls_s *tls;
   uint32_t timeout;
+  uint8_t verify;
 } fio_io_connect_args_s;
 
 fio_io_s *fio_io_connect(fio_io_connect_args_s args);
@@ -18010,10 +18407,35 @@ contain TLS hints. `timeout` defaults to 30 seconds. `on_failed` is the cleanup
 hook for failed connection attempts; established connections use the protocol
 callbacks.
 
+If TLS is requested but the TLS context can't be built, no socket is opened
+and `NULL` is returned; `on_failed` still runs once on the IO thread (possibly
+after `fio_io_connect` returns) and remains the only place to release
+`protocol` / `udata`.
+
 For TLS URLs (`https`, `wss`, `tls`, or explicit TLS hints), the URL's host
-name is automatically set as the SNI (Server Name Indication) host name sent
-during the TLS handshake (see `fio_io_tls_sni_set`). IP literals are excluded,
-as required by RFC 6066.
+becomes the expected server identity, replacing any name previously stored in
+the TLS object. When trust is configured, the server certificate must match it
+(DNS name or IP address SAN). DNS host names are also sent as the SNI (Server
+Name Indication) host name; IP literals are never sent as SNI (RFC 6066).
+
+**Verifying the server (opt-in).** A TLS client without trust entries does
+**not** verify the server certificate (a warning is logged). To verify against
+the system trust store, use either the `trust=sys` URL query or `.verify`:
+
+```c
+fio_io_connect("tls://example.com:443/?trust=sys", .protocol = &MY_PROTOCOL);
+fio_io_connect("tls://example.com:443", .protocol = &MY_PROTOCOL, .verify = 1);
+/* custom CA file (`.pem` is appended when missing) */
+fio_io_connect("tls://example.com:443/?trust=./my-ca", .protocol = &MY_PROTOCOL);
+```
+
+When `.verify` is set and the connection uses TLS, a TLS object without trust
+entries gets the system trust store (same as `fio_io_tls_trust_add(tls, NULL)`).
+Explicit trust entries (`.tls` or `trust=<file>`) are kept as is. Like URL TLS
+hints, this updates the `.tls` object, so later connections using a
+`fio_io_tls_dup` reference to it also verify. For non-TLS connections `.verify`
+is ignored; it never changes the URL scheme. Once trust is set, the server certificate's DNS name /
+IP address SAN must also match the URL host.
 
 ---
 
@@ -18049,14 +18471,27 @@ void fio_io_noop(fio_io_s *io);
 ```
 
 `fio_io_attach_fd` adopts a valid socket into the reactor. It returns `NULL` on
-error. The returned pointer must not be used arbitrarily; IO handles are valid
-inside proper callbacks and scheduled tasks. If code must keep a handle outside
+error. Ownership of `fd` and `tls` (a `build_context` / `dup_context`
+reference) transfers on success and on failure; call `dup_context` first to
+keep a reference. A valid `fd` that can't be attached (allocation failure, or
+the socket can't be made non-blocking) is closed, `tls` is released with
+`free_context` and the protocol's `on_close` is scheduled. The returned
+pointer must not be used arbitrarily; IO handles are valid
+inside proper callbacks and scheduled tasks. With a `NULL` protocol, any
+`tls` reference must come from the default TLS backend. If code must keep a handle outside
 that context, call `fio_io_dup` and later `fio_io_free`. These two functions are
-thread-safe.
+thread-safe. A write whose packet or task can't be allocated requests closure
+of the IO (`fio_io_close`). Closure itself is scheduled through the IO queue
+and can be lost while that queue is saturated; no completion guarantee applies
+in that case.
 
 `fio_io_protocol_set` installs a new protocol. `NULL` is a valid "only-write"
 protocol. The accessor may temporarily return the old protocol while the change
-is being attached.
+is being attached. If the state keeping a custom transport (`NULL` over a
+custom transport) can't be allocated, the switch fails closed: the change isn't
+applied and the IO is closed immediately (like `fio_io_close_now`). This is
+distinct from a change whose queued task can't be allocated: that change is
+dropped without closing the IO.
 
 `fio_io_read` returns bytes read. `0` is not EOF by itself; it can mean no data
 was available on the non-blocking socket. Use close callbacks for final cleanup.
@@ -18204,6 +18639,24 @@ SNI, ALPN protocol callbacks, and trusted certificates / CA stores. Passing
 passing `NULL` to `fio_io_tls_trust_add` asks the backend to use system trust.
 Backend behavior is documented in the TLS backend docs.
 
+A server may hold several certificates in one `fio_io_tls_s` object; the
+context builder loads each one once and every TLS backend selects one per
+handshake from the ClientHello SNI host name (before any application data):
+
+1. a case-insensitive exact match of the `server_name`;
+2. else a single-label wildcard entry (`*.example.com` matches
+   `www.example.com`, but neither `example.com` nor `a.b.example.com`);
+3. else (no SNI, unknown or malformed name — empty, over 255 bytes, holding
+   spaces, control, `*` or non-ASCII bytes) the **default** certificate: the
+   one added with an empty / `NULL` `server_name`, else the first one added.
+
+`server_name` is stored lowercased (names over 255 bytes are rejected) and
+re-adding a name replaces its entry. Certificates added without files are
+self-signed for their name (`"localhost"` for the default). A certificate or
+key file that fails to load (missing file, bad PEM, wrong password) fails the
+context build in every backend; it never falls back to a self-signed
+certificate.
+
 `fio_io_tls_sni_set` sets the SNI (Server Name Indication) host name a TLS
 client sends during the handshake. `fio_io_connect` sets it automatically from
 the URL's host name, so manual calls are rarely needed. `NULL` / empty host
@@ -18250,7 +18703,10 @@ Trust configured with `fio_io_tls_trust_add` always refers to **peer**
 verification: a server context verifies (and requires) client certificates,
 a client context verifies the server certificate. An empty trust list means
 no peer verification; passing `NULL` to `fio_io_tls_trust_add` selects the
-system trust store.
+system trust store. A trust instruction that can't be stored (allocation
+failure, or an overlong `tls=` URL trust value) fails closed: it still counts
+in `fio_io_tls_trust_count`, and `fio_io_tls_each` fails for trust iteration,
+so the backend refuses to build the context rather than skip verification.
 
 Once the handshake completed, iterate the peer's certificate chain (leaf
 first) to implement application level client certificate authentication and
@@ -18299,7 +18755,8 @@ typedef struct fio_io_async_s fio_io_async_s;
 
 fio_queue_s *fio_io_async_queue(fio_io_async_s *q);
 void fio_io_async_attach(fio_io_async_s *q, uint32_t threads);
-#define fio_io_async(q_, ...) fio_queue_push((q_)->q, __VA_ARGS__)
+#define fio_io_async(q_, ...) \
+  fio_queue_push(fio_io_async_queue(q_), __VA_ARGS__)
 void fio_io_async_every(fio_io_async_s *q, fio_timer_schedule_args_s args);
 #define fio_io_async_every(async, ...) \
   fio_io_async_every(async, (fio_timer_schedule_args_s){__VA_ARGS__})
@@ -18318,7 +18775,22 @@ int main(void) {
 }
 ```
 
-The queue starts and stops with the IO reactor. Use `fio_io_async_queue` when a
+The queue starts and stops with the IO reactor. While the reactor isn't running
+(or if worker threads can't be spawned), tasks run on the IO queue. Stopping the
+reactor (or spawning worker processes) routes new tasks to the IO queue, joins
+the worker threads and performs pending tasks, so no async task is running once
+`fio_io_start` returns or a worker process is forked; the queue restarts once
+forking is done. A task pushed by another thread while the queue stops is never
+lost: it runs on the next start or at exit. At exit, the IO queue and every
+async queue are drained until all are empty (tasks may push more tasks, as may
+timer `on_finish` and global environment `on_close` callbacks) before an async
+queue's memory is released. A forked worker inherits the async queues stopped
+(the parent's threads and their locks are gone) and runs inherited pending
+tasks when its reactor starts, or at exit. Calling `fio_io_async_attach` again
+while running replaces the worker threads; the old threads finish their current
+task and exit.
+
+Use `fio_io_async_queue` when a
 raw `fio_queue_s *` is needed, `fio_io_async` to push tasks, and
 `fio_io_async_every` for timers on that async queue.
 
@@ -18410,7 +18882,8 @@ typedef struct fio_ipc_s {
   uint16_t flags; /* application flags */
   uint16_t routing_flags; /* routing state; do not edit directly */
   uint64_t timestamp; /* message timestamp */
-  uint64_t id;        /* message ID */
+  uint64_t id;        /* message ID (deduplication / replay filter) */
+  uint64_t nonce;     /* fresh random value per encryption */
   union {
     void (*call)(struct fio_ipc_s *); /* local handler */
     uint32_t opcode;                  /* registered handler ID */
@@ -18432,8 +18905,8 @@ typedef struct {
   void (*on_reply)(fio_ipc_s *); /* called on caller when a reply arrives */
   void (*on_done)(fio_ipc_s *);  /* called on caller when final reply arrives */
   fio_io_s *exclude;             /* IO to exclude from delivery (or FIO_IPC_EXCLUDE_SELF) */
-  uint64_t timestamp;            /* force timestamp; 0 = use reactor tick */
-  uint64_t id;                   /* force message ID; 0 = random */
+  uint64_t timestamp;            /* force timestamp; 0 = wall-clock ms (cached) */
+  uint64_t id;                   /* force message ID; 0 = random (see below) */
   uint32_t opcode;               /* registered op-code; replaces call if non-zero */
   uint16_t flags;                /* user-settable flags */
   bool cluster;                  /* deliver to remote machines in cluster */
@@ -18461,8 +18934,8 @@ typedef struct fio_ipc_opcode_s {
 typedef struct {
   fio_ipc_s *ipc;       /* original request (required) */
   fio_buf_info_s *data; /* reply payload */
-  uint64_t timestamp;   /* 0 = current tick */
-  uint64_t id;          /* 0 = use original request ID */
+  uint64_t timestamp;   /* 0 = wall-clock ms (cached) */
+  uint64_t id;          /* 0 = fresh random ID */
   uint16_t flags;       /* 0 = use original request flags */
   uint8_t done;         /* set to 1 on last reply (triggers on_done on caller) */
   uint8_t flags_set;    /* set to 1 to allow flags=0 override */
@@ -18478,7 +18951,7 @@ typedef struct {
   (fio_buf_info_s[]){ __VA_ARGS__, { .len = ((size_t)-1) } }
 ```
 
-Composes multiple buffers into a single message without intermediate allocation. Iteration stops at the first entry with `len == (size_t)-1`.
+Composes multiple buffers into a single message without intermediate allocation. Iteration stops at the first entry with `len == (size_t)-1` (the terminator the macro appends). Zero-length elements are allowed and skipped; an element with a `NULL` `buf` and a non-zero `len` contributes that many zero bytes. A combined length that overflows `size_t` fails the message.
 
 ```c
 uint32_t seq = 42;
@@ -18595,7 +19068,7 @@ SFUNC void fio_ipc_reply(fio_ipc_reply_args_s args);
   fio_ipc_reply((fio_ipc_reply_args_s){ .ipc = (r), __VA_ARGS__ })
 ```
 
-Send one or more replies from the master back to the caller. Set `.done = 1` on the final reply to trigger the caller's `on_done` callback. Replies inherit `call`, `on_reply`, `on_done`, and `udata` from the original request.
+Send one or more replies from the master back to the caller. Set `.done = 1` on the final reply to trigger the caller's `on_done` callback. Replies inherit `call`, `on_reply`, `on_done`, and `udata` from the original request. Each reply gets a fresh random `id` unless `.id` is set (it does not reuse the request's `id`).
 
 Streaming replies:
 
@@ -18774,7 +19247,10 @@ SFUNC void fio_ipc_free(fio_ipc_s *msg);
 SFUNC void fio_ipc_detach(fio_ipc_s *msg);
 
 /** Set a one-shot callback invoked when sending is complete.
-    The callback receives ownership of the decrypted message and must free it. */
+    The callback receives ownership of the decrypted message and must free it.
+    Usually runs from an IO thread task; if that task cannot be queued (no
+    memory) it runs on the thread calling fio_ipc_free. Not guaranteed to run
+    on the IO thread, nor to run at all if the message is discarded. */
 SFUNC void fio_ipc_after_send(fio_ipc_s *ipc,
                                void (*fn)(fio_ipc_s *, void *),
                                void *udata);
@@ -18804,7 +19280,24 @@ SFUNC void fio_ipc_encrypt(fio_ipc_s *m);
 FIO_IFUNC int fio_ipc_decrypt(fio_ipc_s *m);
 ```
 
-Sending encrypts messages automatically. `fio_ipc_encrypt` encrypts a message in place; `fio_ipc_decrypt` returns `0` on success or nonzero if authentication fails. Most applications should use the delivery functions instead.
+Sending encrypts messages automatically. `fio_ipc_encrypt` encrypts a message in place; `fio_ipc_decrypt` returns `0` on success or nonzero if authentication fails. A failure is final: the message stays marked as encrypted, its payload is not usable, and calling `fio_ipc_decrypt` again fails again. Most applications should use the delivery functions instead.
+
+Messages use ChaCha20-Poly1305 with a per-message key derived by `fio_risky256_keyed` from `timestamp || id || nonce`; the ChaCha20 nonce is `id || nonce`. The KDF key is a 32-byte window of the 64-byte shared secret, starting at byte `(id & 31) + 1`, so messages fall into 32 key groups. `len`, `flags`, and `routing_flags` are associated data; `timestamp`, `id` and `nonce` are authenticated through the key.
+
+`nonce` is a fresh random value on every encryption, so keys never repeat, even when a forced `timestamp` / `id` pair does. Re-sending one encrypted message to many peers reuses its key, which is safe. Default IDs (messages and replies) are fresh random values; cluster peers drop repeated `timestamp` / `id` pairs as replays.
+
+## Connection authentication
+
+Each side of an IPC connection (worker ↔ master and cluster peers) sends one sealed declaration when the connection opens: its instance UUID and role. A valid MAC proves knowledge of the shared secret. The peer's first message must be a valid declaration, otherwise the connection is closed. Until the peer is authenticated, the connection receives no broadcasts, and incoming frames larger than the connection's read buffer wait (the IO is suspended) rather than being allocated.
+
+* Local: the declaration's (monotonic) timestamp must be within 1 second of the time the connection opened (accept / connect), the UUID must match (workers inherit the master's) and the role must be the opposite one (so a declaration can't be reflected back). The UUID is then discarded.
+* Cluster: the declaration also carries a random per-connection challenge and must pass the 30 second window and the replay filter below. Because any client can obtain a node's declaration and replay it to another node, each side answers a valid declaration with a sealed proof that echoes the peer's challenge under its own UUID. The peer is authenticated only when its proof echoes our challenge, which costs cluster connections one round trip. The peer UUID is then registered: our own UUID and UUIDs of connected peers are refused.
+
+Connections that do not declare within about 30 seconds are closed.
+
+Cluster messages are also checked against a 30 second window around the wall clock (`fio_io_last_tick_time`, so cluster hosts need synchronized clocks) and a replay filter of recent `timestamp` / `id` pairs. Duplicates are dropped before decryption; only authentic messages are recorded. The filter only forgets pairs that have left the window. If more than 262,144 pairs are inside the window, the oldest are dropped and messages with timestamps at or below theirs are refused from then on (fail closed).
+
+UDP discovery handles at most 64 datagrams per `on_data` event and logs rejected datagrams at most once a second.
 
 ---
 
@@ -18820,6 +19313,7 @@ The routing flags are defined in the header for advanced use. Prefer the deliver
 #define FIO_IPC_FLAG_CLUSTER    ((uint16_t)1 << 4) /* deliver to remote machines */
 #define FIO_IPC_FLAG_REPLY      ((uint16_t)1 << 5) /* this is a reply */
 #define FIO_IPC_FLAG_PING       ((uint16_t)1 << 6) /* internal keepalive */
+#define FIO_IPC_FLAG_HELLO      ((uint16_t)1 << 7) /* internal declaration */
 
 /** Test a flag: returns flag value if set, 0 otherwise. */
 #define FIO_IPC_FLAG_TEST(msg, flag) (((msg)->routing_flags & (flag)) == (flag))
@@ -18835,7 +19329,8 @@ The routing flags are defined in the header for advanced use. Prefer the deliver
 - Call `fio_ipc_dup` to keep a message alive beyond the callback, then
   `fio_ipc_free` when done.
 - Data passed via `FIO_IPC_DATA` is copied into the message immediately —
-  source buffers may be stack-allocated or freed right after the call.
+  source buffers may be stack-allocated or freed right after the call. A
+  `NULL` buffer with a nonzero length adds that many zero bytes.
 
 ---
 
@@ -18904,9 +19399,10 @@ Returns the `fio_io_functions_s` vtable that wires OpenSSL into the IO reactor:
 | Field | Role |
 |-------|------|
 | `build_context` | Converts `fio_io_tls_s` into an `SSL_CTX` wrapper |
-| `free_context` | Deferred free of `SSL_CTX` and the `fio_io_tls_s` reference |
-| `start` | Per-connection: `SSL_new`, custom BIO setup, initial handshake |
-| `read` | Non-blocking decrypt: advances handshake if needed, then `SSL_read_ex` |
+| `free_context` | Deferred release of one context reference; `SSL_CTX` and the `fio_io_tls_s` reference are freed after the last reference (including connections, until `cleanup`) |
+| `dup_context` | Returns another reference to the context (listeners pass one to each accepted connection) |
+| `start` | Per-connection: `SSL_new`, custom BIO setup, initial handshake; the connection takes over the IO's context reference. On setup failure the reference is released and the connection is closed |
+| `read` | Non-blocking decrypt: advances handshake if needed, then `SSL_read_ex`. Records already received before the peer's FIN are delivered before EOF; fatal TLS errors close the connection |
 | `write` | Non-blocking encrypt: `SSL_write_ex` → encrypt → socket |
 | `flush` | Sends any pending encrypted bytes from the internal buffer |
 | `finish` | Sends TLS `close_notify` before the TCP close |
@@ -18959,18 +19455,18 @@ fio_io_tls_alpn_add(tls, "http/1.1", on_http1_selected);
 fio_io_tls_trust_add(tls, NULL);      /* use system trust store */
 fio_io_tls_trust_add(tls, "ca.pem"); /* or a specific CA bundle */
 
-/* Listen */
+/* Listen: ownership of `tls` moves to the call (success or failure) */
 fio_io_listen(.url = "0.0.0.0:443",
               .protocol = &MY_PROTOCOL,
               .tls = tls);
 
-fio_io_tls_free(tls); /* release your reference; the listener holds its own */
 fio_io_start(0);
 ```
 
 `fio_io_tls_s` is reference-counted (`fio_io_tls_dup` / `fio_io_tls_free`).
-The backend duplicates the reference during `build_context`; freeing yours
-after `fio_io_listen` is always safe.
+`fio_io_listen` and `fio_io_connect` take ownership of `.tls`; to reuse the
+object, pass `fio_io_tls_dup(tls)` and later `fio_io_tls_free(tls)` your own
+reference.
 
 ### URL shorthand
 
@@ -18992,12 +19488,17 @@ See `fio_io_tls_from_url` in `401 io api.h` for the query syntax.
 When `public_cert_file` and `private_key_file` are both provided to
 `fio_io_tls_cert_add`, the backend:
 
-1. Sets a PEM password callback if `pk_password` is non-`NULL`.
-2. Loads the certificate chain via `SSL_CTX_use_certificate_chain_file`.
-3. Loads the private key via `SSL_CTX_use_PrivateKey_file` (PEM format).
-4. Verifies key-cert consistency with `SSL_CTX_check_private_key`.
+1. Reads the certificate chain (leaf first, then any extra `CERTIFICATE`
+   blocks) into an `X509` and a `STACK_OF(X509)`.
+2. Reads the PEM private key (decrypted with `pk_password`, if any).
+3. Verifies key-cert consistency with `X509_check_private_key`.
 
-Errors are logged with `FIO_LOG_ERROR` and the context build fails.
+Errors are logged with `FIO_LOG_ERROR` and the context build fails
+(`build_context` returns `NULL`, so `fio_io_listen` / `fio_io_connect` fail
+instead of running without TLS; the native TLS 1.3 backend behaves the same,
+including the key-cert check). Every
+certificate is loaded once, when the context is built; the default one is
+installed in the `SSL_CTX` (`SSL_CTX_use_cert_and_key`).
 
 ### Self-signed fallback
 
@@ -19027,8 +19528,21 @@ CA-issued certificate (e.g. Let's Encrypt) in production.
 Client connections send the SNI host name stored in the `fio_io_tls_s` object
 (`fio_io_tls_sni_set`, or the URL host name set automatically by
 `fio_io_connect`) via `SSL_set_tlsext_host_name` before the handshake starts.
-No SNI extension is sent when no host name is set (e.g., when connecting to an
-IP literal, which RFC 6066 forbids as an SNI value).
+The same name is bound to certificate verification (`SSL_set1_host`, no partial
+wildcards), so a trusted certificate issued for another host is rejected.
+An IP literal host (from `fio_io_connect`) is verified against the
+certificate's IP address SANs and never sent as SNI (RFC 6066).
+
+Servers with several certificates select one per handshake from the client's
+SNI, using the backend-neutral rules in the IO API documentation
+(`fio_io_tls_cert_add`: exact case-insensitive match, single-label wildcard,
+default certificate), identical to the native TLS 1.3 backend. All
+certificates are preloaded and indexed by lowercased name in the shared
+context; a certificate callback (`SSL_CTX_set_cert_cb`) performs one lookup and
+replaces the connection's certificates (`SSL_certs_clear` +
+`SSL_use_cert_and_key`) unless the default matches. There is one `SSL_CTX` per
+context, never one per name. OpenSSL itself aborts handshakes whose SNI host
+name is longer than 255 bytes or holds a NUL byte.
 
 ---
 
@@ -19041,6 +19555,10 @@ When a client sends an ALPN extension, the backend walks the offered names in
 order and picks the first that matches a registered protocol.  On match it calls
 `fio_io_tls_alpn_select`, which fires the `on_selected` callback for that
 connection.  If nothing matches, the handshake fails with a fatal alert.
+
+A client offers its registered names in registration order. When the handshake
+completes, the client calls the `on_selected` callback of the protocol the
+server chose (no callback if the server chose none). NPN is not supported.
 
 Protocol names must be 1–255 bytes. The internal wire-format list is capped at
 1 023 bytes total; more protocols than that will log an overflow error.
@@ -19163,8 +19681,7 @@ int main(void) {
 
   fio_io_listen(.url      = "0.0.0.0:8443",
                 .protocol = &ECHO_PROTO,
-                .tls      = tls);
-  fio_io_tls_free(tls);
+                .tls      = tls); /* takes ownership of `tls` */
 
   FIO_LOG_INFO("TLS echo server on :8443  (test: openssl s_client -connect localhost:8443)");
   fio_io_start(0);
@@ -19246,12 +19763,13 @@ into the IO reactor:
 | Field | Role |
 |-------|------|
 | `build_context` | Converts `fio_io_tls_s` into a per-listener/connector context |
-| `free_context` | Deferred free of the context (via `fio_io_defer`) |
-| `start` | Per-connection: allocate state, run ClientHello or await ServerHello |
+| `free_context` | Deferred release of one context reference; each connection holds a reference until `cleanup` |
+| `dup_context` | Returns another reference to the context (listeners pass one to each accepted connection) |
+| `start` | Per-connection: allocate state (holding its own context reference, then releasing the IO's), run ClientHello or await ServerHello |
 | `read` | Non-blocking decrypt: advances handshake if needed, then decrypts records |
 | `write` | Non-blocking encrypt: batches up to 4 TLS records (64 KB) per syscall |
 | `flush` | Drains any pending handshake or encrypted bytes from internal buffers |
-| `finish` | Sends a TLS `close_notify` alert before the TCP close |
+| `finish` | Queues a TLS `close_notify` alert behind any pending output, then makes one non-blocking flush attempt (skipped if it can't be encrypted or queued) |
 | `cleanup` | Frees per-connection TLS state |
 
 Normally you never call this directly — the constructor handles registration.
@@ -19300,17 +19818,17 @@ fio_io_tls_alpn_add(tls, "http/1.1", on_http1_selected);
 fio_io_tls_trust_add(tls, NULL);      /* use system trust store */
 fio_io_tls_trust_add(tls, "ca.pem"); /* or a specific CA bundle */
 
-/* Listen */
+/* Listen: ownership of `tls` moves to the call (success or failure) */
 fio_io_listen(.url      = "0.0.0.0:443",
               .protocol = &MY_PROTOCOL,
               .tls      = tls);
 
-fio_io_tls_free(tls); /* release your reference; the listener holds its own */
 fio_io_start(0);
 ```
 
-`fio_io_tls_s` is reference-counted. The backend duplicates the reference
-during `build_context`; freeing yours after `fio_io_listen` is always safe.
+`fio_io_tls_s` is reference-counted. `fio_io_listen` and `fio_io_connect`
+take ownership of `.tls`; to reuse the object, pass `fio_io_tls_dup(tls)` and
+later `fio_io_tls_free(tls)` your own reference.
 
 ---
 
@@ -19320,22 +19838,53 @@ during `build_context`; freeing yours after `fio_io_listen` is always safe.
 
 When both `public_cert_file` and `private_key_file` are provided to
 `fio_io_tls_cert_add`, the backend reads and parses the PEM files, loading
-every `CERTIFICATE` block in the file as a DER chain entry. Three private key
-types are supported:
+every `CERTIFICATE` block in the file as a DER chain entry. Four private key
+types are supported (SEC1 / PKCS#1 or unencrypted PKCS#8 PEM):
 
 | Key type | Constant | Notes |
 |----------|----------|-------|
 | ECDSA P-256 | `FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256` | Recommended; small and fast |
+| ECDSA P-384 | `FIO_TLS13_SIGNATURE_ECDSA_SECP384R1_SHA384` | 192-bit security; slower than P-256 |
 | Ed25519 | `FIO_TLS13_SIGNATURE_ED25519` | Fastest signatures |
-| RSA (any size) | `FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256` | Requires `H___FIO_RSA___H` |
+| RSA (any size) | `FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256` | Requires `H___FIO_RSA___H`; signs RSA-PSS SHA-256 or SHA-384 |
 
-If PEM parsing fails, the backend logs `FIO_LOG_WARNING` and falls back to a
-self-signed certificate. If the fallback also fails the context build fails
-and `build_context` returns `NULL`.
+The `CertificateVerify` signature scheme is chosen per handshake from the
+peer's `signature_algorithms`: an EC or Ed25519 key has exactly one scheme
+(P-384 always signs `ecdsa_secp384r1_sha384`), an RSA key signs RSA-PSS (rsae)
+with SHA-256 or, if the peer only accepts that, SHA-384. A peer accepting none
+fails the handshake (server) or receives an empty client certificate (client).
 
-### Self-signed fallback
+If a configured certificate or key file fails to load, the backend logs the
+error (`FIO_LOG_ERROR`) and the context build fails closed: `build_context`
+returns `NULL` and nothing is presented (same as the OpenSSL backend). It
+never substitutes a self-signed certificate. `fio_io_listen` /
+`fio_io_connect` fail when the build fails (see `fio_io_functions_s`), and a
+connection attached without a context is closed at once. Load errors include:
 
-When a **server** has no certificates configured, the backend generates a
+- a missing / unreadable certificate or key file;
+- a file without a decodable certificate or a parsable private key (encrypted
+  private keys are not supported, so `pk_password` is ignored and an encrypted
+  key always fails);
+- any PEM block in the certificate file that can't be decoded — a partial
+  chain is never used;
+- a P-256 / P-384 private key outside `1..n-1`, or one whose embedded public
+  key doesn't match the private key (the public key is derived when absent);
+- a private key that doesn't match the leaf certificate's public key (like
+  OpenSSL's `X509_check_private_key`): P-256, P-384 and Ed25519 public keys
+  are derived from the private key, RSA keys compare `n` and `e`. P-256 and
+  P-384 points may be uncompressed or compressed (SEC 1), in the certificate
+  and in the key file. A key / leaf type mismatch (including a P-256 key with
+  a P-384 certificate, or the reverse) or an unparsable leaf also fail.
+  Checked once per context build; self-signed certificates are unaffected.
+
+PEM blocks of any size are supported (large blocks are decoded through a heap
+buffer). Key file contents, and certificate files that may hold a combined
+key, are wiped from memory after loading.
+
+### Self-signed certificates
+
+When a **server** has no certificates configured (or `fio_io_tls_cert_add` is
+called without file arguments), the backend generates a
 self-signed P-256 ECDSA certificate on the fly using `fio_x509_self_signed_cert`
 (requires `H___FIO_X509___H`):
 
@@ -19351,6 +19900,34 @@ CA-issued certificate (e.g. Let's Encrypt) in production.
 If `H___FIO_X509___H` is not available when no PEM files are configured, the
 context build fails with `FIO_LOG_ERROR`.
 
+### Several certificates (SNI selection)
+
+A server with several `fio_io_tls_cert_add` entries loads each one once when
+the context is built (PEM files, or a self-signed certificate per name) and
+indexes them by lowercased name in the shared context. When the ClientHello is
+parsed, `fio_tls13_server_on_hello` performs one lookup and presents the
+matching certificate chain and key; the matching rules (exact, single-label
+wildcard, default certificate) are the backend-neutral ones in the IO API
+documentation (`fio_io_tls_cert_add`), identical to the OpenSSL backend.
+Nothing is added to the data path. A ClientHello SNI host name longer than 255
+bytes or holding a NUL byte aborts the handshake (`unrecognized_name` alert),
+as OpenSSL does.
+
+### Client certificates (mutual TLS)
+
+Certificates added to a **client** `fio_io_tls_s` are loaded the same way
+(same key types, same checks, same fail-closed rules) and the default one is
+presented when a server sends a `CertificateRequest`, like the OpenSSL
+backend's `SSL_CTX_use_cert_and_key`. The whole configured chain (leaf first,
+then intermediates) is sent, so a server trusting only the root can verify
+it. If the server's `signature_algorithms` exclude the key's scheme, an empty
+`Certificate` is sent instead (RFC 8446 4.4.2.3) and the server decides.
+
+Unlike the OpenSSL backend, a client entry without files (a name only) never
+generates a self-signed certificate: it only names the server (SNI) and no
+certificate is presented for it, since a generated certificate would only
+fail the server's verification.
+
 ---
 
 ## ALPN
@@ -19359,10 +19936,11 @@ Register protocols with `fio_io_tls_alpn_add` before listen/connect. The
 first registered protocol is the preferred default.
 
 The backend collects all registered names into a comma-separated string (up
-to 255 bytes per name; 255 characters total plus the NUL terminator). On handshake the server matches the
-client's offered list against the registered names in registration order and
-calls the corresponding `on_selected` callback on the `fio_io_s *` when
-negotiation succeeds.
+to 255 bytes per name; 255 characters total plus the NUL terminator). Clients
+offer this list; servers match the client's offered list against the
+registered names in registration order. When the handshake completes with a
+negotiated protocol, the corresponding `on_selected` callback is called on the
+`fio_io_s *` (in both roles).
 
 Protocol names must be 1–255 bytes. The internal list overflows when the
 comma-separated list would exceed 255 characters — excess protocols are dropped with `FIO_LOG_ERROR`.
@@ -19384,6 +19962,11 @@ verification** — matching the OpenSSL backend.
 | No `fio_io_tls_trust_add` call, client mode | no server verification + `FIO_LOG_SECURITY` warning |
 | No `fio_io_tls_trust_add` call, server mode | no client certificate requested |
 | Trust configured, server mode | client certificate required and verified |
+
+CA bundles (user-supplied or system) skip PEM blocks that can't be decoded,
+logging a `FIO_LOG_WARNING` for each; a missing root can only make
+verification fail, never succeed. A user-supplied bundle that yields no
+certificate fails the context build.
 
 For mTLS, client certificate chains are verified against the trust store
 (`fio_x509_verify_chain`) and the client's `CertificateVerify` signature is
@@ -19436,7 +20019,7 @@ fio_io_listen / fio_io_connect
                     ├─ write  (encrypts; up to 4 records batched per syscall)
                     ├─ flush  (drains handshake + enc_buf to socket)
                     │
-                    ├─ finish  (sends encrypted close_notify alert, best-effort)
+                    ├─ finish  (queues close_notify after pending output, best-effort)
                     └─ cleanup (frees fio___tls13_connection_s)
 ```
 
@@ -19444,10 +20027,18 @@ fio_io_listen / fio_io_connect
 
 | Region | Purpose | Size |
 |--------|---------|------|
-| `recv_buf` | Incoming encrypted data | `FIO_IO_BUFFER_PER_WRITE` (~64 KB) |
-| `app_buf` | Decrypted plaintext ready to deliver | `FIO_IO_BUFFER_PER_WRITE` |
-| `send_buf` | Outgoing handshake bytes | `FIO_IO_BUFFER_PER_WRITE` |
-| `enc_buf` | Pre-allocated encryption output (4 max records) | ~66 KB |
+| `recv_buf` | Retained incomplete ciphertext record | one maximum record (~16.6 KB) |
+| `app_buf` | Decrypted plaintext ready to deliver | 16 KB |
+| `out_inline` | Serialized wire output (handshake, KeyUpdate, application records) | 4 maximum records (~66 KB) |
+
+**Handshake flights:** a flight grows with the certificate chain and is split
+into records of at most 16 KiB of plaintext (see
+[`190 tls13.md`](./190%20tls13.md)). Before each handshake step the read path
+reserves `fio_tls13_flight_size` of the context's largest chain (the default
+certificate and every SNI entry, computed once per context) in the output
+queue, writing the response directly into it. Flights that fit the inline
+queue allocate nothing; longer ones move the queue to an allocation that is
+released as soon as it has been flushed.
 
 **Error codes surfaced to the IO layer:**
 
@@ -19456,8 +20047,8 @@ fio_io_listen / fio_io_connect
 - `return -1` with `errno = ECONNRESET` — TLS handshake or decryption error; connection will be closed.
 
 All internal errors are logged: `FIO_LOG_ERROR` for hard failures,
-`FIO_LOG_WARNING` for soft failures (e.g. PEM fallback), `FIO_LOG_DEBUG2` /
-`FIO_LOG_DDEBUG2` for per-connection detail.
+`FIO_LOG_WARNING` for soft failures (e.g. a skipped trust-bundle block),
+`FIO_LOG_DEBUG2` / `FIO_LOG_DDEBUG2` for per-connection detail.
 
 **KeyUpdate** (RFC 8446 §4.6.3): when the peer requests a key update, a
 `KeyUpdate` response is prepended to the next `write` syscall alongside
@@ -19490,8 +20081,7 @@ int main(void) {
 
   fio_io_listen(.url      = "0.0.0.0:8443",
                 .protocol = &ECHO_PROTO,
-                .tls      = tls);
-  fio_io_tls_free(tls);
+                .tls      = tls); /* takes ownership of `tls` */
 
   FIO_LOG_INFO("TLS echo server on :8443");
   fio_io_start(0);
@@ -19543,8 +20133,7 @@ int main(void) {
 
   fio_io_connect(.url      = "example.com:443",
                  .protocol = &CLIENT_PROTO,
-                 .tls      = tls);
-  fio_io_tls_free(tls);
+                 .tls      = tls); /* takes ownership of `tls` */
 
   fio_io_start(0);
 }
@@ -19554,9 +20143,10 @@ int main(void) {
 
 The client SNI host name is resolved when the TLS context is built:
 
-1. The explicit SNI host name (`fio_io_tls_sni_set`, or the URL host name set
-   automatically by `fio_io_connect`) is preferred. IP literals are never sent
-   as SNI (RFC 6066).
+1. The explicit SNI host name (`fio_io_tls_sni_set`, or the URL host set
+   automatically by `fio_io_connect`) is preferred. The same name is used for
+   server certificate verification; IP literals (from the URL) are verified
+   against IP address SANs and never sent as SNI (RFC 6066).
 2. Otherwise, the first certificate name registered with
    `fio_io_tls_cert_add` is used (legacy behavior).
 3. If neither is set, no SNI extension is sent.
@@ -19570,7 +20160,8 @@ The client SNI host name is resolved when the TLS context is built:
 |---------|---------------|-------------|
 | External dependency | None | OpenSSL 3.x |
 | TLS versions | 1.3 only | 1.0–1.3 |
-| Certificate key types | P-256, Ed25519, RSA | All |
+| Certificate key types | P-256, P-384, Ed25519, RSA | All |
+| Client certificates (mTLS) | Yes (full chain) | Yes |
 | ALPN | Yes | Yes |
 | Self-signed auto-cert | Yes (P-256) | Yes (P-256) |
 | System trust store | Yes (multi-platform) | Yes |
@@ -19711,8 +20302,8 @@ macro wrappers let you pass named arguments directly.
 typedef struct {
   fio_pubsub_engine_s const *engine;  /* NULL = default engine                    */
   fio_io_s                  *from;    /* exclude this IO from receiving the message */
-  uint64_t                   id;      /* 0 = auto-generate random ID               */
-  uint64_t                   timestamp; /* 0 = current reactor tick (ms)           */
+  uint64_t                   id;      /* 0 = random; cluster dedup key (with ts)   */
+  uint64_t                   timestamp; /* 0 = fio_io_last_tick_time() (wall ms)    */
   fio_buf_info_s             channel; /* target channel name                       */
   fio_buf_info_s             message; /* message payload                           */
   int16_t                    filter;  /* numerical namespace                        */
@@ -19754,7 +20345,7 @@ fio_pubsub_subscribe(.channel    = FIO_BUF_INFO1("chat:*"),
 /* Replay history from the last 5 minutes */
 fio_pubsub_subscribe(.channel      = FIO_BUF_INFO1("news"),
                      .on_message   = handle_news,
-                     .replay_since = fio_io_last_tick() - 5*60*1000);
+                     .replay_since = fio_io_last_tick_time() - 5*60*1000);
 
 /* Manual handle for explicit control */
 uintptr_t sub_handle = 0;
@@ -19964,6 +20555,9 @@ fio_pubsub_engine_s const *fio_pubsub_engine_default_set(
 `fio_pubsub_engine_default_set(NULL)` restores the auto-selected default
 (cluster engine if cluster port is set, IPC engine otherwise).
 
+The default pointer is not synchronized. Set it, or detach the current default,
+before concurrent publishing begins or while other publishers are stopped.
+
 ### Custom engine interface
 
 ```c
@@ -19988,7 +20582,7 @@ typedef struct fio_pubsub_engine_s {
 
 Callbacks must not block. Defer slow operations with `fio_io_defer`.
 
-Missing callbacks are filled with safe defaults on `fio_pubsub_engine_attach`: subscription callbacks become no-ops; a NULL `publish` falls back to local IPC delivery.
+Missing callbacks are filled with safe defaults on `fio_pubsub_engine_attach`: subscription callbacks become no-ops; a NULL `publish` falls back to local IPC delivery. The built-in engines (`fio_pubsub_engine_ipc` / `fio_pubsub_engine_cluster`) are constant-initialized; their getters only return the pointer.
 
 ### `fio_pubsub_engine_attach` / `fio_pubsub_engine_detach`
 
@@ -20002,6 +20596,11 @@ channel and pattern subscriptions (via `subscribe` / `psubscribe`).
 
 `detach` removes the engine and calls its `detached` callback. If the detached
 engine was the current default, the default is automatically reset.
+
+`detached` is called in the master only (on detach, or at exit). Forked
+workers drop their inherited engine list without calling `detached`: the
+master still owns the engines, and a worker may keep publishing through one
+(e.g., when it is the default engine).
 
 ```c
 /* Example: a custom engine that bridges to NATS */
@@ -20043,15 +20642,23 @@ cache is initialized by default but **not attached automatically**; call
 `fio_pubsub_history_attach(fio_pubsub_history_cache(size), priority)` to begin
 storing messages for replay.
 
-`size_limit = 0` inherits from environment variables in order:
+A non-zero `size_limit` replaces the current limit; a lower limit applies on
+the next stored message, which evicts down to it. `size_limit = 0` keeps the
+current limit. The startup limit comes from environment variables in order
+(the KB/MB products saturate instead of overflowing):
 
 1. `WEBSITE_MEMORY_LIMIT_MB` (× 1 MiB)
 2. `WEBSITE_MEMORY_LIMIT_KB` (× 1 KiB)
 3. `WEBSITE_MEMORY_LIMIT` (bytes)
 4. `FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT` (256 MiB)
 
-When the cache overflows its limit, the oldest messages across all channels
-are evicted first.
+A single message larger than the limit (payload plus overhead, computed with
+saturating arithmetic) is not stored and the cache is left as is.
+
+When the cache overflows its limit, eviction visits the channels in map order
+and removes each visited channel's oldest message, repeating until the cache
+fits. This is **not** a global oldest-first order: a busy channel and a quiet
+channel lose messages at the same rate.
 
 ```c
 /* Attach the built-in cache with a 64 MiB ceiling */
@@ -20094,8 +20701,11 @@ typedef struct fio_pubsub_history_s {
 **Execution context:** all callbacks — **master process**, **IO thread** only.
 Do not block; use `fio_io_defer` for slow operations.
 
-`replay` **must** call `on_done(udata)` when finished (success or failure) —
-the IPC reply mechanism depends on it.
+`replay` **must** call `on_done(udata)` exactly once when finished (success or
+failure) — the IPC reply mechanism depends on it. It may finish
+asynchronously (on the master's IO thread): `udata` and the `channel` buffer
+stay valid until `on_done` runs, and neither may be used after it. Call
+`on_message` only before `on_done`.
 
 `replay` returns `0` if it handled the request. Returning `-1` does **not**
 trigger fallback; use `oldest()` to return `UINT64_MAX` when the manager cannot
@@ -20144,14 +20754,15 @@ raw IPC buffer.
 |-----------|---------------|
 | `fio_pubsub_publish` | any thread, any process |
 | `fio_pubsub_subscribe` / `fio_pubsub_unsubscribe` | any thread, any process |
-| `on_message` callback | IO thread, any process (per `queue`) |
-| `on_unsubscribe` callback | IO thread, any process |
+| `on_message` callback | Subscription queue's consumer, any process (IO thread by default) |
+| `on_unsubscribe` callback | Subscription queue's consumer, any process (IO thread by default) |
 | Engine `subscribe` / `unsubscribe` / `psubscribe` / `punsubscribe` | **master**, IO thread |
 | Engine `publish` | any thread, any process |
 | History `push` / `replay` / `oldest` / `detached` | **master**, IO thread |
 
-Callbacks must **not block** — offload slow work with `fio_io_defer` or
-route to a background `fio_io_async_s` pool.
+IO-thread callbacks must **not block**. Route slow work to a background
+`fio_io_async_s` pool. Subscription cleanup, delivery and unsubscribe notices
+use fallible queue tasks; allocation failure can lose that work.
 
 ---
 
@@ -20223,7 +20834,7 @@ static void on_news(fio_pubsub_msg_s *msg) {
 /* Subscribe and receive all messages from the last 10 minutes */
 fio_pubsub_subscribe(.channel      = FIO_BUF_INFO1("news"),
                      .on_message   = on_news,
-                     .replay_since = fio_io_last_tick() - 10*60*1000);
+                     .replay_since = fio_io_last_tick_time() - 10*60*1000);
 ```
 
 Attach the built-in cache, or add a custom persistence layer:
@@ -20377,7 +20988,8 @@ int main(void) {
 
   fio_io_start(4);                   /* master connects; workers use IPC */
 
-  fio_pubsub_engine_detach(redis);   /* system releases its ref: 2 → 1 */
+  fio_pubsub_engine_detach(redis);   /* system releases its ref: 2 → 1 (only
+                                        if a channel was subscribed) */
   fio_redis_free(redis);             /* caller releases dup:  1 → 0 → destroy */
 }
 ```
@@ -20448,7 +21060,9 @@ The engine uses reference counting (`FIO_REF`). Three things independently hold 
 
 1. **Caller**: `fio_redis_new()` returns `ref = 1`. The caller owns this ref and must release it with `fio_redis_free()`.
 
-2. **Pub/Sub system**: `fio_pubsub_engine_attach()` prepares the engine for Pub/Sub use. The Redis engine keeps its Pub/Sub reference on first `SUBSCRIBE` / `PSUBSCRIBE` and releases it from `on_detached`; call `fio_redis_dup()` before attach if you need to keep using the pointer after attaching.
+2. **Pub/Sub system**: `fio_pubsub_engine_attach()` hands one caller reference to the Pub/Sub system. The Redis engine marks itself attached on the first `SUBSCRIBE` / `PSUBSCRIBE` and releases that reference from `on_detached` **only if it was marked attached**. Call `fio_redis_dup()` before attach if you need to keep using the pointer after attaching.
+
+   **Known limitation:** an engine that is attached and then detached without ever receiving a subscription never releases the handed-over reference. That reference leaks and the engine is never destroyed.
 
 3. **Internal deferred tasks**: The engine dups before scheduling an IO-deferred task and frees at the end. These are invisible to the caller.
 
@@ -20460,7 +21074,8 @@ fio_pubsub_engine_s *redis = fio_redis_new(...); /* ref = 1 */
 fio_redis_dup(redis);                            /* ref = 2 (keep a copy) */
 fio_pubsub_engine_attach(redis);                 /* system takes original ref */
 /* ...use pub/sub... */
-fio_pubsub_engine_detach(redis);                 /* system releases → ref = 1 */
+fio_pubsub_engine_detach(redis);                 /* system releases → ref = 1
+                                                    (only after a subscription) */
 fio_redis_free(redis);                           /* caller releases → ref = 0 → destroy */
 
 /* Pattern B — command client only, no pub/sub */
@@ -20484,7 +21099,7 @@ fio_pubsub_engine_s *fio_redis_new(fio_redis_args_s args);
 
 Creates a Redis engine with `ref = 1`. The macro overload enables named arguments.
 
-Returns a pointer to `fio_pubsub_engine_s` on success, `NULL` on allocation failure.
+Returns a pointer to `fio_pubsub_engine_s` on success, `NULL` on allocation failure or invalid arguments (`auth_len` set with a `NULL` `auth`, or host / port / handshake lengths that do not fit the engine's 32-bit string storage).
 
 The engine is typed as `fio_pubsub_engine_s *` so it can be passed directly to `fio_pubsub_engine_attach()`. Pass the same pointer to `fio_redis_dup()`, `fio_redis_free()`, and `fio_redis_send()`.
 
@@ -20514,7 +21129,9 @@ Each `fio_redis_dup()` must be balanced with a `fio_redis_free()`.
 void fio_redis_free(fio_pubsub_engine_s *engine);
 ```
 
-Releases the caller's reference. When the count reaches zero, destroys the engine immediately: sets `running = 0`, closes the connection, drains the command queue (invoking any pending callbacks with `FIOBJ_INVALID`), and frees memory.
+Releases the caller's reference. While the reactor is running, transfers that reference to a release task on the main IO queue, without adding a reference. When the reactor is not running, releases directly; call from the main thread in that case, including during shutdown.
+
+When the release drops the count to zero, destroys the engine: marks it stopped, closes the connection, drains the command queue (invoking pending callbacks with `FIOBJ_INVALID`), and frees memory. Destruction and those callbacks run on the main thread.
 
 Safe to call with `NULL` (no-op).
 
@@ -20525,20 +21142,22 @@ typedef enum {
   FIO_REDIS_STATE_ERROR,
   FIO_REDIS_STATE_CONNECTING,
   FIO_REDIS_STATE_CONNECTED,
+  FIO_REDIS_STATE_STOPPED,
 } fio_redis_state_e;
 
 fio_redis_state_e fio_redis_state(const fio_pubsub_engine_s *engine);
 ```
 
-Returns a Redis connection-state snapshot when called from the IO thread:
+Returns an engine-state snapshot from any thread. Keep an engine reference alive while querying it. The value may become stale immediately; the query does not traverse the connection or command queue.
 
 | State | Meaning |
 |---|---|
-| `FIO_REDIS_STATE_ERROR` | `engine` is `NULL`, or `HELLO 3` failed and disabled the engine. |
+| `FIO_REDIS_STATE_ERROR` | `HELLO 3` failed and disabled the engine. |
 | `FIO_REDIS_STATE_CONNECTING` | No TCP socket is attached, or the socket is awaiting its `HELLO 3` reply. |
 | `FIO_REDIS_STATE_CONNECTED` | The TCP socket is attached and its RESP3 `HELLO 3` handshake completed. |
+| `FIO_REDIS_STATE_STOPPED` | `engine` is `NULL`, or the engine is being destroyed. |
 
-This is an observability API; callers may send commands in every state. Commands queue until the handshake completes.
+This query is observational, not a readiness reservation. Pending commands wait until the handshake completes. Stopped and failed engines do not execute commands.
 
 ### `fio_redis_send`
 
@@ -20553,11 +21172,13 @@ int fio_redis_send(fio_pubsub_engine_s *engine,
 
 Sends a Redis command. `command` must be a `FIOBJ_T_ARRAY` whose elements are the command verb and arguments as `FIOBJ_T_STRING` (or numbers). `callback` is optional (pass `NULL` to fire-and-forget).
 
-Returns `0` on success, `-1` if `engine` is `NULL` or `command` is not a FIOBJ array.
+Returns `0` after serialization and submission, or `-1` if `engine` is `NULL`, `command` is not a FIOBJ array, RESP sizing fails, or a command buffer cannot be allocated. A `0` result does not guarantee that deferred work or IPC delivery succeeds.
 
 **On the master**: the command is serialized to RESP and queued on the connection. Commands are sent one at a time (lock-step); the next command is sent after the reply for the previous one arrives.
 
 **On a worker**: the RESP bytes are forwarded to the master via IPC. The master executes the command, serializes the reply to RESP, and sends it back. The worker deserializes and calls the callback on its IO thread. This is transparent to the caller.
+
+Worker-side limits: errors returned by the master (for example, a stopped engine, connection loss, allocation failure or an oversized reply) are encoded as null (`fiobj_null()`). This does not protect against freeing an engine while IPC is in flight. A forwarded reply that is not exactly one complete, well-formed RESP value decodes to `FIOBJ_INVALID`. The worker callback runs only if the IPC reply reaches the worker; it is **not** guaranteed to run if the IPC message is lost (for example, when a worker forks or the master stops before replying).
 
 **Never** pass `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` to `fio_redis_send()`. Subscriptions must go through `fio_pubsub_subscribe()` so the Pub/Sub system tracks them (local delivery, resubscription on reconnect). Direct sends bypass that bookkeeping and their confirmations (RESP3 push frames) are ignored.
 
@@ -20567,7 +21188,7 @@ Returns `0` on success, `-1` if `engine` is `NULL` or `command` is not a FIOBJ a
 void my_callback(fio_pubsub_engine_s *e, FIOBJ reply, void *udata);
 ```
 
-`reply` is `FIOBJ_INVALID` if the engine was destroyed or the connection was lost before the reply arrived. Otherwise it is a FIOBJ object:
+On the master, `reply` is `FIOBJ_INVALID` when the engine is destroyed or a written command loses its connection before receiving a reply. Written commands are never retransmitted; unsent commands remain queued for reconnection. On workers, missing master results are encoded as null, while malformed forwarded replies decode to `FIOBJ_INVALID` (see the limits above). Otherwise `reply` is a FIOBJ object:
 
 | Redis response | FIOBJ type |
 |---|---|
@@ -20728,29 +21349,33 @@ See [./404 ipc.md](./404 ipc.md) for IPC internals.
 
 ## Reconnect and Failure Behavior
 
-- **Connection loss**: The `on_close` callback logs a warning, silently purges any stale queued `HELLO` commands (a fresh one is queued on reconnect), and schedules a reconnect via a 1s single-shot timer. The delay prevents hot reconnect loops against peers that accept and instantly drop.
+- **Connection loss**: The `on_close` callback (and the connect-failure callback) logs a warning, silently purges any stale queued `HELLO` commands (a fresh one is queued on reconnect), and schedules a reconnect via a 1s single-shot timer. The delay prevents hot reconnect loops against peers that accept and instantly drop.
+- **No replay**: A command that was already written and awaits its reply when the connection is lost has an unknown outcome. It is removed from the queue and, on the master, its callback runs with `reply = FIOBJ_INVALID`. It is never retransmitted.
 - **Connection attempt failure**: A connect that fails before attach (e.g., connection refused) is reported through the IO layer's `on_failed` callback (the redis protocol's `on_close` only fires for established connections). The dangling `conn.io` handle is cleared and the same 1s retry timer is scheduled. A synchronous `fio_io_connect` failure takes the same path. The failed io is reactor-owned and freed by the IO layer's connecting-protocol cleanup - the engine never frees it.
-- **Handshake**: Every (re)connection starts with `HELLO 3` (auth folded in) as the first queued command; its map reply is consumed by the normal reply FIFO. Handshake failure is a hard engine error (the engine stops; there is no RESP2 fallback).
-- **Queued commands**: Commands in the queue on the master stay queued and are flushed once the connection is re-established (after `HELLO`).
+- **Handshake**: Every (re)connection starts with `HELLO 3` (auth folded in) as the first queued command. Its reply is consumed synchronously, before any command queued behind it is written. Handshake failure is a hard engine error: the engine stops before anything else reaches the connection (there is no RESP2 fallback).
+- **Queued commands**: Commands that were not yet written stay queued on the master and are flushed once the connection is re-established (after `HELLO`).
+- **Malformed replies**: A parser error, a payload budget breach or a reply allocation failure closes the connection. A partial reply is never matched to a command. A reply that arrives with no command awaiting it is logged and dropped.
+- **Fork**: A worker frees its inherited copy of the command queue without invoking callbacks (they belong to the master).
 - **Resubscription**: On every (re)connection, the engine iterates the current Pub/Sub channel maps and queues all active `SUBSCRIBE` / `PSUBSCRIBE` commands at the queue head (batched into a static buffer, one no-wait queue node per flushed batch), right after `HELLO`. This restores subscription state without touching ref counts or re-attaching the engine.
 - **Keepalive**: A `PING` is queued on the connection after `ping_interval` seconds idle. If the connection has unacknowledged commands when the timeout fires, the connection is forcibly closed and reconnected.
 - **Engine destroyed while commands are pending**: All queued commands have their callbacks invoked immediately with `reply = FIOBJ_INVALID`.
-- **Retry suppression**: Reconnect timers are never scheduled after engine destroy (`running == 0`) or during reactor shutdown, so a close caused by destroy or shutdown does not resurrect the connection.
+- **Retry suppression**: Reconnect timers are never scheduled for a stopped or failed engine, or during reactor shutdown, so a close caused by destroy or shutdown does not resurrect the connection.
 
 ---
 
 ## Thread Safety
 
-All public API functions are thread-safe:
+Reference-count updates are atomic. While the reactor runs, public releases use the main IO queue to serialize destruction with IO callbacks. Otherwise releases must originate on the main thread.
 
-| Function | Mechanism |
+| Function | Requirement / mechanism |
 |---|---|
-| `fio_redis_new()` | Defers connection to IO thread |
-| `fio_redis_dup()` | Atomic reference count increment |
-| `fio_redis_free()` | Atomic reference count decrement; destroy runs on caller thread |
-| `fio_redis_send()` | Defers queue insertion to IO thread (master); IPC on workers |
+| `fio_redis_new()` | Defers connection to the IO thread. |
+| `fio_redis_dup()` | Atomically increments a live engine's reference count. |
+| `fio_redis_free()` | Any thread while IO runs: transfers the reference to a main IO release task. Otherwise main thread only: releases directly. |
+| `fio_redis_send()` | Serializes before returning; defers master queue insertion or sends worker IPC. Keep the engine alive through pending operations. |
+| `fio_redis_state()` | Any thread with a live engine reference; reads only the state byte. |
 
-Internal state (command queue, connection pointers) is only accessed from the IO thread. No locks are needed internally.
+The command queue and connection state have no internal locks. Worker IPC carries engine pointers without retaining their lifetime; do not free an engine while forwarded commands or replies are pending.
 
 FIOBJ objects passed to callbacks are **not** thread-safe. Copy any data you need to keep or use outside the callback.
 
@@ -20906,6 +21531,7 @@ typedef struct fio_http_settings_s {
   intptr_t reserved2;
   /* timeouts and flags */
   uint16_t connect_timeout;
+  uint8_t verify;
   uint8_t timeout;
   uint8_t ws_timeout;
   uint8_t sse_timeout;
@@ -20933,7 +21559,7 @@ listener, route, or client is created.
 | `on_authenticate_websocket` | Before a WebSocket upgrade. Return non-zero to deny with `403`. | server: deny; client: allow |
 | `on_open` | Once a WebSocket or SSE upgrade is complete. | no-op |
 | `on_message` | For each complete WebSocket message. | no-op |
-| `on_eventsource` | For each complete SSE event (client). | passes `data` to `on_message` (as text) when `on_message` is set; otherwise no-op |
+| `on_eventsource` | For each complete SSE event with data (client). `id` is the last event ID (it persists across events); the views are valid only during the callback. | passes `data` to `on_message` (as text) when `on_message` is set; otherwise no-op |
 | `on_eventsource_reconnect` | When an SSE request carries a `Last-Event-ID` header. | no-op |
 | `on_ready` | When an upgraded connection's outgoing buffer is empty. | no-op |
 | `on_shutdown` | For open upgraded connections during IO shutdown. WebSocket connections then send a `1001` (going away) close frame. | no-op |
@@ -20949,7 +21575,7 @@ listener, route, or client is created.
 | `queue` | Optional task queue for user callbacks (e.g., for multi-threaded responses). Defaults to the IO queue. |
 | `public_folder` | Static-file root (see *Static File Service*). The folder must exist when `fio_http_listen` or `fio_http_route` is called; otherwise the setting is ignored and an error is logged. |
 | `max_age` | `Cache-Control: max-age` value for static files, in seconds. `0` (default) omits the header. Not inherited by routes. |
-| `max_header_size` | Maximum bytes for the request line and headers combined. Default: `FIO_HTTP_DEFAULT_MAX_HEADER_SIZE` (32768). Raised to `max_line_len` when smaller. Larger requests receive `431`. |
+| `max_header_size` | Budget for header name and value bytes passed to the HTTP header callback during a message, including forwarded trailers. This limits header processing/storage, **not** bytes received on the wire: the start line, separators, trimmed whitespace, line terminators, and internally consumed fields (such as `Expect` and some `Content-Length` / `Transfer-Encoding` fields) do not count. Default: `FIO_HTTP_DEFAULT_MAX_HEADER_SIZE` (32768). Raised to `max_line_len` when smaller. Exceeding the budget yields `431` for a request; a client closes its connection on an over-budget response. Set a separate input/connection limit if total received header bytes must be bounded. |
 | `max_line_len` | Maximum bytes per request / header line. Default: `FIO_HTTP_DEFAULT_MAX_LINE_LEN` (8192). |
 | `max_body_size` | Maximum request body size, in bytes. Default: `FIO_HTTP_DEFAULT_MAX_BODY_SIZE` (32 MiB). Larger bodies receive `413`. |
 | `max_params` | Maximum query / form fields per params parsing call. Default: `FIO_HTTP_PARAMS_MAX_FIELDS` (4096). |
@@ -20959,6 +21585,7 @@ listener, route, or client is created.
 | `ws_timeout` | WebSocket timeout, in seconds. A ping is sent each time it expires. Default: `FIO_HTTP_DEFAULT_TIMEOUT_LONG` (50). |
 | `sse_timeout` | SSE timeout, in seconds. A ping is sent each time it expires. Default: the `ws_timeout` value. |
 | `connect_timeout` | Client connection timeout in milliseconds (up to 65535), passed to `fio_io_connect`; `0` selects the IO default (30 seconds). |
+| `verify` | Client only, opt-in: verify the TLS server against the system trust store when no trust is configured (see `fio_io_connect`'s `.verify`). Ignored for plain connections. |
 | `log` | Non-zero logs each request. |
 | `compress_static` | Opt-in: create missing `.br` / `.gz` static-file variants on demand (see *Static File Service*). Effective per route. May drop to `0` after repeated failures. |
 | `compress_dynamic` | Opt-in: compress dynamic responses. Connection-global: per-route values are ignored. |
@@ -21317,20 +21944,35 @@ fio_http_connect("http://example.com/", NULL, .on_http = on_response);
 - `h` - the request handle, or `NULL` to create one. The connection takes
   ownership of the caller's reference. Unset fields get defaults: the method
   is `GET`, the path and query come from `url` (path `/` when missing), and a
-  missing `Host` header comes from `url`. A `udata` already set on `h` is
-  kept.
+  missing `Host` header is the `url` authority (`host[:port]`, IPv6 in
+  brackets, without user info). A `udata` already set on `h` is kept.
 
 **Named Arguments:** any `fio_http_settings_s` field. `on_http` receives the
 response handle.
 
 **Returns:** the connecting IO object, or `NULL` on error. The reactor owns it.
 The pointer is valid only until the next event is processed. On failure the
-connection frees `h` later, on the IO thread, even when `NULL` is returned. Do
-not use or free `h` after the call.
+connection frees `h` later, on the IO thread, even when `NULL` is returned
+(allocation failures before connecting free it immediately). Do not use or
+free `h` after the call.
 
 If the server accepts a WebSocket or SSE upgrade, the connection switches
 protocol and uses the upgraded callbacks (`on_open`, `on_message` /
 `on_eventsource`, `on_close`) instead of `on_http`.
+
+**Note**: TLS clients (`https`, `wss`, `sses`) don't verify the server
+certificate unless trust is configured. Opt in with `.verify = 1` (system
+trust store), or pass a `.tls` object holding trust entries (explicit trust
+is never replaced). Once trust is set, the certificate must also match the
+URL host (DNS name or IP address SAN):
+
+```c
+fio_http_connect("https://example.com/", NULL, .on_http = on_response,
+                 .verify = 1);
+```
+
+The `trust=sys` / `trust=<ca-file>` URL query also works, but the URL query
+is sent to the server as the request query unless `h` already has one.
 
 **Note**: interim `1xx` responses other than `101` (e.g., `100 Continue`,
 `103 Early Hints`) are skipped (RFC 9110 §15.2). `on_http` runs once, for
@@ -21452,6 +22094,7 @@ marked as upgraded and finished.
 Incoming messages are collected up to `ws_max_msg_size` bytes, then
 `on_message` runs on the HTTP task queue. A connection delivers one message
 at a time. The module handles control frames (ping, pong, close).
+Invalid UTF-8 text messages or close reasons close the connection with code 1007.
 
 #### `fio_http_websocket_write`
 
@@ -21526,13 +22169,18 @@ fio_http_sse_write(h, .data = FIO_BUF_INFO1((char *)"hello"));
 ```
 
 **Named Arguments:**
-- `id` - the event ID; optional.
-- `event` - the event name; optional.
-- `data` - the event data; required. Each line is sent as its own `data:`
-  line.
+- `id` - the event ID; optional. Must not contain CR, LF or NUL.
+- `event` - the event name; optional. Must not contain CR, LF or NUL.
+- `data` - the event data; required. Each line (ending in CR, LF or CRLF) is
+  sent as its own `data:` line, so receivers get the data with line ends
+  normalized to LF.
 
-**Returns:** `0` on success, or `-1` when `data` is empty, `h` is `NULL` or
-not an established SSE connection, or the connection has closed.
+**Returns:** `0` once the event is queued, or `-1` when `data` is empty, `id`
+or `event` contain CR, LF or NUL, the event can't be allocated, `h` is `NULL`
+or not an established SSE connection, or the connection has closed.
+
+`fio_http_write` on an SSE handle sends each chunk (`buf + offset`, or `len`
+bytes read from `fd` at `offset`) as one event's `data`.
 
 **Note**: SSE is a UTF-8 text format. The data is not validated.
 
@@ -21580,7 +22228,8 @@ SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
 
 A subscription callback that writes each published message as an SSE event.
 The event name is the channel, the data is the message, and the ID is the
-message ID in hex. Messages must be UTF-8.
+message ID in hex. Messages must be UTF-8. Messages on channels containing CR,
+LF or NUL are not sent (see `fio_http_sse_write`).
 
 ---
 
@@ -22258,26 +22907,24 @@ typedef struct FIO_ALIGN(64) {
 
   /* ===== File Uploads (multipart) ===== */
 
-  /** Called when a file upload starts. Returns an owned file object, or NULL
-   * to skip the file. The object is stored at the field name once the upload
-   * ends, or freed through `free_unused_object` if parsing failed. */
-  void *(*on_file)(void *udata,
-                   fio_str_info_s name,
-                   fio_str_info_s filename,
-                   fio_str_info_s content_type,
-                   fio_str_info_s headers);
-  /** Called for each chunk of file data. A non-zero return aborts parsing
-   * (returned unchanged in `err`); the file object is then freed. */
-  int (*on_file_data)(void *udata, void *file, fio_buf_info_s data);
+  /** Called once for each complete file upload (borrowed `data`). Returns an
+   * optional owned value, stored at the field name; a NULL `obj` stores
+   * nothing. A non-zero `err` aborts parsing (returned unchanged). */
+  fio_json_obj_result_s (*on_file)(void *udata,
+                                   fio_str_info_s name,
+                                   fio_str_info_s filename,
+                                   fio_str_info_s content_type,
+                                   fio_str_info_s headers,
+                                   fio_buf_info_s data);
 } fio_http_params_parse_callbacks_s;
 ```
 
-The parser callbacks: 16 pointers, aligned to 64 bytes (128 bytes in total).
+The parser callbacks: 15 pointers, aligned to 64 bytes (128 bytes in total).
 The first 14 members match `fio_json_parser_callbacks_s` exactly (same order,
 types and contract), so the table is handed to the JSON parser as is. They
 follow the [JSON callback contract](./012%20json.md#fio_json_parser_callbacks_s),
 which defines the result types, decoded keys, ownership, `old` and the
-conflict rules. The last two members handle multipart file uploads.
+conflict rules. The last member handles multipart file uploads.
 
 **Contract:**
 - **Ownership transfers:** value callbacks return owned values. `map_push` and
@@ -22308,12 +22955,13 @@ conflict rules. The last two members handle multipart file uploads.
   missing callback counts as "false". `fio_http_params_parse` needs `is_map`
   to merge a JSON object body into the params map.
 - `free_unused_object` - frees an owned value the parser didn't use.
-- `on_file` - a file upload starts; returns an owned file object, or `NULL`
-  to skip the file. When the upload ends, the object is stored like any other
-  value, or passed to `free_unused_object` if parsing already failed
-  (including truncated uploads).
-- `on_file_data` - receives the next chunk of file data; a non-zero return
-  aborts parsing (returned unchanged in `err`) and frees the file object.
+- `on_file` - optional; called once for each complete file upload. `data`
+  holds the whole file, borrowed only during the call (see below). Returns an
+  optional owned value, stored at the field name like any other value; a
+  `NULL` `obj` stores nothing (e.g., the file was handled through `udata`). A
+  non-zero `err` aborts parsing and is returned unchanged. Truncated or
+  malformed uploads never reach `on_file`, so no file object is ever left
+  half-built.
 
 There is no general duplicate-key rule: a callback either frees a replaced
 value itself or hands it back (see the JSON conflict rules).
@@ -22512,9 +23160,14 @@ application charge several parses against one budget; for example, parse the
 body with `.limit = budget - r.count` after parsing the query.
 
 **Multipart uploads:** malformed syntax and ordinary EOF before the closing
-boundary report `ERROR`; a failed body read reports `IO`. File data is
-streamed in chunks to `on_file_data`, so large uploads can be written to
-storage while they are parsed. The `headers` argument of `on_file` holds the
+boundary report `ERROR`; a failed body read reports `IO`. Each part is
+reported once, complete. `on_file` receives the whole file as a pointer into
+the request body: bodies in RAM or memory mapped (spilled to a temporary file)
+are never copied. Without a memory mapping (`FIO_DATA_NO_MMAP`, Windows, or a
+failed mapping), the pending part is read into the body's heap buffer, so set
+the body size limit to match the memory you can spend on one upload. Callbacks
+must not call `fio_http_body_*` functions on the request being parsed. The
+`headers` argument of `on_file` holds the
 raw part headers (without the blank line) and
 is valid only during the call. The filename is cut to the bytes after its last
 `/` or `\`. A file with an empty (cut) filename or an empty field name is
@@ -22741,9 +23394,15 @@ With status `0` (a client handle), the same calls write a request.
 **Named Arguments:**
 - `buf`, `len` - the data to write.
 - `offset` - where writing starts, in `buf` or in the file.
-- `fd` - a file to send instead of a buffer. Set `len` too: a finished
-  response uses it as its `content-length`. `fd` is closed once sent, or on
-  error. With `copy` set, `fd` is never closed and stays the caller's.
+- `fd` - a file to send instead of a buffer. A finished response uses `len`
+  as its `content-length`. Without `len` (on any write), a regular file sends
+  the rest of the file from `offset` and that length frames it; a file whose
+  length can't be known (i.e., a pipe) or an empty range (`offset` at or past
+  the end) sends no data - the write continues as an empty one, so a finished
+  response is `content-length: 0`. A regular file shorter than `offset + len`
+  closes the connection instead of sending a short body. `fd` is closed once
+  sent, or on error. With `copy` set, `fd` is never closed and stays the
+  caller's.
 - `dealloc` - frees `buf` once it was sent. Setting it passes ownership of
   `buf` to `fio_http_write`, which frees it even on error. Without `dealloc`
   or `copy`, `buf` must stay valid until it is sent.

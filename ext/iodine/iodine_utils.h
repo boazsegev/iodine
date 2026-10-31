@@ -684,6 +684,8 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
     interval = 30;
 
   uint32_t otp = fio_otp(secret, .offset = offset, .interval = interval);
+  if (otp == FIO_OTP_ERROR)
+    otp = fio_otp(secret, .offset = offset, .interval = interval, .is_raw = 1);
   return UINT2NUM(otp);
   (void)self;
 }
@@ -772,10 +774,15 @@ FIO_SFUNC VALUE iodine_utils_totp_verify(int argc, VALUE *argv, VALUE self) {
   if (window < 0 || window > 10)
     rb_raise(rb_eArgError, "window must be between 0 and 10");
 
-  /* Check code against each offset in the window */
+  /* FIO_OTP_ERROR is not a valid code (including a caller's -1). */
+  if (code < 0 || code > 999999)
+    return Qfalse;
   for (int64_t offset = -window; offset <= window; ++offset) {
     uint32_t expected = fio_otp(secret, .offset = offset, .interval = interval);
-    if (expected == (uint32_t)code)
+    if (expected == FIO_OTP_ERROR)
+      expected = fio_otp(secret, .offset = offset, .interval = interval,
+                         .is_raw = 1);
+    if (expected != FIO_OTP_ERROR && expected == (uint32_t)code)
       return Qtrue;
   }
 
