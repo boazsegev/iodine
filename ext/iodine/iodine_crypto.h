@@ -64,13 +64,14 @@ FIO_SFUNC VALUE iodine_crypto_chacha_encrypt(int argc,
   VALUE ciphertext = rb_str_new(data.buf, data.len);
   uint8_t mac[16];
 
-  fio_chacha20_poly1305_enc(mac,
-                            RSTRING_PTR(ciphertext),
-                            data.len,
-                            ad.buf,
-                            ad.len,
-                            (void *)key.buf,
-                            (void *)nonce.buf);
+  if (fio_chacha20_poly1305_enc(mac,
+                                RSTRING_PTR(ciphertext),
+                                data.len,
+                                ad.buf,
+                                ad.len,
+                                (void *)key.buf,
+                                (void *)nonce.buf))
+    rb_raise(rb_eRuntimeError, "Encryption failed");
 
   VALUE mac_str = rb_str_new((const char *)mac, 16);
   return rb_ary_new_from_args(2, ciphertext, mac_str);
@@ -172,13 +173,14 @@ FIO_SFUNC VALUE iodine_crypto_xchacha_encrypt(int argc,
   VALUE ciphertext = rb_str_new(data.buf, data.len);
   uint8_t mac[16];
 
-  fio_xchacha20_poly1305_enc(mac,
-                             RSTRING_PTR(ciphertext),
-                             data.len,
-                             ad.buf,
-                             ad.len,
-                             (void *)key.buf,
-                             (void *)nonce.buf);
+  if (fio_xchacha20_poly1305_enc(mac,
+                                 RSTRING_PTR(ciphertext),
+                                 data.len,
+                                 ad.buf,
+                                 ad.len,
+                                 (void *)key.buf,
+                                 (void *)nonce.buf))
+    rb_raise(rb_eRuntimeError, "Encryption failed");
 
   VALUE mac_str = rb_str_new((const char *)mac, 16);
   return rb_ary_new_from_args(2, ciphertext, mac_str);
@@ -277,13 +279,14 @@ FIO_SFUNC VALUE iodine_crypto_aes128gcm_encrypt(int argc,
   VALUE ciphertext = rb_str_new(data.buf, data.len);
   uint8_t mac[16];
 
-  fio_aes128_gcm_enc(mac,
-                     RSTRING_PTR(ciphertext),
-                     data.len,
-                     ad.buf,
-                     ad.len,
-                     (void *)key.buf,
-                     (void *)nonce.buf);
+  if (fio_aes128_gcm_enc(mac,
+                         RSTRING_PTR(ciphertext),
+                         data.len,
+                         ad.buf,
+                         ad.len,
+                         (void *)key.buf,
+                         (void *)nonce.buf))
+    rb_raise(rb_eRuntimeError, "Encryption failed");
 
   VALUE mac_str = rb_str_new((const char *)mac, 16);
   return rb_ary_new_from_args(2, ciphertext, mac_str);
@@ -382,13 +385,14 @@ FIO_SFUNC VALUE iodine_crypto_aes256gcm_encrypt(int argc,
   VALUE ciphertext = rb_str_new(data.buf, data.len);
   uint8_t mac[16];
 
-  fio_aes256_gcm_enc(mac,
-                     RSTRING_PTR(ciphertext),
-                     data.len,
-                     ad.buf,
-                     ad.len,
-                     (void *)key.buf,
-                     (void *)nonce.buf);
+  if (fio_aes256_gcm_enc(mac,
+                         RSTRING_PTR(ciphertext),
+                         data.len,
+                         ad.buf,
+                         ad.len,
+                         (void *)key.buf,
+                         (void *)nonce.buf))
+    rb_raise(rb_eRuntimeError, "Encryption failed");
 
   VALUE mac_str = rb_str_new((const char *)mac, 16);
   return rb_ary_new_from_args(2, ciphertext, mac_str);
@@ -1004,15 +1008,16 @@ FIO_SFUNC VALUE iodine_crypto_hkdf_derive(int argc, VALUE *argv, VALUE self) {
   VALUE okm = rb_str_buf_new(length);
   rb_str_set_len(okm, length);
 
-  fio_hkdf(RSTRING_PTR(okm),
-           (size_t)length,
-           salt.buf,
-           salt.len,
-           ikm.buf,
-           ikm.len,
-           info.buf,
-           info.len,
-           (int)sha384);
+  if (fio_hkdf(RSTRING_PTR(okm),
+               (size_t)length,
+               salt.buf,
+               salt.len,
+               ikm.buf,
+               ikm.len,
+               info.buf,
+               info.len,
+               (int)sha384))
+    rb_raise(rb_eRuntimeError, "HKDF derivation failed");
 
   return okm;
   (void)self;

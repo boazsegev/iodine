@@ -2607,6 +2607,8 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
                       (VALUE)h);
     // args.settings.on_finish =
     c->io = fio_http_connect FIO_NOOP(args.url.buf, h, args.settings);
+    /* fio_http_connect duplicates its TLS reference; release our own. */
+    fio_io_tls_free(args.settings.tls);
     c->http = h;
     fio_http_udata2_set(h, (void *)self);
 
@@ -2931,7 +2933,7 @@ static VALUE iodine_connection_peer_addr(VALUE self) {
   fio_buf_info_s buf = FIO_BUF_INFO0;
   iodine_connection_s *c = iodine_connection_ptr(self);
   if (c->io)
-    buf = fio_sock_peer_addr(fio_io_fd(c->io));
+    buf = fio_sock_peer_addr(fio_io_fd(c->io), false);
   if (!buf.len)
     return Qnil;
   return rb_str_new(buf.buf, buf.len);
@@ -2946,7 +2948,7 @@ static VALUE iodine_connection_from(VALUE self) {
     fio_http_from(&addr, c->http);
     buf = FIO_STR2BUF_INFO(addr);
   } else if (c->io)
-    buf = fio_sock_peer_addr(fio_io_fd(c->io));
+    buf = fio_sock_peer_addr(fio_io_fd(c->io), false);
   if (!buf.len)
     return Qnil;
   return rb_str_new(buf.buf, buf.len);
@@ -3311,7 +3313,7 @@ static void *iodine_tcp_listen(iodine_connection_args_s args) {
   return fio_io_listen(.url = args.url.buf,
                        .protocol = protocol,
                        .udata = args.settings.udata,
-                       .tls = args.settings.tls,
+                       .tls = fio_io_tls_dup(args.settings.tls),
                        .on_stop = iodine_tcp_on_stop,
                        .queue_for_accept = 0);
 }

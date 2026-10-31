@@ -7,11 +7,17 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### 0.8.3 - unreleased
+#### 0.8.5 - unreleased
+
+#### 0.8.4 - 2026-11-02
 
 [facil.io C STL](https://github.com/facil-io/cstl) updates:
 
 **API**: (`http`) the HTTP params helpers now follow the NeoRack `params` extension, including its conflict-resolution rules: `fio_http_query_parse` parses the query string, `fio_http_body_parse` parses URL-encoded, multipart and JSON bodies, and `fio_http_params_parse` parses the query and then the body into a single map. Query and form names use dot / bracket paths (`a.b`, `a[b]`, terminal `[]`), repeated scalars become Arrays in arrival order, maps merge, and scalar/map conflicts nest the scalar under the empty-string key. Multipart file uploads stream in chunks and fields are limited by the new `fio_http_settings_s.max_params` (default `FIO_HTTP_PARAMS_MAX_FIELDS`, 4096).
+
+**Security**: security fixes and hardening.
+
+#### 0.8.3 - 2026-10-26
 
 **API**: (`fiobj`) `FIOBJ_T_DATA` objects now carry upload metadata: `fiobj_data_filename`, `fiobj_data_type` and `fiobj_data_headers` (and their setters). `fio_http_params2FIOBJ` returns the request params as a FIOBJ Hash, with file uploads stored as Data objects.
 

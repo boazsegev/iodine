@@ -698,6 +698,11 @@ RSpec.describe Iodine::Utils do
       expect(code).to be_between(0, 999_999)
     end
 
+    it 'accepts generated Base32 secrets' do
+      secret = Iodine::Utils.totp_secret
+      expect(Iodine::Utils.totp(secret: secret)).to be_between(0, 999_999)
+    end
+
     it 'is deterministic for the same secret and time window' do
       code1 = Iodine::Utils.totp(secret: raw_secret)
       code2 = Iodine::Utils.totp(secret: raw_secret)
@@ -732,9 +737,13 @@ RSpec.describe Iodine::Utils do
     end
 
     it 'returns false for an obviously wrong code' do
-      # Use a code that is definitely wrong (negative or out of range)
-      # We use -1 which can never be a valid 6-digit TOTP
       expect(Iodine::Utils.totp_verify(code: -1, secret: raw_secret)).to be false
+    end
+
+    it 'verifies codes from generated Base32 secrets' do
+      secret = Iodine::Utils.totp_secret
+      code = Iodine::Utils.totp(secret: secret)
+      expect(Iodine::Utils.totp_verify(code: code, secret: secret)).to be true
     end
 
     it 'accepts a window: parameter' do
