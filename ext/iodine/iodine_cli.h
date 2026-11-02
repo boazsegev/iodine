@@ -203,6 +203,10 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_INT("--max-body -maxbd (" FIO_MACRO2STR(
           FIO_HTTP_DEFAULT_MAX_BODY_SIZE) ") total message payload limit per "
                                           "request, in bytes."),
+      FIO_CLI_INT("--max-params -maxpr (" FIO_MACRO2STR(
+          FIO_HTTP_PARAMS_MAX_FIELDS) ") request params field limit (query "
+                                      "pairs, form fields and multipart "
+                                      "parts)."),
       FIO_CLI_INT("--keep-alive -k (" FIO_MACRO2STR(
           FIO_HTTP_DEFAULT_TIMEOUT) ") HTTP keep-alive timeout in seconds "
                                     "(0..255)"),

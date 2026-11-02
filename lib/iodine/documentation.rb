@@ -1049,7 +1049,14 @@ module Iodine
     # checksums, data deduplication, and other non-security applications.
     # The output is deterministic and consistent across platforms.
     #
+    # When `key:` is given, the keyed variant is computed in a single pass
+    # (about the cost of an unkeyed hash, cheaper than {risky256_hmac}). Use a
+    # secret key with at least 128 bits of entropy when hashing
+    # attacker-influenced data (e.g., to resist hash flooding) or for fast key
+    # derivation where the output stays private.
+    #
     # @param data [String] the data to hash
+    # @param key [String, nil] optional secret key (keyed hashing)
     # @return [String] 32-byte binary hash digest
     #
     # @note This hash function is NOT cryptographically secure. Do not use
@@ -1058,7 +1065,10 @@ module Iodine
     # @example
     #   hash = Iodine::Utils.risky256("hello world")
     #   puts hash.bytesize  # => 32
-    def self.risky256(data); end
+    #
+    #   # Keyed
+    #   tag = Iodine::Utils.risky256("hello world", key: secret)
+    def self.risky256(data, key: nil); end
 
     # Computes a 512-bit (64-byte) non-cryptographic hash using Risky Hash.
     #
@@ -1066,7 +1076,11 @@ module Iodine
     # the output are identical to risky256 (truncation-safe). The second
     # 256 bits extend the hash without increasing collision resistance.
     #
+    # When `key:` is given, the keyed variant is computed; its first 256 bits
+    # match {risky256} with the same `key:`.
+    #
     # @param data [String] the data to hash
+    # @param key [String, nil] optional secret key (keyed hashing)
     # @return [String] 64-byte binary hash digest
     #
     # @note This hash function is NOT cryptographically secure. Do not use
@@ -1078,7 +1092,7 @@ module Iodine
     #
     #   # First 32 bytes match risky256
     #   hash[0, 32] == Iodine::Utils.risky256("hello world")  # => true
-    def self.risky512(data); end
+    def self.risky512(data, key: nil); end
 
     # Computes a 256-bit (32-byte) keyed HMAC using Risky Hash.
     #
@@ -1564,14 +1578,41 @@ module Iodine
     # @param cookies [Hash] (HTTP/WebSocket only) Cookies to send.
     # @param body [String] (HTTP only) Request body.
     # @param method [String] (HTTP only) HTTP method (defaults to GET).
+    # @param verify [Boolean] (TLS only) If `true`, the server's certificate is
+    #   verified (see below). Defaults to `false`.
     # @return [Iodine::Connection] The new connection object.
+    #
+    # **Server verification is opt-in.** By default, TLS client connections
+    # encrypt traffic but do **not** verify the server's certificate (a warning
+    # is logged). This suits small (micro-service) networks where services don't
+    # carry their own certificates. To verify the server, use any of:
+    #
+    # - `verify: true` - verifies against the system's trust store, unless the
+    #   TLS object already trusts specific certificates (these are kept);
+    # - a `trust` URL query: `?trust=sys` (or `?trust=system`) for the system's
+    #   trust store, or `?trust=ca.pem` for a CA file (`.pem` is appended when
+    #   missing). For HTTP clients the URL query is also sent to the server as
+    #   the request query, so prefer `verify:` (or {Iodine::TLS#trust}) there;
+    # - `tls: Iodine::TLS.new.trust` (system trust store) or
+    #   `tls: Iodine::TLS.new.trust("ca.pem")`.
+    #
+    # Once trust is set, the certificate must also match the URL's host. Note
+    # that `verify: true` and `trust` URL hints update the {Iodine::TLS} object
+    # passed as `tls:` (later connections using it verify too). `verify:` is
+    # ignored for non-TLS connections.
+    #
+    # @example Verified HTTPS request (system trust store)
+    #   Iodine::Connection.new("https://example.com/", handler: MyHandler, verify: true)
+    #
+    # @example Verified with a private CA
+    #   Iodine::Connection.new("tls://service.internal:4000/?trust=./internal-ca.pem", handler: MyHandler)
     #
     # @example WebSocket client with embedded TLS
     #   Iodine::Connection.new("wss://example.com/socket", handler: MyHandler, tls_io: :iodine)
     #
     # @example WebSocket client with OpenSSL
     #   Iodine::Connection.new("wss://example.com/socket", handler: MyHandler, tls_io: :openssl)
-    def initialize(url, handler: nil, tls: nil, tls_io: nil, headers: nil, cookies: nil, body: nil, method: nil); end
+    def initialize(url, handler: nil, tls: nil, tls_io: nil, headers: nil, cookies: nil, body: nil, method: nil, verify: false); end
 
     # Unless `env` is manually set, Iodine will attempt to create a default `env` object that will follow the Rack Server specification for HTTP connections.
     #
@@ -1986,9 +2027,20 @@ module Iodine
 
     # @!group Misc
 
-    # Returns the raw peer IP address.
-    # @return [String]
+    # Returns the raw peer IP address (without a port), or the socket path for
+    # named Unix sockets.
+    # @return [String, nil]
     def peer_addr; end
+
+    # Returns the local (this side's) IP address (without a port), or the
+    # socket path for named Unix sockets.
+    #
+    # This is a socket-level value, available for HTTP, WebSocket, SSE and raw
+    # connections alike. Behind a proxy or load balancer it reports the address
+    # the proxy connected to, not the host the client requested (use the
+    # `Host` header for that).
+    # @return [String, nil]
+    def local_addr; end
 
     # Returns the published peer address (may differ with proxies).
     # @return [String]
@@ -2227,9 +2279,27 @@ module Iodine
 
     # Assigns the TLS context a public certificate, allowing remote parties to validate the connection's identity.
     #
-    # A self signed certificate is automatically created if the `name` argument is specified and either (or both) of the `cert` (public certificate) or `key` (private key) arguments are missing.
+    # On servers, a self signed certificate (ECDSA P-256 on the `:iodine` backend)
+    # is created for `name` if either (or both) of the `cert` (public certificate) or
+    # `key` (private key) arguments are missing. This is fine for development, but
+    # browsers will warn - use a CA issued certificate in production.
     #
-    # Some implementations allow servers to have more than a single certificate, which will be selected using the SNI extension. I believe the existing OpenSSL implementation supports this option (untested).
+    # Servers may hold several certificates; both TLS backends select one per
+    # handshake using the client's SNI host name:
+    #
+    # 1. a case-insensitive exact match of `name`;
+    # 2. else a single-label wildcard (`*.example.com` matches `www.example.com`,
+    #    but neither `example.com` nor `a.b.example.com`);
+    # 3. else the default certificate: the one added with an empty `name`, else the
+    #    first one added.
+    #
+    # Re-adding a `name` replaces its certificate. An omitted `name` defaults to
+    # `"localhost"`.
+    #
+    # On clients, the (default) certificate is presented when the server requests
+    # one (mutual TLS / client certificate authentication), with its whole chain.
+    # Use client certificates with PEM files: a name-only client entry presents no
+    # certificate on the `:iodine` backend.
     #
     #      Iodine::TLS#add_cert(name = nil,
     #                           cert = nil,
@@ -2638,6 +2708,7 @@ module Iodine
     # - {ChaCha20Poly1305} - AEAD symmetric encryption (12-byte nonce)
     # - {XChaCha20Poly1305} - AEAD symmetric encryption (24-byte nonce, safe for random)
     # - {Ed25519} - Digital signatures (with key conversion to X25519)
+    # - {P256} / {P384} - ECDSA digital signatures (ES256 / ES384, OpenSSL compatible)
     # - {X25519} - Key exchange and public-key encryption (ECIES with ChaCha20, AES-128, or AES-256)
     # - {HKDF} - Key derivation (RFC 5869)
     # - {X25519MLKEM768} - Post-quantum hybrid key encapsulation (X25519 + ML-KEM-768)
@@ -2875,6 +2946,97 @@ module Iodine
         #   bob_x_pk = Iodine::Base::Crypto::Ed25519.to_x25519_public(ed_public_key: bob_ed_pk)
         #   ciphertext = Iodine::Base::Crypto::X25519.encrypt("secret", recipient_pk: bob_x_pk)
         def self.to_x25519_public(ed_public_key:); end
+      end
+
+      # ECDSA P-256 digital signatures (ES256: SHA-256, 128-bit security level).
+      #
+      # Interoperable with OpenSSL / JOSE tooling: secret keys are 32-byte
+      # big-endian scalars, public keys are uncompressed SEC 1 points
+      # (`0x04 || x || y`, 65 bytes; {verify} also accepts 33-byte compressed
+      # points) and signatures are DER encoded (at most 72 bytes; JWS ES256
+      # uses raw `r || s` instead). Messages are hashed with SHA-256 internally.
+      #
+      # Signatures are randomized (a fresh nonce per signature), so signing the
+      # same data twice produces different, equally valid signatures.
+      #
+      # @note facil.io's P-256 / P-384 implementation has not been independently
+      #   audited. Prefer {Ed25519} when you control both sides.
+      module P256
+        # Generates a new P-256 key pair.
+        #
+        # @return [Array<String, String>] [secret_key (32 bytes), public_key (65 bytes)]
+        #
+        # @example
+        #   secret_key, public_key = Iodine::Base::Crypto::P256.keypair
+        def self.keypair; end
+
+        # Derives the (uncompressed) public key from a P-256 secret key.
+        #
+        # @param secret_key [String] 32-byte secret key
+        # @return [String] 65-byte public key
+        # @raise [ArgumentError] if secret_key is not 32 bytes or out of range
+        def self.public_key(secret_key:); end
+
+        # Signs a message (hashed with SHA-256) using ECDSA P-256.
+        #
+        # @param data [String] Message to sign
+        # @param secret_key [String] 32-byte secret key
+        # @return [String] DER encoded signature
+        # @raise [ArgumentError] if secret_key is not 32 bytes or invalid
+        #
+        # @example
+        #   signature = Iodine::Base::Crypto::P256.sign("data", secret_key: sk)
+        def self.sign(data, secret_key:); end
+
+        # Verifies a DER encoded ECDSA P-256 signature.
+        #
+        # @param data [String] Original message
+        # @param signature [String] DER encoded signature
+        # @param public_key [String] 65-byte (or 33-byte compressed) public key
+        # @return [Boolean] `true` if valid, `false` otherwise (including
+        #   malformed signatures or keys)
+        #
+        # @example
+        #   valid = Iodine::Base::Crypto::P256.verify("data", signature, public_key: pk)
+        def self.verify(data, signature, public_key:); end
+      end
+
+      # ECDSA P-384 digital signatures (ES384: SHA-384, 192-bit security level).
+      #
+      # Same API and encodings as {P256}, with 48-byte secret keys, 97-byte
+      # uncompressed public keys (49-byte compressed accepted by {verify}),
+      # DER signatures of at most 104 bytes, and SHA-384 message hashing.
+      #
+      # @note facil.io's P-256 / P-384 implementation has not been independently
+      #   audited. Prefer {Ed25519} when you control both sides.
+      module P384
+        # Generates a new P-384 key pair.
+        #
+        # @return [Array<String, String>] [secret_key (48 bytes), public_key (97 bytes)]
+        def self.keypair; end
+
+        # Derives the (uncompressed) public key from a P-384 secret key.
+        #
+        # @param secret_key [String] 48-byte secret key
+        # @return [String] 97-byte public key
+        # @raise [ArgumentError] if secret_key is not 48 bytes or out of range
+        def self.public_key(secret_key:); end
+
+        # Signs a message (hashed with SHA-384) using ECDSA P-384.
+        #
+        # @param data [String] Message to sign
+        # @param secret_key [String] 48-byte secret key
+        # @return [String] DER encoded signature
+        # @raise [ArgumentError] if secret_key is not 48 bytes or invalid
+        def self.sign(data, secret_key:); end
+
+        # Verifies a DER encoded ECDSA P-384 signature.
+        #
+        # @param data [String] Original message
+        # @param signature [String] DER encoded signature
+        # @param public_key [String] 97-byte (or 49-byte compressed) public key
+        # @return [Boolean] `true` if valid, `false` otherwise
+        def self.verify(data, signature, public_key:); end
       end
 
       # X25519 key exchange (ECDH) and public-key encryption (ECIES).

@@ -1760,20 +1760,8 @@ static void iodine_io_raw_on_attach(fio_io_s *io) {
 
 /** Tests whether a nonblocking client socket completed its connection. */
 static int iodine_io_raw_client_connect_failed(fio_io_s *io) {
-  int error = 0;
-#if FIO_OS_WIN
-  int error_len = sizeof(error);
-  return fio___winsock_fn.getsockopt(fio_io_fd(io),
-                                     SOL_SOCKET,
-                                     SO_ERROR,
-                                     (char *)&error,
-                                     &error_len) ||
-         error;
-#else
-  socklen_t error_len = sizeof(error);
-  return getsockopt(fio_io_fd(io), SOL_SOCKET, SO_ERROR, &error, &error_len) ||
-         error;
-#endif
+  /* pending SO_ERROR, or -1 if the query failed */
+  return fio_sock_error(fio_io_fd(io)) != 0;
 }
 
 typedef struct {
@@ -2255,6 +2243,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
               .max_header_size = (uint32_t)fio_cli_get_i("-maxhd"),
               .max_line_len = (uint32_t)fio_cli_get_i("-maxln"),
               .max_body_size = (size_t)fio_cli_get_i("-maxbd"),
+              .max_params = (size_t)fio_cli_get_i("-maxpr"),
               .ws_max_msg_size = (size_t)fio_cli_get_i("-maxms"),
               .timeout = iodine_connection___cli_timeout("-k"),
               .ws_timeout = iodine_connection___cli_timeout("-ping"),
@@ -2266,6 +2255,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
           },
   };
   VALUE proc = Qnil, handler_tmp = Qnil, tls_io_rb = Qnil, timeout = Qnil;
+  VALUE verify_rb = Qnil;
   iodine_rb2c_arg(
       argc,
       argv,
@@ -2283,6 +2273,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       IODINE_ARG_U8(r.settings.timeout, 0, "timeout", 0),
       IODINE_ARG_U8(r.settings.ws_timeout, 0, "ping", 0),
       IODINE_ARG_BOOL(r.settings.log, 0, "log", 0),
+      IODINE_ARG_RB(verify_rb, 0, "verify", 0),
       IODINE_ARG_BOOL(r.settings.compress_static, 0, "dynamic_deflate", 0),
       IODINE_ARG_BOOL(r.settings.compress_ws, 0, "websocket_deflate", 0),
       IODINE_ARG_BUF(r.method, 0, "method", 0),
@@ -2291,6 +2282,8 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       IODINE_ARG_RB(r.cookies, 0, "cookies", 0),
       IODINE_ARG_PROC(proc, 0, "block", 0));
   r.settings.compress_dynamic = r.settings.compress_static;
+  /* client mode only: TLS peer verification (system trust if none set) */
+  r.settings.verify = (verify_rb == Qtrue);
   r.settings.udata = (void *)handler_tmp;
   /* test for errors before allocating or protecting data */
 
@@ -2624,6 +2617,7 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
                            .protocol = protocol,
                            .udata = (void *)self,
                            .tls = args.settings.tls,
+                           .verify = args.settings.verify,
                            .timeout = protocol->timeout,
                            .on_failed = iodine_io_raw_client_on_failed);
   }
@@ -2934,6 +2928,17 @@ static VALUE iodine_connection_peer_addr(VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
   if (c->io)
     buf = fio_sock_peer_addr(fio_io_fd(c->io), false);
+  if (!buf.len)
+    return Qnil;
+  return rb_str_new(buf.buf, buf.len);
+}
+
+/** Returns the local (server side) network address or `nil`. */
+static VALUE iodine_connection_local_addr(VALUE self) {
+  fio_buf_info_s buf = FIO_BUF_INFO0;
+  iodine_connection_s *c = iodine_connection_ptr(self);
+  if (c->io)
+    buf = fio_sock_addr(fio_io_fd(c->io), false);
   if (!buf.len)
     return Qnil;
   return rb_str_new(buf.buf, buf.len);
@@ -3611,6 +3616,7 @@ static void Init_Iodine_Connection(void)  {
   rb_define_method(m, "tls?", iodine_connection_is_tls, 0);
 
   rb_define_method(m, "peer_addr", iodine_connection_peer_addr, 0);
+  rb_define_method(m, "local_addr", iodine_connection_local_addr, 0);
   rb_define_method(m, "from", iodine_connection_from, 0);
   rb_define_method(m, "certificate", iodine_connection_certificate, 0);
   rb_define_method(m,

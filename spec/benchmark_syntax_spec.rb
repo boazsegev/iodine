@@ -48,5 +48,13 @@ RSpec.describe 'Iodine::Benchmark' do
       expect(labels).to include(a_string_matching(/Iodine::Utils.hmac256/))
       expect(labels).not_to include(a_string_matching(/secure_random|random_bytes/))
     end
+
+    it 'benchmarks keyed Risky Hash with the MACs and non-crypto hashes' do
+      Iodine::Benchmark.hmac
+      expect(labels).to include(a_string_matching(/risky256\(key:\)/), a_string_matching(/risky512\(key:\)/))
+      labels.clear
+      Iodine::Benchmark.non_crypto_hashing
+      expect(labels).to include(a_string_matching(/risky256 keyed/), a_string_matching(/risky512 keyed/))
+    end
   end
 end

@@ -44,8 +44,8 @@ static uint64_t iodinde_hmap_hash(VALUE k) {
     fio_buf_info_s buf = (fio_buf_info_s)IODINE_RSTR_INFO(k);
     return fio_risky_hash(buf.buf, buf.len, (uint64_t)&iodinde_hmap_hash);
   }
-  if (RB_SYMBOL_P(k) || RB_FIXNUM_P(k) || k == RUBY_T_TRUE ||
-      k == RUBY_T_FALSE || k == RUBY_T_NIL)
+  if (RB_SYMBOL_P(k) || RB_FIXNUM_P(k) || k == Qtrue || k == Qfalse ||
+      k == Qnil)
     return fio_risky_num((uint64_t)k, (uint64_t)&iodinde_hmap_hash);
   rb_raise(rb_eTypeError, "key MUST be either a String or a Symbol.");
   return 0;

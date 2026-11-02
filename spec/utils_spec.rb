@@ -429,6 +429,28 @@ RSpec.describe Iodine::Utils do
     end
   end
 
+  describe 'keyed risky256 / risky512' do
+    let(:key) { 'k' * 32 }
+
+    it 'differs from the unkeyed hash and depends on the key' do
+      keyed = Iodine::Utils.risky256('hello', key: key)
+      expect(keyed.bytesize).to eq(32)
+      expect(keyed).not_to eq(Iodine::Utils.risky256('hello'))
+      expect(keyed).not_to eq(Iodine::Utils.risky256('hello', key: 'x' * 32))
+      expect(keyed).to eq(Iodine::Utils.risky256('hello', key: key))
+    end
+
+    it 'keyed risky512 extends keyed risky256' do
+      h = Iodine::Utils.risky512('hello', key: key)
+      expect(h.bytesize).to eq(64)
+      expect(h[0, 32]).to eq(Iodine::Utils.risky256('hello', key: key))
+    end
+
+    it 'treats key: nil as unkeyed' do
+      expect(Iodine::Utils.risky256('hello', key: nil)).to eq(Iodine::Utils.risky256('hello'))
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # HMAC functions
   # ---------------------------------------------------------------------------

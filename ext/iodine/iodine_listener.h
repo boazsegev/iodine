@@ -213,7 +213,8 @@ static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
       settings.public_folder = FIO_STR_INFO0;
       // TODO: test for a handler's public folder property?
       fio_http_route FIO_NOOP((fio_http_listener_s *)l->listener,
-                              RSTRING_PTR(url),
+                              IODINE_STORE_IS_SKIP(url) ? "/"
+                                                        : RSTRING_PTR(url),
                               settings);
     }
   } else { /* not HTTP, URLs are invalid. */

@@ -7,7 +7,41 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### 0.8.5 - unreleased
+#### 0.8.5 - 2026-11-07
+
+**Feature**: (`crypto`) `Iodine::Base::Crypto::P256` and `Iodine::Base::Crypto::P384` provide ECDSA signatures (ES256 / ES384: `keypair`, `public_key`, `sign`, `verify`) with OpenSSL compatible encodings (uncompressed SEC 1 public keys, DER signatures).
+
+**Feature**: (`utils`) `Iodine::Utils.risky256` and `risky512` accept an optional `key:` for single pass keyed hashing (included in `Iodine::Benchmark.hmac` and `.non_crypto_hashing`).
+
+**Feature**: `Iodine::Connection#local_addr` returns the local socket address (HTTP, WebSocket, SSE and raw connections).
+
+**Feature**: (`cli`) `--max-params` / `-maxpr` sets the request params field limit (query pairs, form fields and multipart parts; default 4096).
+
+**Feature**: `Iodine::Connection.new` / `Iodine.connect` accept `verify: true` to verify the server's TLS certificate (system trust store unless trust was set). Verification remains opt-in; the `?trust=sys` / `?trust=ca.pem` URL hints are now documented.
+
+**Fix**: `Iodine::Listener#map(nil, handler)` sets the default (root) handler instead of crashing.
+
+**Fix**: (`cli`) a NeoRack app file without `run` reports "Web App not found" instead of crashing; route maps without a root application are supported.
+
+**Fix**: `Iodine::Base::MiniMap` accepts `true`, `false` and `nil` keys, as intended.
+
+**Update**: random data uses the facil.io C STL PRNG (reseeded in forked workers automatically) instead of a private generator; raw client connection checks use `fio_sock_error`.
+
+**Docs**: `Iodine::TLS#add_cert` documents SNI certificate selection, self-signed certificates and client certificates (mutual TLS).
+
+[facil.io C STL](https://github.com/facil-io/cstl) updates:
+
+**Security**: (`http` client) TLS hints (`tls`, `key`, `cert`, `pass`, `trust`, ...) at the head or tail of a client URL query are no longer sent to the server, so key paths and passwords stay private.
+
+**Security**: (`listen`) a listen URL without a port (e.g., `localhost?tls`) keeps its TLS hints instead of serving plaintext.
+
+**Fix**: idle servers no longer burn CPU, and raw TLS listeners no longer close every accepted connection.
+
+**Fix**: (`openssl`) data buffered inside OpenSSL is read at once, instead of waiting for more bytes on the socket.
+
+**Fix**: (`brotli`) RFC 7932 conformance: inputs over 16MB at quality 5-6 now compress correctly, and invalid streams are rejected.
+
+**Fix**: string replacement, Base32 decoding and HTML unescaping work when the source overlaps the destination; Windows multi-file builds link.
 
 #### 0.8.4 - 2026-11-02
 

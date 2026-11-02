@@ -39,4 +39,13 @@ RSpec.describe 'Iodine.listen handler preparation' do
     expect(listen_with(handler).map).to equal(handler)
     expect(handler).to respond_to(:on_finish, :on_close)
   end
+
+  it 'maps a nil URL to the default (root) handler' do
+    listener = listen_with(handler_with(:on_http))
+    replacement = handler_with(:on_http)
+
+    expect(listener.map(nil, replacement)).to equal(replacement)
+    expect(listener.map).to equal(replacement)
+    expect(listener.map('/')).to equal(replacement)
+  end
 end

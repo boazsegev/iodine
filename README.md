@@ -146,7 +146,7 @@ iodine -b https://0.0.0.0/?trust=ca.pem
 
 The [API reference](http://www.rubydoc.info/github/boazsegev/iodine) covers per-listener `Iodine::TLS#trust` and peer certificate-chain inspection.
 
-**Security limits:** Iodine sets defaults for HTTP header and body sizes and incoming WebSocket message size. Configure them with `-maxln`, `-maxhd`, `-maxbd`, and `-maxms`. Large HTTP payloads can be diverted to temporary files. See `iodine -h` and load-test your chosen limits and timeouts.
+**Security limits:** Iodine sets defaults for HTTP header and body sizes and incoming WebSocket message size. Configure them with `-maxln`, `-maxhd`, `-maxbd`, `-maxpr` (request params fields), and `-maxms`. Large HTTP payloads can be diverted to temporary files. See `iodine -h` and load-test your chosen limits and timeouts.
 
 ## Tune Workers and Threads for Your Workload
 

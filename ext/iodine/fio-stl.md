@@ -1247,13 +1247,23 @@ See also: [Compiler Attributes](./001 compiler attributes.md).
 
 Enabled by `FIO_LEAK_COUNTER` (default `1`). `FIO_NO_LOG` and `FIO_LEAK_COUNTER` are mutually exclusive because leak reports are printed through the log.
 
+### `FIO_LEAK_COUNTER_DEC`
+
+```c
+#define FIO_LEAK_COUNTER_DEC(name)
+```
+
+Declares a named counter and its cleanup function without defining them. Use it in declarations-only `FIO_EXTERN` translation units that reference the counter but must not emit a definition.
+
 ### `FIO_LEAK_COUNTER_DEF`
 
 ```c
 #define FIO_LEAK_COUNTER_DEF(name)
 ```
 
-Defines a named counter and a cleanup function that reports remaining allocations at process exit.
+Defines a named counter, a cleanup function that reports remaining allocations at process exit, and a constructor that registers the cleanup with the `FIO_CALL_AFTER_EXIT` state event (skipped when `FIO_LEAK_COUNTER_SKIP_EXIT` is set).
+
+Emits non-`static` symbols, so it belongs in exactly one translation unit: the `FIO_EXTERN_COMPLETE` unit when the header is split, or every unit in a header-only build. Declarations-only units use `FIO_LEAK_COUNTER_DEC` instead.
 
 ### `FIO_LEAK_COUNTER_ON_ALLOC`
 
@@ -3482,53 +3492,54 @@ Most defaults are guarded with `#ifndef`; define them before including the heade
 
 ### Memory and Safety
 
-- **`FIO_LEAK_COUNTER`** — Enables memory-leak counting. When enabled, the leak counter tracks allocations made through facil.io allocators and prints a summary at exit.  
-  Default: `1` (enabled).  
-  Set to `0` to disable counting and the exit report.  
+- **`FIO_LEAK_COUNTER`** — Enables memory-leak counting. When enabled, the leak counter tracks allocations made through facil.io allocators and prints a summary at exit.
+  Default: `1` (enabled).
+  Set to `0` to disable counting and the exit report.
   Note: this conflicts with `FIO_NO_LOG`, because the leak report uses the logging layer.
-- **`FIO_LEAK_COUNTER_SKIP_EXIT`** — Skip the automatic leak report at exit when leak counting is enabled.  
+- **`FIO_LEAK_COUNTER_SKIP_EXIT`** — Skip the automatic leak report at exit when leak counting is enabled.
   Default: `0` (report at exit).
-- **`FIO_LEAK_COUNTER_DEF(name)`** — Declares a named leak counter.
+- **`FIO_LEAK_COUNTER_DEC(name)`** — Declares a named leak counter without defining it; use in declarations-only `FIO_EXTERN` units.
+- **`FIO_LEAK_COUNTER_DEF(name)`** — Defines a named leak counter, its cleanup and the `FIO_CALL_AFTER_EXIT` registration; only in the single `FIO_EXTERN_COMPLETE` unit (or every unit in a header-only build).
 - **`FIO_LEAK_COUNTER_ON_ALLOC(name)`** — Records an allocation against the named counter.
 - **`FIO_LEAK_COUNTER_ON_FREE(name)`** — Records a free against the named counter.
 - **`FIO_LEAK_COUNTER_COUNT(name)`** — Returns the current value of the named counter.
-- **`FIO_MEMORY_INITIALIZE_ALLOCATIONS_DEFAULT`** — When non-zero, facil.io allocators zero-initialize returned memory by default.  
-  Default: `1` (secure by default).  
+- **`FIO_MEMORY_INITIALIZE_ALLOCATIONS_DEFAULT`** — When non-zero, facil.io allocators zero-initialize returned memory by default.
+  Default: `1` (secure by default).
   Set to `0` if you want raw allocations and prefer to do your own initialization.
-- **`FIO_MEM_PAGE_SIZE_LOG`** — Log₂ of the OS memory page size. The memory allocator uses this to round allocations and map memory efficiently.  
-  Default: `12` (4096-byte pages).  
+- **`FIO_MEM_PAGE_SIZE_LOG`** — Log₂ of the OS memory page size. The memory allocator uses this to round allocations and map memory efficiently.
+  Default: `12` (4096-byte pages).
   Change it if you are targeting a system with a different page size.
 - **`FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX`** — Default slot count for selected internal `FIO_STATIC_ALLOC_DEF` invocations (default: `256`). The macro does not use this setting implicitly; pass it explicitly as the fourth argument where appropriate.
 
 ### Concurrency
 
-- **`FIO_USE_THREAD_MUTEX`** — Choose the locking primitive used by thread-safe modules.  
-  Default: `0` (use facil.io spinlocks).  
-  Set to `1` to use OS native mutexes (`pthread_mutex_t` on POSIX) instead.  
+- **`FIO_USE_THREAD_MUTEX`** — Choose the locking primitive used by thread-safe modules.
+  Default: `0` (use facil.io spinlocks).
+  Set to `1` to use OS native mutexes (`pthread_mutex_t` on POSIX) instead.
   If you need this decision to apply to only a single `#include`, use `FIO_USE_THREAD_MUTEX_TMP` in [`./001 header.h`](./001%20header.h) instead.
 
 ### Performance and Alignment
 
-- **`FIO_UNALIGNED_ACCESS`** — Allows facil.io to attempt unaligned memory access on CPUs that support it. When enabled, the library may use faster paths in helpers such as `fio_buf2uXX`.  
-  Default: `1` (attempt detection).  
+- **`FIO_UNALIGNED_ACCESS`** — Allows facil.io to attempt unaligned memory access on CPUs that support it. When enabled, the library may use faster paths in helpers such as `fio_buf2uXX`.
+  Default: `1` (attempt detection).
   Set to `0` on strict-alignment architectures or if you want to forbid unaligned access entirely. The actual capability is reflected by `FIO_UNALIGNED_MEMORY_ACCESS_ENABLED`, which is derived at compile time.
-- **`FIO_LIMIT_INTRINSIC_BUFFER`** — Limits register pressure in some pseudo-intrinsic loops by processing smaller batches and looping more.  
-  Default: `1`.  
+- **`FIO_LIMIT_INTRINSIC_BUFFER`** — Limits register pressure in some pseudo-intrinsic loops by processing smaller batches and looping more.
+  Default: `1`.
   Set to `0` if you prefer larger unrolled buffers and do not mind the extra register use.
 
 ### Maps
 
-- **`FIO_MAP_WARNING_BITSIZE`** — Bit size at which hash-map allocations trigger an internal warning threshold in the `imap`/`map` templates.  
-  Default: `24`.  
+- **`FIO_MAP_WARNING_BITSIZE`** — Bit size at which hash-map allocations trigger an internal warning threshold in the `imap`/`map` templates.
+  Default: `24`.
   Raise or lower it to tune when the library starts worrying about map size during growth.
 
 ### Logging
 
 - **`FIO_NO_LOG`** — Define this to remove all logging output. Cannot be combined with `FIO_LEAK_COUNTER`; the two are mutually exclusive.
-- **`FIO_LOG2STDERR`** — Low-level sink used by the logging macros.  
-  Default: no-op.  
+- **`FIO_LOG2STDERR`** — Low-level sink used by the logging macros.
+  Default: no-op.
   Override to print to `stderr` or route messages to a custom destination.
-- **`FIO_LOG_LENGTH_LIMIT`** — Approximate cap on a single formatted log message, limiting stack memory use.  
+- **`FIO_LOG_LENGTH_LIMIT`** — Approximate cap on a single formatted log message, limiting stack memory use.
   Default: `1024`.
 - **`DEBUG`** — Define this to enable debug-only log macros (`FIO_LOG_D*`) and active `FIO_ASSERT_DEBUG` checks. Also disables SIMD/Neon intrinsics in [`./000 core.h`](./000%20core.h).
 
@@ -5327,6 +5338,8 @@ typedef struct {
   fio_buf_info_s cert;
   fio_buf_info_s trust;
   fio_buf_info_s pass;
+  /** The URL query without the TLS hints at its head / tail. */
+  fio_buf_info_s query;
   bool tls;
 } fio_url_tls_info_s;
 ```
@@ -5375,6 +5388,12 @@ SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u);
 Detects TLS from scheme or query. Implicit TLS schemes include `wss`, `https`, `sses`, `ssse`, `tcps`, `stcp`, `tls`, `ssl`, `udps`, `sudp`. Scheme and query-key matching is case-insensitive.
 
 Query keys `tls` or `ssl` enable TLS. A nonempty value other than `1` or `true` supplies both key and certificate. A nonempty `key` and `cert` pair also enables TLS; `pass` or `password` supplies its optional passphrase. A nonempty `trust` value enables TLS independently. `key`, `cert`, or passphrase parameters alone do not enable TLS.
+
+TLS hints are read from the whole query. The returned `query` is the URL query with the hints at its head / tail omitted, a slice of the original (no copy), so it can be forwarded to a peer: `u.query = fio_url_is_tls(u).query;` (`fio_http_connect` does this for the request query). Hints in the middle of the query are read **and** kept, a pass-through for application keys with colliding names. Only hints actually used are omitted: `tls` / `ssl` always, `trust` when nonempty, `key` / `cert` only when both are set, and `pass` / `password` only alongside that pair. i.e.:
+
+- `?tls&page=1&trust=sys` => `page=1`
+- `?page=1&tls&sort=a` => `page=1&tls&sort=a` (TLS enabled)
+- `?key=API_KEY` => `key=API_KEY` (no `cert`, not a hint)
 
 Input slices need no trailing NUL or padding. Returned slices borrow the input buffer. Debug diagnostics report only TLS status and material-presence flags, never material contents.
 
@@ -17122,6 +17141,19 @@ void example(void) {
 
 ---
 
+## Split (`FIO_EXTERN`) builds
+
+When the header is split into a declarations-only `FIO_EXTERN` unit and one `FIO_EXTERN_COMPLETE` implementation unit, the leak counter generated for `FIO_REF_NAME` is emitted in two steps:
+
+- `FIO_LEAK_COUNTER_DEF(FIO_REF_NAME)` — definitions (counter, cleanup, exit registration), placed under the complete-TU gate only.
+- `FIO_LEAK_COUNTER_DEC(FIO_REF_NAME)` — declarations only, placed under the gate that also enables the `static` helpers in declarations-only units.
+
+The declarations are needed because the internal helper types are `static` in declarations-only translation units (see [`001 header.h`](./001%20header.h)), so those units still compile their own copies of the inline wrappers and therefore reference the counter symbols. `_DEC` makes the symbols visible without defining them, so the linker resolves them against the single `_DEF` in the implementation unit.
+
+`FIO_WEAK` is not used for these symbols: a duplicate definition is a real error and is reported by the linker instead of being silently merged.
+
+---
+
 ## Memory Layout
 
 ```
@@ -21975,8 +22007,11 @@ fio_http_connect("https://example.com/", NULL, .on_http = on_response,
                  .verify = 1);
 ```
 
-The `trust=sys` / `trust=<ca-file>` URL query also works, but the URL query
-is sent to the server as the request query unless `h` already has one.
+The `trust=sys` / `trust=<ca-file>` URL query also works. The URL query is
+sent to the server as the request query (unless `h` already has one), with
+the TLS hints at its head / tail omitted (see `fio_url_is_tls`). Hints in the
+middle of the query are sent as-is, so place TLS hints first or last, e.g.,
+`https://example.com/?page=1&trust=sys` sends `?page=1`.
 
 **Note**: interim `1xx` responses other than `101` (e.g., `100 Continue`,
 `103 Early Hints`) are skipped (RFC 9110 §15.2). `on_http` runs once, for

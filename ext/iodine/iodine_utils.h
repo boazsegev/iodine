@@ -247,8 +247,6 @@ FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-forma
 Randomness and Friends
 ***************************************************************************** */
 
-FIO_DEFINE_RANDOM128_FN(static, iodine_random, 11, 0)
-
 FIO_SFUNC VALUE iodine_utils_hmac512(VALUE self, VALUE secret, VALUE massage) {
   rb_check_type(secret, RUBY_T_STRING);
   rb_check_type(massage, RUBY_T_STRING);
@@ -420,12 +418,20 @@ FIO_SFUNC VALUE iodine_utils_risky_hash(int argc, VALUE *argv, VALUE self) {
 /**
  * Computes facil.io Risky256 Hash (non-cryptographic, 256-bit).
  *
+ * When `key:` is given, computes the keyed (single pass) variant instead.
+ *
  * @param data [String] Input data to hash
+ * @param key: [String] Optional secret key (keyed hashing)
  * @return [String] 32-byte binary hash
  */
-FIO_SFUNC VALUE iodine_utils_risky256(VALUE self, VALUE data) {
-  rb_check_type(data, RUBY_T_STRING);
-  fio_u256 h = fio_risky256(RSTRING_PTR(data), (uint64_t)RSTRING_LEN(data));
+FIO_SFUNC VALUE iodine_utils_risky256(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0, key = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, "data", 1),
+                  IODINE_ARG_BUF(key, 0, "key", 0));
+  fio_u256 h = key.buf ? fio_risky256_keyed(key.buf, key.len, data.buf, data.len)
+                       : fio_risky256(data.buf, data.len);
   return rb_str_new((const char *)h.u8, 32);
   (void)self;
 }
@@ -433,14 +439,21 @@ FIO_SFUNC VALUE iodine_utils_risky256(VALUE self, VALUE data) {
 /**
  * Computes facil.io Risky512 Hash (non-cryptographic, 512-bit).
  *
- * First 256 bits are identical to risky256 (SHAKE-style extension).
+ * First 256 bits are identical to risky256 (SHAKE-style extension), also when
+ * the same `key:` is given to both.
  *
  * @param data [String] Input data to hash
+ * @param key: [String] Optional secret key (keyed hashing)
  * @return [String] 64-byte binary hash
  */
-FIO_SFUNC VALUE iodine_utils_risky512(VALUE self, VALUE data) {
-  rb_check_type(data, RUBY_T_STRING);
-  fio_u512 h = fio_risky512(RSTRING_PTR(data), (uint64_t)RSTRING_LEN(data));
+FIO_SFUNC VALUE iodine_utils_risky512(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0, key = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, "data", 1),
+                  IODINE_ARG_BUF(key, 0, "key", 0));
+  fio_u512 h = key.buf ? fio_risky512_keyed(key.buf, key.len, data.buf, data.len)
+                       : fio_risky512(data.buf, data.len);
   return rb_str_new((const char *)h.u8, 64);
   (void)self;
 }
@@ -573,7 +586,7 @@ FIO_SFUNC VALUE iodine_utils_hmac_poly(VALUE self,
 
 FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
   VALUE r = Qnil;
-  fio_u128 rand = iodine_random128();
+  fio_u128 rand = fio_rand128();
   fio_buf_info_s secret = {0};
   fio_buf_info_s info = {0};
   FIO_STR_INFO_TMP_VAR(str, 128);
@@ -641,7 +654,7 @@ FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
   if ((size - 1) > 0x0FFFFFFF)
     rb_raise(rb_eRangeError, "`bytes` count is out of range.");
   r = rb_str_buf_new(size);
-  iodine_random_bytes(RSTRING_PTR(r), size);
+  fio_rand_bytes(RSTRING_PTR(r), size);
   rb_str_set_len(r, size);
   return r;
   (void)self;
@@ -915,16 +928,12 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "sha1", iodine_utils_sha1, 1);
   rb_define_singleton_method(m, "crc32", iodine_utils_crc32, -1);
   rb_define_singleton_method(m, "risky_hash", iodine_utils_risky_hash, -1);
-  rb_define_singleton_method(m, "risky256", iodine_utils_risky256, 1);
-  rb_define_singleton_method(m, "risky512", iodine_utils_risky512, 1);
+  rb_define_singleton_method(m, "risky256", iodine_utils_risky256, -1);
+  rb_define_singleton_method(m, "risky512", iodine_utils_risky512, -1);
   rb_define_singleton_method(m, "risky256_hmac", iodine_utils_risky256_hmac, 2);
   rb_define_singleton_method(m, "risky512_hmac", iodine_utils_risky512_hmac, 2);
   rb_define_singleton_method(m, "secure_random", iodine_utils_secure_random, -1);
   rb_define_singleton_method(m, "blake2b", iodine_utils_blake2b, -1);
   rb_define_singleton_method(m, "blake2s", iodine_utils_blake2s, -1);
-
-
-
-  fio_state_callback_add(FIO_CALL_IN_CHILD, iodine_random_on_fork, NULL);
 }      // clang-format on
 #endif /* H___IODINE_UTILS___H */

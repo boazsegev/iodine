@@ -218,13 +218,27 @@ Wrapper API
 Assigns the TLS context a public certificate, allowing remote parties to
 validate the connection's identity.
 
-A self signed certificate is automatically created if the `name` argument
-is specified and either (or both) of the `cert` (public certificate) or `key`
-(private key) arguments are missing.
+On servers, a self signed certificate (ECDSA P-256 on the `:iodine` backend)
+is created for `name` if either (or both) of the `cert` (public certificate) or
+`key` (private key) arguments are missing. This is fine for development, but
+browsers will warn - use a CA issued certificate in production.
 
-Some implementations allow servers to have more than a single certificate, which
-will be selected using the SNI extension. I believe the existing OpenSSL
-implementation supports this option (untested).
+Servers may hold several certificates; both TLS backends select one per
+handshake using the client's SNI host name:
+
+1. a case-insensitive exact match of `name`;
+2. else a single-label wildcard (`*.example.com` matches `www.example.com`,
+   but neither `example.com` nor `a.b.example.com`);
+3. else the default certificate: the one added with an empty `name`, else the
+   first one added.
+
+Re-adding a `name` replaces its certificate. An omitted `name` defaults to
+`"localhost"`.
+
+On clients, the (default) certificate is presented when the server requests
+one (mutual TLS / client certificate authentication), with its whole chain.
+Use client certificates with PEM files: a name-only client entry presents no
+certificate on the `:iodine` backend.
 
      Iodine::TLS#add_cert(name = nil,
                           cert = nil,

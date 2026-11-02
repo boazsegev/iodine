@@ -73,7 +73,7 @@ supports macros that will help detect and validate it's version.
 /** MINOR version: Deprecation, or significant features added. May break ABI. */
 #define FIO_VERSION_MINOR 8
 /** PATCH version: Bug fixes, minor features may be added. */
-#define FIO_VERSION_PATCH 4
+#define FIO_VERSION_PATCH 5
 /** Build version: optional build info (string), i.e. "beta.02" */
 /* #define FIO_VERSION_BUILD */
 
@@ -1953,15 +1953,33 @@ Memory Leak Detection
 #define FIO_LEAK_COUNTER_SKIP_EXIT 0
 #endif
 #ifndef FIO___LEAK_COUNTER_DEF
-/* Deceleration only, to be placed before the `extern` block if needed. */
+/**
+ * Declares a named leak counter and its cleanup function, without defining
+ * them.
+ *
+ * The counter itself is defined by `FIO_LEAK_COUNTER_DEF` in exactly one
+ * translation unit (the `FIO_EXTERN_COMPLETE` one). Use this macro in
+ * declarations-only `FIO_EXTERN` units that need to reference the counter.
+ */
 #define FIO___LEAK_COUNTER_DEC(name)                                           \
-  size_t FIO_NAME(fio___leak_counter, name)(size_t i);
-
-/* The shared counter + a (once per TU) `FIO_CALL_AFTER_EXIT` leak report. */
+  size_t FIO_NAME(fio___leak_counter, name)(size_t i);                         \
+  void FIO_NAME(fio___leak_counter_cleanup, name)(void *i);
+/**
+ * Defines a named leak counter, its cleanup function and a constructor that
+ * registers the cleanup with the `FIO_CALL_AFTER_EXIT` state event.
+ *
+ * Emits non-`static` symbols, so place it under the
+ * `FIO_EXTERN_COMPLETE` / no-`FIO_EXTERN` gate. Declarations-only units use
+ * `FIO_LEAK_COUNTER_DEC` instead.
+ *
+ * `FIO_LEAK_COUNTER_SKIP_EXIT` disables the exit registration.
+ */
 #define FIO___LEAK_COUNTER_DEF(name)                                           \
   size_t FIO_NAME(fio___leak_counter, name)(size_t i);                         \
   void FIO_NAME(fio___leak_counter_cleanup, name)(void *i);                    \
-  size_t FIO_WEAK FIO_NAME(fio___leak_counter, name)(size_t i) {               \
+  /* now do not need FIO_WEAK because all _DEF under completeTU gate,
+   * deleted to see once-silent link issues explicitly not only on windows */  \
+  size_t FIO_NAME(fio___leak_counter, name)(size_t i) {                        \
     static volatile size_t counter = 0;                                        \
     size_t tmp = fio_atomic_add_fetch(&counter, i);                            \
     if (FIO_UNLIKELY(tmp == ((size_t)-1)))                                     \
@@ -1972,7 +1990,7 @@ Memory Leak Detection
                "(%d) " FIO_MACRO2STR(name) " `free` after `free` detected!",   \
                fio_getpid());                                                  \
   }                                                                            \
-  void FIO_WEAK FIO_NAME(fio___leak_counter_cleanup, name)(void *i) {          \
+  void FIO_NAME(fio___leak_counter_cleanup, name)(void *i) {                   \
     size_t counter = FIO_NAME(fio___leak_counter, name)((size_t)(uintptr_t)i); \
     FIO_LOG_DEBUG2("(%d) testing leaks for " FIO_MACRO2STR(name),              \
                    fio_getpid());                                              \
@@ -3709,6 +3727,12 @@ FIO_MIFN uint64_t fio_math_mul64_fold(uint64_t a, uint64_t b) {
   uint64_t r = fio_math_mulc64(a, b, &a);
   r ^= a;
   return r;
+}
+
+FIO_MIFN uint32_t fio_math_mul32_fold(uint32_t a, uint32_t b) {
+  uint64_t r = (uint64_t)a * b;
+  r ^= (r << 32);
+  return (uint32_t)r;
 }
 
 /**
@@ -9067,6 +9091,7 @@ Recursive inclusion management
 /* *****************************************************************************
 Leak Counter Helpers
 ***************************************************************************** */
+#undef FIO_LEAK_COUNTER_DEC
 #undef FIO_LEAK_COUNTER_DEF
 #undef FIO_LEAK_COUNTER_ON_ALLOC
 #undef FIO_LEAK_COUNTER_ON_FREE
@@ -9083,7 +9108,21 @@ Leak Counter Helpers
 #ifndef FIO_LEAK_COUNTER_SKIP_EXIT
 #define FIO_LEAK_COUNTER_SKIP_EXIT 0
 #endif
+/**
+ * Declares a named leak counter and its cleanup function without defining
+ * them. Use in declarations-only `FIO_EXTERN` translation units; the single
+ * `FIO_EXTERN_COMPLETE` unit defines the counter with
+ * `FIO_LEAK_COUNTER_DEF`.
+ */
 #define FIO_LEAK_COUNTER_DEC      FIO___LEAK_COUNTER_DEC
+/**
+ * Defines a named leak counter, its cleanup function and a constructor that
+ * registers the cleanup with the `FIO_CALL_AFTER_EXIT` state event.
+ *
+ * Emits non-`static` symbols, so it must appear in exactly one translation
+ * unit (the `FIO_EXTERN_COMPLETE` one, or every unit in a header-only build).
+ * `FIO_LEAK_COUNTER_SKIP_EXIT` disables the exit registration.
+ */
 #define FIO_LEAK_COUNTER_DEF      FIO___LEAK_COUNTER_DEF
 #define FIO_LEAK_COUNTER_ON_ALLOC FIO___LEAK_COUNTER_ON_ALLOC
 #define FIO_LEAK_COUNTER_ON_FREE  FIO___LEAK_COUNTER_ON_FREE
@@ -10045,6 +10084,9 @@ Patches for Windows
 Windows initialization
 ***************************************************************************** */
 
+/* do startup once, in complete TU only */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
 /* Enable console colors */
 FIO_CONSTRUCTOR(fio___windows_startup_housekeeping) {
   HANDLE c = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -10066,6 +10108,7 @@ FIO_CONSTRUCTOR(fio___windows_startup_housekeeping) {
   /* by default, windows read files using _O_TEXT, which affects behavior */
   _set_fmode(_O_BINARY);
 }
+#endif
 
 /* *****************************************************************************
 Inlined patched and MACRO statements
@@ -17079,6 +17122,8 @@ typedef struct {
   fio_buf_info_s cert;
   fio_buf_info_s trust;
   fio_buf_info_s pass;
+  /** The URL query without the TLS hints at its head / tail (see below). */
+  fio_buf_info_s query;
   bool tls;
 } fio_url_tls_info_s;
 
@@ -17127,6 +17172,19 @@ typedef struct {
  *     https://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
  *     wss://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
  *     tcp://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
+ *
+ * The returned `query` omits the TLS hints at the head / tail of the URL query,
+ * so it can be forwarded to a peer, i.e.: `u.query = fio_url_is_tls(u).query;`
+ * Hints in the middle of the query are read and kept (pass-through for
+ * application keys with colliding names).
+ *
+ * Only hints actually used are omitted: `tls` / `ssl` always; `trust` when it
+ * has a value; `key` / `cert` only when both are set; `pass` / `password` only
+ * alongside that pair. i.e.:
+ *
+ *     ?tls&page=1&trust=sys   => query: "page=1"
+ *     ?page=1&tls&sort=a      => query: "page=1&tls&sort=a" (TLS: true)
+ *     ?key=API_KEY            => query: "key=API_KEY" (no cert, not a hint)
  */
 SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u);
 /* *****************************************************************************
@@ -17457,9 +17515,35 @@ finish:
   return r;
 }
 
+/* Tests if a query element is a TLS hint used by `fio_url_is_tls`. */
+FIO_SFUNC bool fio___url_is_tls_hint(fio_url_query_each_s *i,
+                                     fio_url_tls_info_s *r) {
+  uint32_t name;
+  switch (i->name.len) {
+  case 3:
+    name = fio_buf2u24_le(i->name.buf) | 0x202020U;
+    return name == fio_buf2u24_le("tls") || name == fio_buf2u24_le("ssl") ||
+           (r->key.len && name == fio_buf2u24_le("key"));
+  case 4:
+    name = fio_buf2u32u(i->name.buf) | 0x20202020UL;
+    return (r->cert.len && name == fio_buf2u32u("cert")) ||
+           (r->pass.len && name == fio_buf2u32u("pass"));
+  case 5:
+    return r->trust.len && i->value.len &&
+           (fio_buf2u32u(i->name.buf) | 0x20202020UL) ==
+               fio_buf2u32u("trus") &&
+           (i->name.buf[4] | 0x20) == 't';
+  case 8:
+    return r->pass.len && (fio_buf2u64u(i->name.buf) |
+                           0x2020202020202020ULL) == fio_buf2u64u("password");
+  }
+  return 0;
+}
+
 /* Returns TLS data associated with the URL. */
 SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u) {
-  fio_url_tls_info_s r = {0};
+  fio_url_tls_info_s r = {.query = u.query};
+  bool hints = 0; /* `tls` / `ssl` keys don't leave other traces */
   switch (u.scheme.len) {
   case 3: /* wss || tls || ssl */
     r.tls =
@@ -17508,7 +17592,7 @@ SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u) {
           if (i.value.len)
             key = i.value;
         } else if (name == wrd_tls || name == wrd_ssl) {
-          r.tls = 1;
+          r.tls = hints = 1;
           if (i.value.len && !(i.value.len == 1 && i.value.buf[0] == '1') &&
               !(i.value.len == 4 &&
                 (fio_buf2u32u(i.value.buf) | 0x20202020UL) == wrd_true))
@@ -17539,6 +17623,33 @@ SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u) {
       r.trust = trust;
       r.tls = 1;
     }
+    if (hints | (r.key.len != 0) | (r.trust.len != 0)) {
+      /* omit the hints at the head / tail of the query */
+      char *const end = u.query.buf + u.query.len;
+      char *head = u.query.buf; /* first byte after the leading hints */
+      char *tail = NULL;        /* first byte of the trailing hints */
+      bool leading = 1;
+      FIO_URL_QUERY_EACH(u.query, i) {
+        if (!fio___url_is_tls_hint(&i, &r)) {
+          leading = 0;
+          tail = NULL;
+          continue;
+        }
+        if (leading)
+          head = i.private___.buf ? i.private___.buf : end;
+        else if (!tail)
+          tail = i.name.buf;
+      }
+      if (leading) /* all hints */
+        tail = head = end;
+      else if (!tail)
+        tail = end;
+      else
+        --tail; /* the '&' before the trailing hints */
+      r.query = FIO_BUF_INFO2(head, (size_t)(tail - head));
+      if (!r.query.len)
+        r.query.buf = NULL;
+    }
   }
   FIO_LOG_DDEBUG2(
       "URL TLS detection: %s (key: %u, cert: %u, trust: %u, pass: %u)",
@@ -17549,6 +17660,7 @@ SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u) {
       (unsigned)!!r.pass.len);
   return r;
 }
+
 /* *****************************************************************************
 FIO_URL - Cleanup
 ***************************************************************************** */
@@ -31397,6 +31509,8 @@ SFUNC int fio_string_replace(fio_str_info_s *dest,
     if (start_pos < 0)
       start_pos = 0;
   }
+  /* stage a self-source before truncation / movement can corrupt it */
+  FIO___STRING_REPLACE_SELF(-1, dest, src, len);
   /* overflow-safe form of: (start_pos + overwrite_len >= dest->len) */
   if ((size_t)start_pos >= dest->len ||
       overwrite_len >= dest->len - (size_t)start_pos) {
@@ -31406,7 +31520,6 @@ SFUNC int fio_string_replace(fio_str_info_s *dest,
     }
     return fio_string_write(dest, reallocate, src, len);
   }
-  FIO___STRING_REPLACE_SELF(-1, dest, src, len);
   size_t move_start = start_pos + overwrite_len;
   size_t move_len = dest->len - (start_pos + overwrite_len);
   if (overwrite_len < len) {
@@ -32095,11 +32208,11 @@ SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
       255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
       255};
   int r = -1;
-  const uint8_t *e = (const uint8_t *)encoded;
   size_t symbols = 0, i = 0;
-  if (!dest || (!e && encoded_len))
+  if (!dest || (!encoded && encoded_len))
     return r;
   FIO___STRING_REPLACE_SELF_SHRINK(-1, dest, encoded, encoded_len);
+  const uint8_t *e = (const uint8_t *)encoded; /* after (possible) staging */
   /* validate and count data symbols (whitespace is free, `=` ends data) */
   for (; i < encoded_len; ++i) {
     const uint8_t d = base32decode[e[i]];
@@ -32739,6 +32852,7 @@ SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
   int r = 0;
   if (!dest || !data || !data_len)
     return r;
+  FIO___STRING_REPLACE_SELF_SHRINK(-1, dest, data, data_len);
   { /* decoded output is never longer than the input */
     size_t reserve = data_len;
     if (fio_string___write_validate_len(dest, reallocate, &reserve))
@@ -33718,8 +33832,9 @@ FIO_ASSERT_STATIC(FIO_GFM_REF_CACHE_SIZE > 0,
 #define FIO___GFM_MIN_FENCE_LEN     3
 #define FIO___GFM_MAX_ATX_HEADING   6
 #define FIO___GFM_MAX_ENTITY_LEN    32
-/* Maximum bracket nesting for each link or image opener. Independent later
- * openers remain eligible even when one opener exceeds the limit. */
+/* Maximum bracket nesting for each link or image opener, also used as the
+ * destination parenthesis nesting limit (CommonMark permits such a limit).
+ * Independent later openers remain eligible when one opener exceeds it. */
 #define FIO___GFM_MAX_INLINE_BRACKETS 64U
 
 /** Error codes — negative values are parser-generated. */
@@ -36377,13 +36492,14 @@ FIO_SFUNC char *fio___gfm_link_like_end(char *p, char *end) {
   char *after = s + 1;
   if (after < end && *after == '(') {
     char *q = after + 1;
-    int pd = 1;
-    while (q < end && pd) {
+    unsigned pd = 1; /* same nesting cap as find_link: bounds inner checks */
+    while (q < end && pd && pd <= FIO___GFM_MAX_INLINE_BRACKETS + 1) {
       if (*q == '\\' && q + 1 < end) {
         q += 2;
         continue;
       }
-      pd += (*q == '(') - (*q == ')');
+      pd += (*q == '(');
+      pd -= (*q == ')');
       ++q;
     }
     return pd ? NULL : q;
@@ -36654,7 +36770,11 @@ FIO_SFUNC char *fio___gfm_find_link(fio___gfm_parser_s *st,
     if (lp < end && *lp == '<') {
       ++lp;
       ds = lp;
-      while (lp < end && *lp != '>' && *lp != '\n' && *lp != '\r') {
+      /* An unescaped '<' also ends (rejects) the destination, per spec. So a
+       * failed scan stops at or before the next opener's '<' (never escaped,
+       * it follows '(' or whitespace): failed scans are disjoint, O(n). */
+      while (lp < end && *lp != '>' && *lp != '<' && *lp != '\n' &&
+             *lp != '\r') {
         if (*lp == '\\' && lp + 1 < end) {
           lp += 2;
           continue;
@@ -36667,16 +36787,19 @@ FIO_SFUNC char *fio___gfm_find_link(fio___gfm_parser_s *st,
       ++lp;
     } else if (lp < end && *lp != ')') {
       ds = lp;
-      int pd = 0;
+      /* Each failing opener leaves one unmatched '(' that later scans must
+       * count, so the nesting cap bounds the work to O(n * cap). */
+      unsigned pd = 0;
       while (lp < end && *lp != ' ' && *lp != '\t' && *lp != '\n' &&
              *lp != '\r') {
         if (*lp == '\\' && lp + 1 < end) {
           lp += 2;
           continue;
         }
-        if (*lp == '(')
-          ++pd;
-        else if (*lp == ')') {
+        if (*lp == '(') {
+          if (++pd > FIO___GFM_MAX_INLINE_BRACKETS)
+            goto try_ref;
+        } else if (*lp == ')') {
           if (pd == 0)
             break;
           --pd;
@@ -36701,14 +36824,16 @@ FIO_SFUNC char *fio___gfm_find_link(fio___gfm_parser_s *st,
       char close_ch = (open_ch == '(') ? ')' : open_ch;
       ++lp;
       ts = lp;
-      while (lp < end && *lp != close_ch) {
+      /* A '('-title may not hold an unescaped '(' (spec). As with '<' above,
+       * failed title scans then stop before the next same-kind opener. */
+      while (lp < end && *lp != close_ch && !(open_ch == '(' && *lp == '(')) {
         if (*lp == '\\' && lp + 1 < end) {
           lp += 2;
           continue;
         }
         ++lp;
       }
-      if (lp >= end)
+      if (lp >= end || *lp != close_ch)
         goto try_ref;
       te = lp;
       ++lp;
@@ -41176,8 +41301,10 @@ SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
   if (!q)
     return -1;
   while (workers > 255) {
-    fio_queue_workers_add(q, 128);
-    fio_queue_workers_add(q, 128);
+    if (fio_queue_workers_add(q, 128))
+      return -1;
+    if (fio_queue_workers_add(q, 128))
+      return -1;
     workers -= 256;
   }
   if (!workers)
@@ -82642,6 +82769,22 @@ FIO_IFUNC uint32_t fio___brotli_bits_get1(fio___brotli_bits_s *b) {
   return v;
 }
 
+/* Skip to the next byte boundary. RFC 7932 requires zero padding bits.
+ * Returns -1 on non-zero padding, 0 otherwise. */
+FIO_IFUNC int fio___brotli_bits_align(fio___brotli_bits_s *b) {
+  unsigned n = b->avail & 7; /* fills add whole bytes: rest of current byte */
+  uint32_t pad = fio___brotli_bits_peek(b, n);
+  fio___brotli_bits_drop(b, n);
+  return 0 - (pad != 0);
+}
+
+/* Return buffered whole bytes to the input (must be byte-aligned). */
+FIO_IFUNC void fio___brotli_bits_unread(fio___brotli_bits_s *b) {
+  b->src -= b->avail >> 3;
+  b->bits = 0;
+  b->avail = 0;
+}
+
 /* *****************************************************************************
 Huffman table builder - builds two-level lookup tables
 ***************************************************************************** */
@@ -82880,8 +83023,9 @@ FIO_IFUNC uint32_t fio___brotli_huff_decode(fio___brotli_bits_s *b,
   fio___brotli_bits_drop(b, root_bits);
   fio___brotli_bits_fill(b);
   unsigned sub_bits = FIO___BROTLI_ENTRY_SUB_BITS(entry);
-  if (b->avail < sub_bits)
-    return FIO___BROTLI_HUFF_ERR;
+  /* Bits past `avail` are zero (or true future bits), so peeking the full
+   * subtable width is safe; only the entry's actual codelen must be present
+   * (checked below). Requiring `sub_bits` here rejected valid streams. */
   uint32_t sub_off = FIO___BROTLI_ENTRY_SUB_OFF(entry);
   uint32_t sub_idx = fio___brotli_bits_peek(b, sub_bits);
   entry = table[sub_off + sub_idx];
@@ -83026,6 +83170,9 @@ FIO_SFUNC uint32_t fio___brotli_read_prefix_code(fio___brotli_bits_s *b,
       cl_only = i;
     }
   }
+  /* RFC 7932 Section 3.5: the code must be complete (or a single symbol) */
+  if (cl_used != 1 && cl_space)
+    return 0;
   if (cl_used == 1) {
     /* RFC 7932 section 3.5: a single used symbol has a zero-length code */
     for (unsigned i = 0; i < (1U << FIO___BROTLI_MAX_CL_LEN); i++)
@@ -83089,8 +83236,9 @@ FIO_SFUNC uint32_t fio___brotli_read_prefix_code(fio___brotli_bits_s *b,
       if (b->error)
         return 0;
       uint32_t repeat_delta = repeat - old_repeat;
-      /* Apply repeat_delta symbols */
-      for (uint32_t r = 0; r < repeat_delta && sym_count < alphabet_size; r++) {
+      if (repeat_delta > alphabet_size - sym_count)
+        return 0; /* repeat overflows the alphabet */
+      for (uint32_t r = 0; r < repeat_delta; r++) {
         lengths[sym_count++] = (uint8_t)new_len;
         if (new_len)
           space -= (32768U >> new_len);
@@ -83098,6 +83246,9 @@ FIO_SFUNC uint32_t fio___brotli_read_prefix_code(fio___brotli_bits_s *b,
     }
   }
 
+  /* RFC 7932 Section 3.5: the code must be complete (Kraft sum == 1) */
+  if (space)
+    return 0;
   /* Fill remaining with zeros */
   while (sym_count < alphabet_size)
     lengths[sym_count++] = 0;
@@ -83245,7 +83396,9 @@ FIO_SFUNC int fio___brotli_read_context_map(fio___brotli_bits_s *b,
     } else if (sym <= rlemax) {
       /* RLE zero: repeat 0 for (1 << sym) + read_bits(sym) times */
       uint32_t rep = (1U << sym) + fio___brotli_bits_get(b, sym);
-      for (uint32_t r = 0; r < rep && i < map_size; r++)
+      if (rep > map_size - i)
+        return -1; /* run overflows the context map */
+      for (uint32_t r = 0; r < rep; r++)
         map[i++] = 0;
     } else {
       uint32_t val = sym - rlemax;
@@ -83434,6 +83587,61 @@ FIO_SFUNC void fio___brotli_decode_iac(uint32_t cmd,
   *dist_code_zero = dz[block];
 }
 
+/* Meta-block header kinds (fio___brotli_read_mb_header results). */
+#define FIO___BROTLI_MB_ERR  0 /* invalid or truncated header */
+#define FIO___BROTLI_MB_SKIP 1 /* ISLASTEMPTY or metadata (already skipped) */
+#define FIO___BROTLI_MB_RAW  2 /* uncompressed: input unread, src at data */
+#define FIO___BROTLI_MB_CMP  3 /* compressed: bit reader at the body */
+
+/**
+ * Read one meta-block header (RFC 7932 Section 9.2), rejecting non-zero
+ * reserved / padding bits and exuberant (zero high) length nibbles / bytes.
+ * Metadata blocks are skipped. Sets `*is_last` and `*mlen`.
+ */
+FIO_SFUNC unsigned fio___brotli_read_mb_header(fio___brotli_bits_s *b,
+                                               int *is_last,
+                                               uint32_t *mlen) {
+  fio___brotli_bits_fill(b);
+  *is_last = (int)fio___brotli_bits_get1(b);
+  *mlen = 0;
+  if (*is_last && fio___brotli_bits_get1(b)) /* ISLASTEMPTY */
+    return b->error ? FIO___BROTLI_MB_ERR : FIO___BROTLI_MB_SKIP;
+  uint32_t mnibbles = fio___brotli_bits_get(b, 2);
+  if (mnibbles == 3) { /* metadata (allowed with ISLAST as well) */
+    if (fio___brotli_bits_get1(b))
+      return FIO___BROTLI_MB_ERR; /* reserved bit */
+    uint32_t nbytes = fio___brotli_bits_get(b, 2);
+    size_t skip = 0;
+    if (nbytes) {
+      uint32_t v = fio___brotli_bits_get(b, nbytes * 8);
+      if (nbytes > 1 && !(v >> ((nbytes - 1) * 8)))
+        return FIO___BROTLI_MB_ERR; /* exuberant MSKIPLEN byte */
+      skip = (size_t)v + 1;
+    }
+    if (fio___brotli_bits_align(b) || b->error)
+      return FIO___BROTLI_MB_ERR;
+    fio___brotli_bits_unread(b);
+    if (skip > (size_t)(b->end - b->src))
+      return FIO___BROTLI_MB_ERR;
+    b->src += skip;
+    return FIO___BROTLI_MB_SKIP;
+  }
+  uint32_t nibbles = mnibbles + 4;
+  uint32_t v = fio___brotli_bits_get(b, nibbles * 4);
+  if (nibbles > 4 && !(v >> ((nibbles - 1) * 4)))
+    return FIO___BROTLI_MB_ERR; /* exuberant MLEN nibble */
+  *mlen = v + 1;
+  if (!*is_last && fio___brotli_bits_get1(b)) { /* ISUNCOMPRESSED */
+    if (fio___brotli_bits_align(b) || b->error)
+      return FIO___BROTLI_MB_ERR;
+    fio___brotli_bits_unread(b);
+    if (*mlen > (size_t)(b->end - b->src))
+      return FIO___BROTLI_MB_ERR;
+    return FIO___BROTLI_MB_RAW;
+  }
+  return b->error ? FIO___BROTLI_MB_ERR : FIO___BROTLI_MB_CMP;
+}
+
 /**
  * Scan remaining meta-block headers in a Brotli stream, summing MLEN values.
  * Used after buffer overflow to determine total required output size.
@@ -83444,59 +83652,14 @@ FIO_SFUNC size_t fio___brotli_scan_remaining_mlen(fio___brotli_bits_s *bits) {
   size_t total = 0;
   int is_last = 0;
   while (!is_last) {
-    fio___brotli_bits_fill(bits);
-    is_last = (int)fio___brotli_bits_get1(bits);
-
-    /* ISLASTEMPTY */
-    if (is_last && fio___brotli_bits_get1(bits))
-      break;
-    if (bits->error)
-      return 0;
-
-    /* Meta-block length (MLEN) */
-    uint32_t mnibbles = fio___brotli_bits_get(bits, 2);
-    if (bits->error)
-      return 0;
-    if (mnibbles == 3) {
-      /* Metadata or empty meta-block */
-      if (!is_last) {
-        if (fio___brotli_bits_get1(bits))
-          return 0; /* reserved bit */
-        uint32_t mskipbytes = fio___brotli_bits_get(bits, 2);
-        if (mskipbytes > 0) {
-          uint32_t mskiplen = fio___brotli_bits_get(bits, mskipbytes * 8) + 1;
-          if (bits->avail & 7)
-            fio___brotli_bits_drop(bits, bits->avail & 7);
-          bits->src -= bits->avail / 8;
-          if (bits->error || mskiplen > (size_t)(bits->end - bits->src))
-            return 0;
-          bits->src += mskiplen;
-          bits->bits = 0;
-          bits->avail = 0;
-        } else {
-          if (bits->avail & 7)
-            fio___brotli_bits_drop(bits, bits->avail & 7);
-        }
-      }
-      continue;
-    }
-
-    uint32_t mlen_nibbles = mnibbles + 4;
-    uint32_t mlen = fio___brotli_bits_get(bits, mlen_nibbles * 4) + 1;
-    if (bits->error || mlen > SIZE_MAX - total)
+    uint32_t mlen;
+    unsigned kind = fio___brotli_read_mb_header(bits, &is_last, &mlen);
+    if (kind == FIO___BROTLI_MB_ERR || mlen > SIZE_MAX - total)
       return 0;
     total += mlen;
-
-    /* Check for uncompressed meta-block */
-    if (!is_last && fio___brotli_bits_get1(bits)) {
-      /* Uncompressed: skip MLEN raw bytes */
-      if (bits->avail & 7)
-        fio___brotli_bits_drop(bits, bits->avail & 7);
-      bits->src -= (bits->avail / 8);
-      bits->bits = 0;
-      bits->avail = 0;
-      if (bits->error || mlen > (size_t)(bits->end - bits->src))
-        return 0;
+    if (kind == FIO___BROTLI_MB_SKIP)
+      continue;
+    if (kind == FIO___BROTLI_MB_RAW) {
       bits->src += mlen;
       continue;
     }
@@ -83604,57 +83767,13 @@ SFUNC size_t fio_brotli_decompress(void *out,
   /* Process meta-blocks */
   int is_last = 0;
   while (!is_last) {
-    fio___brotli_bits_fill(&bits);
-
-    is_last = (int)fio___brotli_bits_get1(&bits);
-
-    /* ISLASTEMPTY */
-    if (is_last && fio___brotli_bits_get1(&bits))
-      break;
-
-    /* Meta-block length (MLEN) */
-    uint32_t mnibbles = fio___brotli_bits_get(&bits, 2);
-    if (bits.error)
+    uint32_t mlen;
+    unsigned kind = fio___brotli_read_mb_header(&bits, &is_last, &mlen);
+    if (kind == FIO___BROTLI_MB_ERR)
       return 0;
-    if (mnibbles == 3) {
-      /* Metadata or empty meta-block */
-      if (!is_last) {
-        if (fio___brotli_bits_get1(&bits))
-          return 0; /* reserved bit */
-        uint32_t mskipbytes = fio___brotli_bits_get(&bits, 2);
-        if (mskipbytes > 0) {
-          uint32_t mskiplen = fio___brotli_bits_get(&bits, mskipbytes * 8) + 1;
-          if (bits.avail & 7)
-            fio___brotli_bits_drop(&bits, bits.avail & 7);
-          bits.src -= bits.avail / 8;
-          if (bits.error || mskiplen > (size_t)(bits.end - bits.src))
-            return 0;
-          bits.src += mskiplen;
-          bits.bits = 0;
-          bits.avail = 0;
-        } else {
-          if (bits.avail & 7)
-            fio___brotli_bits_drop(&bits, bits.avail & 7);
-        }
-      }
+    if (kind == FIO___BROTLI_MB_SKIP)
       continue;
-    }
-
-    uint32_t mlen_nibbles = mnibbles + 4;
-    uint32_t mlen = fio___brotli_bits_get(&bits, mlen_nibbles * 4) + 1;
-    if (bits.error)
-      return 0;
-
-    /* Check for uncompressed meta-block */
-    if (!is_last && fio___brotli_bits_get1(&bits)) {
-      /* Align to byte boundary and push back unused bits */
-      if (bits.avail & 7)
-        fio___brotli_bits_drop(&bits, bits.avail & 7);
-      bits.src -= (bits.avail / 8);
-      bits.bits = 0;
-      bits.avail = 0;
-      if (bits.error || mlen > (size_t)(bits.end - bits.src))
-        return 0;
+    if (kind == FIO___BROTLI_MB_RAW) {
       if (mlen > out_len - pos) {
         /* Buffer overflow on uncompressed meta-block.
          * Add remaining bytes and scan subsequent headers. */
@@ -84051,7 +84170,10 @@ SFUNC size_t fio_brotli_decompress(void *out,
     return 0;
   }
 
-  return bits.error ? 0 : pos;
+  /* Bits after the last meta-block, up to the byte boundary, must be zero. */
+  if (fio___brotli_bits_align(&bits) || bits.error)
+    return 0;
+  return pos;
 }
 
 /* *****************************************************************************
@@ -85261,13 +85383,17 @@ FIO_SFUNC void fio___brotli_dict_ht_build(void) {
 FIO_SFUNC uint32_t fio___brotli_dict_find(const uint8_t *src,
                                           uint32_t src_len,
                                           uint32_t pos,
+                                          size_t stream_pos,
                                           uint32_t window_size,
                                           uint32_t *out_copy_len,
                                           uint32_t *out_distance,
                                           int32_t *out_score) {
   if (pos + 4 > src_len)
     return 0;
-  uint32_t max_backward = (pos < window_size) ? pos : window_size;
+  /* RFC 7932 Section 8: max_backward depends on the absolute stream position
+   * (not the chunk-local `pos`), since decoders track total output. */
+  uint32_t max_backward =
+      (stream_pos < (size_t)window_size) ? (uint32_t)stream_pos : window_size;
   uint32_t h = fio___brotli_dict_hash4(src + pos);
   uint32_t base = h * 2;
   uint32_t best_len = 0;
@@ -85911,6 +86037,7 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
               uint32_t dict_len = fio___brotli_dict_find(src,
                                                          src_len,
                                                          pos,
+                                                         chunk_off + pos,
                                                          window_size,
                                                          &dict_copy_len,
                                                          &dict_dist,
@@ -86454,8 +86581,10 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
           if (bs_remaining > 0)
             bs_remaining--;
         } else if (use_context_modeling) {
-          uint8_t p1 = p > 0 ? src[p - 1] : 0;
-          uint8_t p2 = p > 1 ? src[p - 2] : 0;
+          /* p1/p2 span meta-blocks: use the absolute stream position */
+          size_t ap = chunk_off + p;
+          uint8_t p1 = ap > 0 ? in_bytes[ap - 1] : 0;
+          uint8_t p2 = ap > 1 ? in_bytes[ap - 2] : 0;
           uint32_t ctx =
               (uint32_t)fio___brotli_context_lut[cmode * 512 + p1] |
               (uint32_t)fio___brotli_context_lut[cmode * 512 + 256 + p2];
@@ -86831,8 +86960,10 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
           if (bs_remaining > 0)
             bs_remaining--;
         } else if (use_context_modeling) {
-          uint8_t p1 = p > 0 ? src[p - 1] : 0;
-          uint8_t p2 = p > 1 ? src[p - 2] : 0;
+          /* p1/p2 span meta-blocks: use the absolute stream position */
+          size_t ap = chunk_off + p;
+          uint8_t p1 = ap > 0 ? in_bytes[ap - 1] : 0;
+          uint8_t p2 = ap > 1 ? in_bytes[ap - 2] : 0;
           uint32_t ctx =
               (uint32_t)fio___brotli_context_lut[cmode * 512 + p1] |
               (uint32_t)fio___brotli_context_lut[cmode * 512 + 256 + p2];
@@ -86902,6 +87033,10 @@ Cleanup
 
 #undef FIO___BROTLI_HUFF_BITS
 #undef FIO___BROTLI_HUFF_SIZE
+#undef FIO___BROTLI_MB_ERR
+#undef FIO___BROTLI_MB_SKIP
+#undef FIO___BROTLI_MB_RAW
+#undef FIO___BROTLI_MB_CMP
 #undef FIO___BROTLI_HUFF_MASK
 #undef FIO___BROTLI_MAX_CODE_LEN
 #undef FIO___BROTLI_MAX_CL_LEN
@@ -105941,11 +106076,18 @@ Internal helper types (`FIO___RECURSIVE_INCLUDE` other than 99) are `static`
 (see `001 header.h`), so every translation unit needs their implementation,
 even a declarations-only `FIO_EXTERN` one (e.g., FIOBJ inline constructors).
 ***************************************************************************** */
+
+/* definition in complete TU only */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+FIO_LEAK_COUNTER_DEF(FIO_REF_NAME)
+#endif
+
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN) ||                    \
     (defined(FIO___RECURSIVE_INCLUDE) && (FIO___RECURSIVE_INCLUDE + 1) != 100)
 
-/* static helpers exist in declarations-only TUs too: report leaks once */
-FIO_LEAK_COUNTER_DEF(FIO_REF_NAME)
+/* static helpers exist in declarations-only TUs too: report leaks once,
+ * use _DEC (enough to be seen in fiobj_), not _DEF that is in only one TU */
+FIO_LEAK_COUNTER_DEC(FIO_REF_NAME)
 
 /** Allocates a reference counted object. */
 #ifdef FIO_REF_FLEX_TYPE
@@ -109315,7 +109457,9 @@ struct fio_io_functions_s {
    *
    * Listeners pass the result to every accepted connection as is
    * (`fio_io_attach_fd` takes ownership); `start` handles a NULL context (the
-   * bundled TLS backends close such connections). Defaults to returning NULL.
+   * bundled TLS backends close such connections). If missing, it is inherited
+   * from the default TLS backend (TLS protocols) or returns NULL (plaintext);
+   * it MUST match the `build_context` / `free_context` that own the context.
    */
   void *(*dup_context)(void *context);
   /**
@@ -110077,7 +110221,7 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
   if (!pr->io_functions.free_context)
     pr->io_functions.free_context = io_fn.free_context;
   if (!pr->io_functions.dup_context)
-    pr->io_functions.dup_context = fio___io_func_default_dup_context;
+    pr->io_functions.dup_context = io_fn.dup_context;
   if (!pr->io_functions.start)
     pr->io_functions.start = io_fn.start;
   if (!pr->io_functions.read)
@@ -112825,7 +112969,9 @@ static void fio___io_listen_on_data_task(void *io_, void *ignr_) {
   fio___io_listen_s *l = (fio___io_listen_s *)fio_io_udata(io);
   if (!fio_io_is_open(io)) /* closed while the accept task was queued */
     goto done;
-  fio_io_unsuspend(io);
+  if ((FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_SUSPENDED) &
+       FIO___IO_FLAG_SUSPENDED))
+    fio___io_monitor_in(io);
   while (FIO_SOCK_FD_ISVALID(fd = fio_sock_accept(fio_io_fd(io), NULL, NULL))) {
     // FIO_LOG_DDEBUG2("(%d) accepted new connection with fd %d",
     //                 fio_io_pid(),
@@ -112967,6 +113113,7 @@ FIO_NOOP(struct fio_io_listen_args_s args) {
     return (fio_io_listener_s *)l;
   }
   fio_url_s url = fio_url_parse(args.url, url_alt.len);
+  args.tls = fio_io_tls_from_url(args.tls, url);
   if (url.scheme.buf &&
       (url.scheme.len > 2 && url.scheme.len < 5 &&
        (url.scheme.buf[0] | (char)0x20) == 't' &&
@@ -112997,7 +113144,6 @@ FIO_NOOP(struct fio_io_listen_args_s args) {
     url = fio_url_parse(args.url, url_alt.len);
   }
 
-  args.tls = fio_io_tls_from_url(args.tls, url);
   fio___io_protocol_init_test(args.protocol, !!args.tls);
   built_tls = args.protocol->io_functions.build_context(args.tls, 0);
   if (args.tls && !built_tls) { /* TLS requested: never fall back to plain */
@@ -116617,6 +116763,18 @@ FIO_SFUNC void fio___openssl_alpn_client_dispatch(
                          (fio_io_s *)SSL_get_ex_data(conn->ssl, 0));
 }
 
+/** Schedules `on_data` when input is buffered beyond the kernel socket (poll
+ * won't report it): plaintext or records held by OpenSSL, or a complete TLS
+ * record in `recv_buf`. A partial record waits for the socket. */
+FIO_SFUNC void fio___openssl_schedule_buffered(
+    fio___openssl_connection_s *conn) {
+  size_t avail = conn->recv_buf_len - conn->recv_buf_pos;
+  const uint8_t *h = conn->recv_buf + conn->recv_buf_pos;
+  if (SSL_has_pending(conn->ssl) ||
+      (avail >= 5 && avail >= 5 + (((size_t)h[3] << 8) | (size_t)h[4])))
+    fio_io_on_data_schedule((fio_io_s *)SSL_get_ex_data(conn->ssl, 0));
+}
+
 /** Called to perform a non-blocking `read`, same as the system call.
  *
  * Custom BIO flow (one copy, same as BIO_new_socket):
@@ -116710,8 +116868,10 @@ FIO_SFUNC ssize_t fio___openssl_read(fio_socket_i fd,
     if (conn->enc_buf_len > conn->enc_buf_sent)
       fio___openssl_send_enc_buf(fd, conn);
 
-    if (r == 1)
+    if (r == 1) {
+      fio___openssl_schedule_buffered(conn); /* caller may not read again */
       return (ssize_t)readbytes;
+    }
     if ((err = fio___openssl_failure(conn, r)))
       goto fatal;
     if (conn->rbio_starved ||
@@ -116744,6 +116904,10 @@ FIO_SFUNC int fio___openssl_flush(fio_socket_i fd, void *tls_ctx) {
   fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
   if (!conn)
     return 0;
+  /* `on_ready` flushes before un-throttling: re-deliver input whose `on_data`
+   * was skipped while throttled (mirrors the native TLS 1.3 flush). */
+  if (conn->handshake_complete)
+    fio___openssl_schedule_buffered(conn);
   if (conn->enc_buf_sent >= conn->enc_buf_len) {
     conn->enc_buf_len = 0;
     conn->enc_buf_sent = 0;
@@ -135234,6 +135398,8 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
   fio_url_s u = (fio_url_s){0};
   if (url)
     u = fio_url_parse(url, FIO_STRLEN(url));
+  const fio_url_tls_info_s tls_info = fio_url_is_tls(u);
+  u.query = tls_info.query; /* TLS hints at the head / tail aren't sent */
   /* RFC 9110 §7.2: Host is the URL authority (host [":" port], no userinfo),
    * a slice of `url`: restore the `[IPv6]` brackets the parser strips, then
    * extend to the end of the port (which follows the host). */
@@ -135292,7 +135458,7 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
       const int err = fio_string_write2(
           &origin,
           FIO_STRING_ALLOC_COPY,
-          FIO_STRING_WRITE_STR2("https", (size_t)(4 + fio_url_is_tls(u).tls)),
+          FIO_STRING_WRITE_STR2("https", (size_t)(4 + tls_info.tls)),
           FIO_STRING_WRITE_STR2("://", 3U),
           FIO_STRING_WRITE_STR_INFO(authority));
       if (!err) /* the header map copies the value */

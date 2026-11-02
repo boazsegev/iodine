@@ -408,6 +408,72 @@ RSpec.describe Iodine::Base::Crypto do
   end
 
   # ---------------------------------------------------------------------------
+  # ECDSA P-256 / P-384
+  # ---------------------------------------------------------------------------
+  { 'P256' => [32, 65, 'prime256v1', 'SHA256'],
+    'P384' => [48, 97, 'secp384r1', 'SHA384'] }.each do |name, (sk_len, pk_len, ossl_curve, digest)|
+    describe name do
+      let(:mod) { Iodine::Base::Crypto.const_get(name) }
+      let(:keypair) { mod.keypair }
+      let(:sk) { keypair[0] }
+      let(:pk) { keypair[1] }
+      let(:message) { 'Sign this message.' }
+
+      it 'generates key pairs of the expected sizes' do
+        expect(sk.bytesize).to eq(sk_len)
+        expect(pk.bytesize).to eq(pk_len)
+        expect(pk.getbyte(0)).to eq(4)
+        expect(mod.keypair[0]).not_to eq(sk)
+      end
+
+      it 'derives the public key from the secret key' do
+        expect(mod.public_key(secret_key: sk)).to eq(pk)
+      end
+
+      it 'rejects invalid secret keys' do
+        expect { mod.public_key(secret_key: 'short') }.to raise_error(ArgumentError)
+        expect { mod.public_key(secret_key: "\0" * sk_len) }.to raise_error(ArgumentError)
+        expect { mod.sign(message, secret_key: 'short') }.to raise_error(ArgumentError)
+      end
+
+      it 'signs and verifies' do
+        sig = mod.sign(message, secret_key: sk)
+        expect(sig.getbyte(0)).to eq(0x30) # DER SEQUENCE
+        expect(mod.verify(message, sig, public_key: pk)).to be true
+        expect(mod.verify('tampered', sig, public_key: pk)).to be false
+        expect(mod.verify(message, sig, public_key: mod.keypair[1])).to be false
+        expect(mod.verify(message, 'garbage', public_key: pk)).to be false
+        expect(mod.verify(message, sig, public_key: 'short')).to be false
+      end
+
+      it 'interoperates with OpenSSL' do
+        begin
+          require 'openssl'
+        rescue LoadError
+          skip 'openssl unavailable'
+        end
+        group = OpenSSL::PKey::EC::Group.new(ossl_curve)
+        point = OpenSSL::PKey::EC::Point.new(group, OpenSSL::BN.new(pk, 2))
+        spki = OpenSSL::ASN1::Sequence([
+          OpenSSL::ASN1::Sequence([OpenSSL::ASN1::ObjectId('id-ecPublicKey'),
+                                   OpenSSL::ASN1::ObjectId(ossl_curve)]),
+          OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed))
+        ])
+        ossl_pk = OpenSSL::PKey::EC.new(spki.to_der)
+        sig = mod.sign(message, secret_key: sk)
+        expect(ossl_pk.verify(digest, sig, message)).to be true
+
+        ossl_key = OpenSSL::PKey::EC.generate(ossl_curve)
+        ossl_pub = ossl_key.public_key.to_octet_string(:uncompressed)
+        ossl_sig = ossl_key.sign(digest, message)
+        expect(mod.verify(message, ossl_sig, public_key: ossl_pub)).to be true
+        compressed = ossl_key.public_key.to_octet_string(:compressed)
+        expect(mod.verify(message, ossl_sig, public_key: compressed)).to be true
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # X25519
   # ---------------------------------------------------------------------------
   describe 'X25519' do

@@ -186,6 +186,7 @@ module Iodine
       #   hmac512       => HMAC-SHA512 (compared against OpenSSL HMAC-SHA512)
       #   risky256_hmac => keyed MAC on non-crypto Risky Hash — NOT for security-critical use
       #   risky512_hmac => keyed MAC on non-crypto Risky Hash — NOT for security-critical use
+      #   risky256(key:) / risky512(key:) => single pass keyed Risky Hash — NOT for security-critical use
       #
       # Payload: 512 bytes of the benchmark file itself (representative of a
       # short-to-medium authenticated payload).
@@ -194,7 +195,7 @@ module Iodine
       benchmark_payload = (File.exist?(__FILE__) ? IO.binread(__FILE__)[0...512] : 'my message payload')
 
       puts "HMAC benchmarks — all MACs ranked — #{benchmark_payload.bytesize}-byte message, #{benchmark_secret.bytesize}-byte secret"
-      puts "  [WARNING: risky256_hmac / risky512_hmac are NOT suitable for security-critical authentication]"
+      puts "  [WARNING: risky256_hmac / risky512_hmac / keyed risky256 / risky512 are NOT suitable for security-critical authentication]"
 
       # Pre-create OpenSSL digest objects outside the hot loop. Compare the
       # same Base64 output format as Iodine's hmac* methods.
@@ -211,6 +212,13 @@ module Iodine
         end
         bm.report('Iodine::Utils.risky512_hmac (non-crypto, 64B)') do
           Iodine::Utils.risky512_hmac(benchmark_secret, benchmark_payload)
+        end
+        # Keyed Risky Hash — single pass alternative to the HMAC construction
+        bm.report('Iodine::Utils.risky256(key:) (non-crypto, 32B)') do
+          Iodine::Utils.risky256(benchmark_payload, key: benchmark_secret)
+        end
+        bm.report('Iodine::Utils.risky512(key:) (non-crypto, 64B)') do
+          Iodine::Utils.risky512(benchmark_payload, key: benchmark_secret)
         end
         # Poly1305 MAC — no direct OpenSSL equivalent; shown for reference only
         bm.report('Iodine::Utils.hmac128 (Poly1305)         ') do
@@ -1476,7 +1484,7 @@ module Iodine
 
     # Benchmarks Iodine's non-cryptographic hash functions.
     #
-    # Tests risky_hash (64-bit), risky256, risky512, and crc32 against
+    # Tests risky_hash (64-bit), risky256, risky512 (unkeyed and keyed), and crc32 against
     # Ruby stdlib equivalents where available.
     #
     # FAIRNESS NOTES:
@@ -1509,6 +1517,8 @@ module Iodine
       # Label width — wide enough for 'Iodine risky512 (non-crypto, 64B)'
       lw = 32
 
+      key = Iodine::Utils.secure_random(bytes: 32)
+
       sizes.each do |size_name, size|
         data = Iodine::Utils.random(size)
 
@@ -1533,6 +1543,13 @@ module Iodine
           end
           x.report('Iodine risky512 (non-crypto, 64B)'.ljust(lw)) do
             Iodine::Utils.risky512(data)
+          end
+          # keyed variants (single pass) — e.g., hash flooding resistant keys
+          x.report('Iodine risky256 keyed (32B)'.ljust(lw)) do
+            Iodine::Utils.risky256(data, key: key)
+          end
+          x.report('Iodine risky512 keyed (64B)'.ljust(lw)) do
+            Iodine::Utils.risky512(data, key: key)
           end
           # Zlib.crc32 — direct equivalent for crc32 (same ITU-T V.42 polynomial)
           x.report('Zlib.crc32'.ljust(lw)) do
@@ -1651,7 +1668,7 @@ module Iodine
     # - crypto_kdf (HKDF key derivation)
     # - crypto_totp (TOTP generation/verification)
     # - compression (Deflate, Gzip, Brotli)
-    # - non_crypto_hashing (risky_hash, crc32, risky256, risky512)
+    # - non_crypto_hashing (risky_hash, crc32, risky256, risky512, keyed variants)
     # - crypto_pqkem (X25519+ML-KEM-768 post-quantum hybrid KEM)
     def self.crypto_all
       puts "\n" + '=' * 70

@@ -43,7 +43,7 @@ module TestHTTPHandler
     when '/echo'
       body = e.read.to_s
       e.finish("method=#{e.method} path=#{e.path} query=#{e.query} " \
-               "version=#{e.version} peer=#{e.peer_addr} body=#{body}")
+               "version=#{e.version} peer=#{e.peer_addr} local=#{e.local_addr} body=#{body}")
 
     when '/headers'
       e.write_header('X-Echo', e.headers['x-test-input'].to_s)
@@ -307,6 +307,10 @@ RSpec.describe 'Iodine HTTP server' do
 
     it 'e.peer_addr returns a non-empty IP address' do
       expect(HTTP_RESULTS[:get_body]).to match(/peer=\d+\.\d+\.\d+\.\d+/)
+    end
+
+    it 'e.local_addr returns the local IP address' do
+      expect(HTTP_RESULTS[:get_body]).to match(/local=\d+\.\d+\.\d+\.\d+ /)
     end
 
     it 'e.version returns the HTTP version string' do

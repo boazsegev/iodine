@@ -11,6 +11,7 @@ Provides access to modern cryptographic primitives:
 - AES-128-GCM: AEAD symmetric encryption (16-byte key, 12-byte nonce)
 - AES-256-GCM: AEAD symmetric encryption (32-byte key, 12-byte nonce)
 - Ed25519: Digital signatures
+- P256 / P384: ECDSA digital signatures (ES256 / ES384, DER signatures)
 - X25519: Key exchange and public-key encryption (ECIES with ChaCha20/AES)
 - HKDF: Key derivation (RFC 5869)
 ***************************************************************************** */
@@ -21,6 +22,8 @@ static VALUE iodine_rb_XCHACHA20POLY1305;
 static VALUE iodine_rb_AES128GCM;
 static VALUE iodine_rb_AES256GCM;
 static VALUE iodine_rb_ED25519;
+static VALUE iodine_rb_P256;
+static VALUE iodine_rb_P384;
 static VALUE iodine_rb_X25519;
 static VALUE iodine_rb_HKDF;
 static VALUE iodine_rb_X25519MLKEM768;
@@ -616,6 +619,105 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_to_x25519_public(int argc,
   return rb_str_new((const char *)x_pk, 32);
   (void)self;
 }
+
+/* *****************************************************************************
+ECDSA P-256 / P-384 Digital Signatures (ES256 / ES384)
+***************************************************************************** */
+
+/*
+ * Defines keypair / public_key / sign / verify for one NIST curve.
+ *
+ * Secret keys are big-endian scalars (`bytes_`), public keys are uncompressed
+ * SEC 1 points (0x04 || x || y; verification also accepts compressed points),
+ * signatures are DER encoded and messages are hashed with `hash_fn_`.
+ */
+#define IODINE_CRYPTO_ECDSA_DEF(curve, bytes_, sig_max_, hash_fn_)             \
+  /** Generates a new key pair: [secret_key, public_key]. */                   \
+  FIO_SFUNC VALUE iodine_crypto_##curve##_keypair(VALUE self) {                \
+    uint8_t sk[bytes_], pk[(bytes_ * 2) + 1];                                  \
+    if (fio_##curve##_keypair(sk, pk))                                         \
+      rb_raise(rb_eRuntimeError, "key generation failed");                     \
+    VALUE secret = rb_str_new((const char *)sk, bytes_);                       \
+    VALUE public = rb_str_new((const char *)pk, (bytes_ * 2) + 1);             \
+    fio_memset(sk, 0, bytes_);                                                 \
+    return rb_ary_new_from_args(2, secret, public);                            \
+    (void)self;                                                                \
+  }                                                                            \
+  /** Derives the (uncompressed) public key from a secret key. */              \
+  FIO_SFUNC VALUE iodine_crypto_##curve##_public_key(int argc,                 \
+                                                     VALUE *argv,              \
+                                                     VALUE self) {             \
+    fio_buf_info_s sk = FIO_BUF_INFO0;                                         \
+    iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(sk, 0, "secret_key", 1));       \
+    if (sk.len != bytes_)                                                      \
+      rb_raise(rb_eArgError,                                                   \
+               "secret_key must be " #bytes_ " bytes (got %zu)",               \
+               sk.len);                                                        \
+    uint8_t pk[(bytes_ * 2) + 1];                                              \
+    if (fio_##curve##_public_key(pk, (const uint8_t *)sk.buf))                 \
+      rb_raise(rb_eArgError, "secret_key is out of range");                    \
+    return rb_str_new((const char *)pk, (bytes_ * 2) + 1);                     \
+    (void)self;                                                                \
+  }                                                                            \
+  /** Signs `data` (hashed internally), returning a DER signature. */          \
+  FIO_SFUNC VALUE iodine_crypto_##curve##_sign(int argc,                       \
+                                               VALUE *argv,                    \
+                                               VALUE self) {                   \
+    fio_buf_info_s data = FIO_BUF_INFO0;                                       \
+    fio_buf_info_s sk = FIO_BUF_INFO0;                                         \
+    iodine_rb2c_arg(argc,                                                      \
+                    argv,                                                      \
+                    IODINE_ARG_BUF(data, 0, "data", 1),                        \
+                    IODINE_ARG_BUF(sk, 0, "secret_key", 1));                   \
+    if (sk.len != bytes_)                                                      \
+      rb_raise(rb_eArgError,                                                   \
+               "secret_key must be " #bytes_ " bytes (got %zu)",               \
+               sk.len);                                                        \
+    fio_u512 h = hash_fn_(data.buf, data.len);                                 \
+    uint8_t sig[sig_max_];                                                     \
+    size_t sig_len = 0;                                                        \
+    if (fio_ecdsa_##curve##_sign(sig,                                          \
+                                 &sig_len,                                     \
+                                 sizeof(sig),                                  \
+                                 h.u8,                                         \
+                                 (const uint8_t *)sk.buf))                     \
+      rb_raise(rb_eArgError, "signing failed (invalid secret_key?)");          \
+    return rb_str_new((const char *)sig, (long)sig_len);                       \
+    (void)self;                                                                \
+  }                                                                            \
+  /** Verifies a DER signature over `data` (hashed internally). */             \
+  FIO_SFUNC VALUE iodine_crypto_##curve##_verify(int argc,                     \
+                                                 VALUE *argv,                  \
+                                                 VALUE self) {                 \
+    fio_buf_info_s data = FIO_BUF_INFO0;                                       \
+    fio_buf_info_s sig = FIO_BUF_INFO0;                                        \
+    fio_buf_info_s pk = FIO_BUF_INFO0;                                         \
+    iodine_rb2c_arg(argc,                                                      \
+                    argv,                                                      \
+                    IODINE_ARG_BUF(data, 0, "data", 1),                        \
+                    IODINE_ARG_BUF(sig, 0, "signature", 1),                    \
+                    IODINE_ARG_BUF(pk, 0, "public_key", 1));                   \
+    fio_u512 h = hash_fn_(data.buf, data.len);                                 \
+    return fio_ecdsa_##curve##_verify((const uint8_t *)sig.buf,                \
+                                      sig.len,                                 \
+                                      h.u8,                                    \
+                                      (const uint8_t *)pk.buf,                 \
+                                      pk.len)                                  \
+               ? Qfalse                                                        \
+               : Qtrue;                                                        \
+    (void)self;                                                                \
+  }
+
+/* SHA-256 widened to the shared fio_u512 return type. */
+FIO_IFUNC fio_u512 iodine___crypto_sha256_512(const void *data, uint64_t len) {
+  fio_u512 r = {0};
+  r.u256[0] = fio_sha256(data, len);
+  return r;
+}
+
+IODINE_CRYPTO_ECDSA_DEF(p256, 32, 72, iodine___crypto_sha256_512)
+IODINE_CRYPTO_ECDSA_DEF(p384, 48, 104, fio_sha384)
+#undef IODINE_CRYPTO_ECDSA_DEF
 
 /* *****************************************************************************
 X25519 Key Exchange
@@ -1360,6 +1462,21 @@ static void Init_Iodine_Crypto(void) {
                             "to_x25519_public",
                             iodine_crypto_ed25519_to_x25519_public,
                             -1);
+
+  /* Iodine::Base::Crypto::P256 / P384 (ECDSA) */
+#define IODINE_CRYPTO_ECDSA_REG(var, name, curve)                              \
+  var = rb_define_module_under(iodine_rb_CRYPTO, name);                        \
+  STORE.hold(var);                                                             \
+  rb_define_module_function(var, "keypair", iodine_crypto_##curve##_keypair, 0); \
+  rb_define_module_function(var,                                               \
+                            "public_key",                                      \
+                            iodine_crypto_##curve##_public_key,                \
+                            -1);                                               \
+  rb_define_module_function(var, "sign", iodine_crypto_##curve##_sign, -1);    \
+  rb_define_module_function(var, "verify", iodine_crypto_##curve##_verify, -1);
+  IODINE_CRYPTO_ECDSA_REG(iodine_rb_P256, "P256", p256)
+  IODINE_CRYPTO_ECDSA_REG(iodine_rb_P384, "P384", p384)
+#undef IODINE_CRYPTO_ECDSA_REG
 
   /* Iodine::Base::Crypto::X25519 */
   iodine_rb_X25519 = rb_define_module_under(iodine_rb_CRYPTO, "X25519");
