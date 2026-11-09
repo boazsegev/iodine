@@ -50,7 +50,7 @@ static void *iodine_handle_exception(void *ignr) {
                     (int)RSTRING_LEN(msg),
                     RSTRING_PTR(msg));
     } else {
-      FIO_LOG_ERROR("exposed exception message: %.*s: %.*s\n %s\n"
+      FIO_LOG_ERROR("exposed exception message: %.*s: %.*s\n"
                     "BACKTRACE UNAVAILABLE!\n",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),

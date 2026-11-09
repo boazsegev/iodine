@@ -76,8 +76,8 @@ static _Bool iodinde_hmap_object_cmp(VALUE a, VALUE b) {
  * used during key duplication to prevent GC issues.
  */
 typedef struct {
-  iodine_hmap_s map;  /**< The underlying facil.io hash map */
-  VALUE tmp;          /**< Temporary holder during key operations */
+  iodine_hmap_s map; /**< The underlying facil.io hash map */
+  VALUE tmp;         /**< Temporary holder during key operations */
 } iodine_minimap_s;
 
 static int iodine_minimap_gc_mark_task(iodine_hmap_each_s *e) {
@@ -428,11 +428,11 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
     insert = fio_time_micro() - start;                                         \
     if (klass##_count(&m) != OBJECTS)                                          \
       FIO_LOG_ERROR("map counter error (%zu != %zu)!",                         \
-                    klass##_count(&m),                                         \
+                    (size_t)klass##_count(&m),                                 \
                     OBJECTS);                                                  \
     if (klass##_capa(&m) < OBJECTS)                                            \
       FIO_LOG_ERROR("map capacity error (%zu < %zu)!",                         \
-                    klass##_capa(&m),                                          \
+                    (size_t)klass##_capa(&m),                                  \
                     OBJECTS);                                                  \
     start = fio_time_micro();                                                  \
     for (size_t j = 0; j < CYCLES; ++j) {                                      \
@@ -442,11 +442,11 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
     overwrite = fio_time_micro() - start;                                      \
     if (klass##_count(&m) != OBJECTS)                                          \
       FIO_LOG_ERROR("map counter error (%zu != %zu)!",                         \
-                    klass##_count(&m),                                         \
+                    (size_t)klass##_count(&m),                                 \
                     OBJECTS);                                                  \
     if (klass##_capa(&m) < OBJECTS)                                            \
       FIO_LOG_ERROR("map capacity error (%zu < %zu)!",                         \
-                    klass##_capa(&m),                                          \
+                    (size_t)klass##_capa(&m),                                  \
                     OBJECTS);                                                  \
     start = fio_time_micro();                                                  \
     for (size_t sc = 0; sc < FIND_CYCLES; ++sc)                                \
@@ -454,8 +454,8 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
         if (klass##_get(&m, numbers[i]) != numbers[i])                         \
           FIO_LOG_ERROR(FIO_MACRO2STR(klass) "_get error ([%zu] %zu != %zu)!", \
                         i,                                                     \
-                        numbers[i],                                            \
-                        klass##_get(&m, i));                                   \
+                        (size_t)numbers[i],                                    \
+                        (size_t)klass##_get(&m, i));                           \
       }                                                                        \
     find = fio_time_micro() - start;                                           \
     start = fio_time_micro();                                                  \
@@ -466,8 +466,8 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
               FIO_MACRO2STR(klass) "_get error"                                \
                                    "([%zu] %zu shouldn't exist but == %zu)!",  \
               i,                                                               \
-              numbers[i],                                                      \
-              klass##_get(&m, numbers[i]));                                    \
+              (size_t)numbers[i],                                              \
+              (size_t)klass##_get(&m, numbers[i]));                            \
       }                                                                        \
     find_missing = fio_time_micro() - start;                                   \
     start = fio_time_micro();                                                  \
@@ -484,11 +484,11 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
                  FIO_MACRO2STR(klass),                                         \
                  (size_t)klass##_count(&m),                                    \
                  (size_t)klass##_capa(&m),                                     \
-                 insert,                                                       \
-                 overwrite,                                                    \
-                 find,                                                         \
-                 find_missing,                                                 \
-                 loop);                                                        \
+                 (size_t)insert,                                               \
+                 (size_t)overwrite,                                            \
+                 (size_t)find,                                                 \
+                 (size_t)find_missing,                                         \
+                 (size_t)loop);                                                \
     klass##_destroy(&m);                                                       \
   } while (0);
   for (size_t tst = 0; tst < TESTS; ++tst) {

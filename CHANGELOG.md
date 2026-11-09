@@ -7,6 +7,14 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
+#### 0.8.6 - 2026-11-10
+
+**Fix**: `rack.input#rewind` moves to the start of the body and `rack.input#seek` with no argument returns the current position (both moved to the end of the body since 0.8.3, leaving Rails with empty JSON and form bodies). Credit to Nazarenko Viktor (@vnazarenko) for PR #173.
+
+**Fix**: the Rack env sets `CONTENT_LENGTH` (not `HTTP_CONTENT_LENGTH`), so `ActionDispatch::Request#raw_post` reads JSON bodies. Credit to Nazarenko Viktor (@vnazarenko) for PR #174.
+
+**Fix**: the exposed exception log message no longer has a format specifier without a matching argument, which read garbage from the stack.
+
 #### 0.8.5 - 2026-11-07
 
 **Feature**: (`crypto`) `Iodine::Base::Crypto::P256` and `Iodine::Base::Crypto::P384` provide ECDSA signatures (ES256 / ES384: `keypair`, `public_key`, `sign`, `verify`) with OpenSSL compatible encodings (uncompressed SEC 1 public keys, DER signatures).
