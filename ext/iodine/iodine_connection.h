@@ -3540,7 +3540,7 @@ static void Init_Iodine_Connection(void)  {
   val = STORE.frozen_str(FIO_STR_INFO1((char *)str));                         \
   STORE.hold(val)
 
-  IODINE_RACK_CONTENT_LENGTH = STORE.header_name(FIO_STR_INFO1((char *)"CONTENT_LENGTH"));
+  IODINE_RACK_CONTENT_LENGTH = STORE.header_name(FIO_STR_INFO1((char *)"content-length"));
   STORE.hold(IODINE_RACK_CONTENT_LENGTH);
 
   IODINE_CONST_RACK_STORE(IODINE_RACK_INPUT, "rack.input");
