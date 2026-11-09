@@ -1887,6 +1887,11 @@ module Iodine
     # @return [Integer] the current position
     def seek(pos = nil); end
 
+    # (HTTP Only) Moves the body's read position back to the start, so `rack.input` can be read again.
+    #
+    # @return [Integer] the new position (always `0`)
+    def rewind; end
+
     # (HTTP Only) Releases the body's resources, freeing the in-memory buffer and closing any temporary file.
     #
     # Subsequent body reads will return `nil` and `length` will return `0`. The connection itself remains open.
