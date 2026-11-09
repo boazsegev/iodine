@@ -104,6 +104,13 @@ module RackHandler
       logger = env['rack.logger']
       logger.debug { 'rack.logger block form' } # must not raise
       body = "#{logger.equal?(Iodine::Logger)} #{defined?(::Logger).inspect}"
+    when '/rewind'
+      # Rails reads rack.input, rewinds it and reads it again.
+      input = env['rack.input']
+      first = input.read(5)
+      position = input.seek
+      rewound = input.rewind
+      body = [first, position, rewound, input.read].join('|')
     when '/newlines'
       # Rack 2 style: multiple Set-Cookie values joined with "\n".
       return [200, { 'set-cookie' => "a=1\nb=2", 'x-edges' => "\nc\r\n" }, ['newlines-ok']]
@@ -229,6 +236,10 @@ RSpec.describe 'Iodine HTTP server' do
       # rack.logger is Iodine::Logger (iodine must not need the `logger` gem)
       resp = Net::HTTP.get_response(URI("#{base}/rack/logger"))
       HTTP_RESULTS[:rack_logger] = [resp.code.to_i, resp.body]
+
+      # rack.input can be read again after #rewind; #seek with no argument keeps the position
+      resp = Net::HTTP.post(URI("#{base}/rack/rewind"), 'hello-body')
+      HTTP_RESULTS[:rack_rewind] = [resp.code.to_i, resp.body]
 
       # Alternate between listeners to detect a shared Rack env template leaking
       # the previous request's scheme. Disable verification only on this local
@@ -425,6 +436,12 @@ RSpec.describe 'Iodine HTTP server' do
     it 'reports the transport scheme and Connection#tls? for alternating requests' do
       expect(HTTP_RESULTS[:rack_schemes]).to eq([[200, 'http tls=false'], [200, 'https tls=true'],
                                                 [200, 'http tls=false'], [200, 'https tls=true']])
+    end
+  end
+
+  describe 'rack.input' do
+    it 'reads the body again after #rewind, and #seek with no argument keeps the position' do
+      expect(HTTP_RESULTS[:rack_rewind]).to eq([200, 'hello|5|0|hello-body'])
     end
   end
 

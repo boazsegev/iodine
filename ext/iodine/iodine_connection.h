@@ -51,7 +51,8 @@ This module is the heart of Iodine's connection handling. It manages:
 - `length` - Body length in bytes
 - `read([maxlen], [out_string])` - Read body data
 - `gets([limit])` - Read line from body
-- `seek(pos)` / `rewind` - Seek in body
+- `seek([pos])` - Seek in body (no argument returns the current position)
+- `rewind` - Move back to the start of the body
 - `close_body` - Release body resources (frees buffer / temporary file)
 
 ### Network Information
@@ -840,8 +841,18 @@ FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
     return Qnil;
   int64_t pos = SSIZE_MAX;
   iodine_rb2c_arg(argc, argv, IODINE_ARG_NUM(pos, 0, "pos", 0));
+  if (pos == SSIZE_MAX) /* no position given: report the current one */
+    return ULL2NUM(fio_http_body_pos(c->http));
   pos = (long long)fio_http_body_seek(c->http, (ssize_t)pos);
   return ULL2NUM(pos);
+}
+
+/* Rack `rack.input#rewind`: moves the read position back to the start. */
+FIO_SFUNC VALUE iodine_connection_body_rewind(VALUE o) {
+  iodine_connection_s *c = iodine_connection_ptr(o);
+  if (!c->http)
+    return Qnil;
+  return ULL2NUM(fio_http_body_seek(c->http, 0));
 }
 
 FIO_SFUNC VALUE iodine_connection_body_close(VALUE o) {
@@ -3598,7 +3609,7 @@ static void Init_Iodine_Connection(void)  {
   rb_define_method(m, "gets", iodine_connection_body_gets, -1);
   rb_define_method(m, "read", iodine_connection_body_read, -1);
   rb_define_method(m, "seek", iodine_connection_body_seek, -1);
-  rb_define_method(m, "rewind", iodine_connection_body_seek, -1);
+  rb_define_method(m, "rewind", iodine_connection_body_rewind, 0);
   rb_define_method(m, "close_body", iodine_connection_body_close, 0);
 
   rb_define_method(m, "open?", iodine_connection_is_open, 0);
