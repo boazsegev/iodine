@@ -1701,7 +1701,10 @@ static VALUE iodine_connection_env_get(VALUE self) {
   { /* Router: SCRIPT_NAME*/
     fio_str_info_s opath = fio_http_opath(c->http);
     fio_str_info_s path = fio_http_path(c->http);
-    path.len -= (path.len == 1);
+    /* The router infers PATH_INFO "/" for a request to the route itself
+     * ("/rack"). That "/" is not part of the original path. */
+    if (path.len == 1 && (!opath.len || opath.buf[opath.len - 1] != '/'))
+      path.len = 0;
     opath.len -= path.len;
     if (opath.len)
       iodine_env_set_const_key(env,
