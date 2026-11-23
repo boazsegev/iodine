@@ -116,6 +116,8 @@ module RackHandler
       return [200, { 'set-cookie' => "a=1\nb=2", 'x-edges' => "\nc\r\n" }, ['newlines-ok']]
     when '/content_length'
       body = "#{env['CONTENT_LENGTH'].inspect} #{env.key?('HTTP_CONTENT_LENGTH')}"
+    when '/', '/script_name'
+      body = "#{env['SCRIPT_NAME'].inspect} #{env['PATH_INFO'].inspect}"
     else
       body = "rack:#{env['REQUEST_METHOD']}:#{env['PATH_INFO']}"
     end
@@ -238,6 +240,19 @@ RSpec.describe 'Iodine HTTP server' do
       # The request body length is CONTENT_LENGTH (Rack SPEC), not HTTP_CONTENT_LENGTH
       resp = Net::HTTP.post(URI("#{base}/rack/content_length"), 'hello-body')
       HTTP_RESULTS[:rack_content_length] = [resp.code.to_i, resp.body]
+
+      # SCRIPT_NAME is the mount prefix, and empty (never "/") at the root
+      HTTP_RESULTS[:rack_script_names] = ['/rack', '/rack/', '/rack/script_name'].map do |path|
+        resp = Net::HTTP.get_response(URI("#{base}#{path}"))
+        [path, resp.code.to_i, resp.body]
+      end
+      https = Net::HTTP.new('127.0.0.1', HTTP_PORT_HTTPS)
+      https.use_ssl = true
+      https.verify_mode = OpenSSL::SSL::VERIFY_NONE
+      HTTP_RESULTS[:rack_script_names] += ['/', '/script_name'].map do |path|
+        resp = https.start { |client| client.get(path) }
+        ["https #{path}", resp.code.to_i, resp.body]
+      end
 
       # rack.logger is Iodine::Logger (iodine must not need the `logger` gem)
       resp = Net::HTTP.get_response(URI("#{base}/rack/logger"))
@@ -441,6 +456,18 @@ RSpec.describe 'Iodine HTTP server' do
   describe 'Rack CONTENT_LENGTH' do
     it 'sets CONTENT_LENGTH, without the HTTP_ prefix, for a request with a body' do
       expect(HTTP_RESULTS[:rack_content_length]).to eq([200, '"10" false'])
+    end
+  end
+
+  describe 'Rack SCRIPT_NAME and PATH_INFO' do
+    it 'sets SCRIPT_NAME to the mount prefix, and to "" (never "/") at the root' do
+      expect(HTTP_RESULTS[:rack_script_names]).to eq([
+        ['/rack',              200, '"/rack" "/"'],
+        ['/rack/',             200, '"/rack" "/"'],
+        ['/rack/script_name',  200, '"/rack" "/script_name"'],
+        ['https /',            200, '"" "/"'],
+        ['https /script_name', 200, '"" "/script_name"'],
+      ])
     end
   end
 
