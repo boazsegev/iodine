@@ -7,6 +7,10 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
+#### Unreleased
+
+**Fix**: Rack `SCRIPT_NAME` is empty for requests to `/` and excludes the trailing slash for mounted requests such as `/rack/`, without changing the original or routed request paths. Thanks to Ben Hutton (@benhutton) for identifying the bug and providing regression tests in PR #175.
+
 #### 0.8.6 - 2026-11-10
 
 **Fix**: `rack.input#rewind` moves to the start of the body and `rack.input#seek` with no argument returns the current position (both moved to the end of the body since 0.8.3, leaving Rails with empty JSON and form bodies). Credit to Nazarenko Viktor (@vnazarenko) for PR #173.

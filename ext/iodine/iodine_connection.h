@@ -1698,16 +1698,17 @@ static VALUE iodine_connection_env_get(VALUE self) {
                            IODINE_RACK_QUERY_STRING,
                            fio_keystr_info(&c->http->query),
                            (c->store + IODINE_CONNECTION_STORE_tmp));
-  { /* Router: SCRIPT_NAME*/
+  { /* Router: SCRIPT_NAME */
     fio_str_info_s opath = fio_http_opath(c->http);
     fio_str_info_s path = fio_http_path(c->http);
-    path.len -= (path.len == 1);
-    opath.len -= path.len;
-    if (opath.len)
-      iodine_env_set_const_key(env,
-                               IODINE_RACK_SCRIPT_NAME,
-                               opath,
-                               (c->store + IODINE_CONNECTION_STORE_tmp));
+    /* Accepted requests have a nonempty original path. Discount only the
+     * router-inferred "/", not a real trailing slash. */
+    opath.len -= path.len -
+                 ((path.len == 1) & (opath.buf[opath.len - 1] != '/'));
+    iodine_env_set_const_key(env,
+                             IODINE_RACK_SCRIPT_NAME,
+                             opath,
+                             (c->store + IODINE_CONNECTION_STORE_tmp));
   }
   {
     fio_str_info_s host =
