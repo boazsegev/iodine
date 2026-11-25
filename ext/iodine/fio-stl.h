@@ -73,7 +73,7 @@ supports macros that will help detect and validate it's version.
 /** MINOR version: Deprecation, or significant features added. May break ABI. */
 #define FIO_VERSION_MINOR 8
 /** PATCH version: Bug fixes, minor features may be added. */
-#define FIO_VERSION_PATCH 5
+#define FIO_VERSION_PATCH 6
 /** Build version: optional build info (string), i.e. "beta.02" */
 /* #define FIO_VERSION_BUILD */
 
@@ -131,6 +131,26 @@ Settings - Behavioral defaults
 #ifndef FIO_MAP_WARNING_BITSIZE
 /** iMap and Map allocation size warning (log2), 24 == 16Mb. */
 #define FIO_MAP_WARNING_BITSIZE ((size_t)24)
+#endif
+
+/** Round number of bytes up to a page sized block. */
+#define FIO_MEM_BYTES2PAGES(size)                                              \
+  ((size > (SIZE_MAX - ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)))                  \
+       ? size                                                                  \
+       : (((size_t)(size) + ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)) &            \
+          ((~(size_t)0) << FIO_MEM_PAGE_SIZE_LOG)))
+
+#ifndef FIO_CACHE_LINE_SIZE
+#if defined(__GCC_DESTRUCTIVE_SIZE)
+/** Number of bytes per CPU Cache Line on this machine (most likely). */
+#define FIO_CACHE_LINE_SIZE __GCC_DESTRUCTIVE_SIZE
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__powerpc64__)
+/** Number of bytes per CPU Cache Line on this machine (most likely). */
+#define FIO_CACHE_LINE_SIZE 128
+#else
+/** Number of bytes per CPU Cache Line on this machine (most likely). */
+#define FIO_CACHE_LINE_SIZE 64
+#endif
 #endif
 
 /* *****************************************************************************
@@ -758,6 +778,12 @@ Macro Stringifier
 #define FIO_MACRO2STR(macro) FIO___MACRO2STR_STEP2(macro)
 #endif
 
+#ifndef FIO_MACRO_CAT
+#define FIO___MACRO_CAT_STEP2(a, b) a##b
+/** Concatenates two macros. */
+#define FIO_MACRO_CAT(a, b) FIO___MACRO_CAT_STEP2(a, b)
+#endif
+
 /* *****************************************************************************
 Naming Macros
 ***************************************************************************** */
@@ -814,6 +840,7 @@ Pointer Math
 #define FIO_PTR_FIELD_OFFSET(T_type, field)                                    \
   ((uintptr_t)((&((T_type *)0xFF00)->field)) - 0xFF00)
 #endif
+
 /* *****************************************************************************
 Sleep / Thread Scheduling Macros
 ***************************************************************************** */
@@ -881,11 +908,14 @@ Copyright and License: see header file (000 copyright.h) or top of file
 
 /* C11 Atomics are defined? */
 #if defined(__ATOMIC_RELAXED)
-/** An atomic load operation, returns value in pointer. */
+/** An atomic (acquire) load operation, returns value in pointer. */
 #define fio_atomic_load(dest, p_obj)                                           \
   do {                                                                         \
-    dest = __atomic_load_n((p_obj), __ATOMIC_SEQ_CST);                         \
+    dest = __atomic_load_n((p_obj), __ATOMIC_ACQUIRE);                         \
   } while (0)
+/** An atomic (release) store operation, no return value. */
+#define fio_atomic_store(p_obj, value)                                         \
+  __atomic_store_n((p_obj), (value), __ATOMIC_RELEASE)
 
 // clang-format off
 
@@ -917,11 +947,39 @@ Copyright and License: see header file (000 copyright.h) or top of file
 
 /* Select the correct compiler builtin method. */
 #elif __has_builtin(__sync_add_and_fetch) || (__GNUC__ > 3) /* Atomic Implementation Selector */
-/** An atomic load operation, returns value in pointer. */
+/* Acquire barrier after a volatile load (orders later loads / stores).
+ * Release barrier before a volatile store (orders earlier loads / stores). */
+#if defined(__x86_64__) || defined(__i386__)
+#define FIO___ATOMIC_ACQUIRE_BARRIER() FIO_COMPILER_GUARD /* TSO */
+#define FIO___ATOMIC_RELEASE_BARRIER() FIO_COMPILER_GUARD /* TSO */
+#elif defined(__aarch64__)
+#define FIO___ATOMIC_ACQUIRE_BARRIER() __asm__ volatile("dmb ishld" ::: "memory")
+#define FIO___ATOMIC_RELEASE_BARRIER() __asm__ volatile("dmb ish" ::: "memory")
+#elif defined(__arm__) && defined(__ARM_ARCH) && (__ARM_ARCH >= 7)
+#define FIO___ATOMIC_ACQUIRE_BARRIER() __asm__ volatile("dmb ish" ::: "memory")
+#define FIO___ATOMIC_RELEASE_BARRIER() __asm__ volatile("dmb ish" ::: "memory")
+#elif defined(__powerpc__) || defined(__powerpc64__) || defined(__ppc__)
+#define FIO___ATOMIC_ACQUIRE_BARRIER() __asm__ volatile("lwsync" ::: "memory")
+#define FIO___ATOMIC_RELEASE_BARRIER() __asm__ volatile("lwsync" ::: "memory")
+#elif defined(__riscv)
+#define FIO___ATOMIC_ACQUIRE_BARRIER() __asm__ volatile("fence r,rw" ::: "memory")
+#define FIO___ATOMIC_RELEASE_BARRIER() __asm__ volatile("fence rw,w" ::: "memory")
+#else /* unknown architecture: full barrier */
+#define FIO___ATOMIC_ACQUIRE_BARRIER() __sync_synchronize()
+#define FIO___ATOMIC_RELEASE_BARRIER() __sync_synchronize()
+#endif
+/** An atomic (acquire) load operation, returns value in pointer. */
 #define fio_atomic_load(dest, p_obj)                                           \
   do {                                                                         \
-    dest = *(p_obj);                                                           \
-  } while (!__sync_bool_compare_and_swap((p_obj), dest, dest))
+    dest = *(volatile __typeof__(*(p_obj)) *)(p_obj);                          \
+    FIO___ATOMIC_ACQUIRE_BARRIER();                                            \
+  } while (0)
+/** An atomic (release) store operation, no return value. */
+#define fio_atomic_store(p_obj, value)                                         \
+  do {                                                                         \
+    FIO___ATOMIC_RELEASE_BARRIER();                                            \
+    *(volatile __typeof__(*(p_obj)) *)(p_obj) = (value);                       \
+  } while (0)
 
 
 /** An atomic compare and exchange operation, returns true if an exchange occurred. On failure, `p_expected` is overwritten with the value found at `p_obj`, matching the C11 atomics contract. */
@@ -995,6 +1053,12 @@ Copyright and License: see header file (000 copyright.h) or top of file
 
 /** An atomic load operation, returns value in pointer. */
 #define fio_atomic_load(dest, p_obj) (dest = *(p_obj))
+/** An atomic store operation (compiler guard + write; x64 is TSO). */
+#define fio_atomic_store(p_obj, value)                                         \
+  do {                                                                         \
+    _ReadWriteBarrier();                                                       \
+    *(p_obj) = (value);                                                        \
+  } while (0)
 
 /* _InterlockedCompareExchange* only returns the prior value; these wrappers
  * also write it back into `*p_expected` on failure, matching the C11
@@ -1097,107 +1161,65 @@ FIO_IFUNC int fio___atomic_cmpxchg64(int64_t volatile *p_obj,
 Spin-Locks
 ***************************************************************************** */
 
-/** Initialization value for a spin lock. */
+/** Initialization value for a spin lock (`fio_lock_i`). */
 #define FIO_LOCK_INIT 0
-/** A numbered sub-lock index, must be less than 8. Zero == the master lock. */
-#define FIO_LOCK_SUBLOCK(sub) ((uint8_t)(1U) << ((sub)&7))
+
 /** A spin lock type, must be initialized to `FIO_LOCK_INIT` before use. */
-typedef volatile unsigned char fio_lock_i;
+typedef volatile size_t fio_lock_i;
+
+/**
+ * A spin lock (`.lock`) that fills a whole, aligned, cache line.
+ *
+ * Use for global / static locks, so threads waiting for the lock don't steal
+ * the cache line of nearby data. Initialize with `{FIO_LOCK_INIT}` (or leave
+ * static storage zeroed) and pass `&x.lock` to the lock functions.
+ *
+ * Only use where the alignment is honored (static storage), embed a plain
+ * `fio_lock_i` in heap allocated structures.
+ */
+typedef struct {
+  FIO_ALIGN(FIO_CACHE_LINE_SIZE) fio_lock_i lock;
+  uint8_t pad___[FIO_CACHE_LINE_SIZE - sizeof(fio_lock_i)];
+} fio_lock_line_s;
 
 #ifndef FIO___LOCK_RESCHDULE_EVERY_LOG
-#define FIO___LOCK_RESCHDULE_EVERY_LOG 8
+/** A spinning `fio_lock` reschedules once every 2^LOG failed attempts. */
+#define FIO___LOCK_RESCHDULE_EVERY_LOG 4
 #endif
-/**
- * Tries to lock a group of sublocks.
- *
- * Combine a number of sublocks using OR (`|`) and the FIO_LOCK_SUBLOCK(i)
- * macro. i.e.:
- *
- *```c
- * if(!fio_trylock_group(&lock,
- *                       FIO_LOCK_SUBLOCK(1) | FIO_LOCK_SUBLOCK(2))) {
- *    // act in lock
- * }
- * fio_unlock_group(&lock, FIO_LOCK_SUBLOCK(1) | FIO_LOCK_SUBLOCK(2)));
- * ```
- *
- * Returns 0 on success and non-zero on failure.
- */
-FIO_IFUNC uint8_t fio_trylock_group(fio_lock_i *lock, uint8_t group) {
-  if (!group)
-    group = 1;
-  FIO_COMPILER_GUARD;
-  uint8_t state = fio_atomic_or(lock, group);
-  if (!(state & group))
-    return 0;
-  /* store the acquired locks in `state`. */
-  state = (uint8_t)(~((~state) & group));
-  /* release the locks we acquired */
-  fio_atomic_and(lock, state);
-  return 1;
+
+/** Returns 1 if the lock is locked, 0 otherwise. */
+FIO_IFUNC bool FIO_NAME_BL(fio, locked)(fio_lock_i *lock) {
+  return lock && *lock;
 }
 
-/**
- * Busy waits for a group lock to become available - not recommended.
- *
- * See `fio_trylock_group` for details.
- */
-FIO_IFUNC void fio_lock_group(fio_lock_i *lock, uint8_t group) {
+/** Tries to lock a spinlock. Returns 0 on success and 1 on failure. */
+FIO_IFUNC FIO___TSAN_AVOID bool fio_trylock(fio_lock_i *lock) {
+  if (!lock)
+    return 0;
+  FIO_COMPILER_GUARD;
+  if (*lock) /* probe (read only) before writing */
+    return 1;
+  return fio_atomic_or(lock, 1) != 0;
+}
+
+/** Busy waits for the lock to become available - avoid long waits. */
+FIO_IFUNC void fio_lock(fio_lock_i *lock) {
   size_t i = 0;
-  while (fio_trylock_group(lock, group)) {
-    if ((i++ & (1U << FIO___LOCK_RESCHDULE_EVERY_LOG))) {
-      i = 0;
-      FIO_THREAD_RESCHEDULE();
-    }
+  if (!lock)
+    return;
+  while (fio_trylock(lock)) {
+    if (!(++i & ((1U << FIO___LOCK_RESCHDULE_EVERY_LOG) - 1)))
+      FIO_THREAD_RESCHEDULE(); /* the holder may be preempted - let it run */
+    else
+      FIO_THREAD_YIELD();
   }
 }
 
-/** Unlocks a sublock group, no matter which thread owns which sublock. */
-FIO_IFUNC void fio_unlock_group(fio_lock_i *lock, uint8_t group) {
-  if (!group)
-    group = 1;
-  fio_atomic_and(lock, (uint8_t)(~group));
-}
-
-/** Tries to lock all sublocks. Returns 0 on success and 1 on failure. */
-FIO_IFUNC uint8_t fio_trylock_full(fio_lock_i *lock) {
-  return fio_trylock_group(lock, (uint8_t)(~0));
-}
-
-/** Busy waits for all sub lock to become available - not recommended. */
-FIO_IFUNC void fio_lock_full(fio_lock_i *lock) {
-  fio_lock_group(lock, (uint8_t)(~0));
-}
-
-/** Unlocks all sub locks, no matter which thread owns the lock. */
-FIO_IFUNC void fio_unlock_full(fio_lock_i *lock) { fio_atomic_and(lock, 0); }
-
-/**
- * Tries to acquire the default lock (sublock 0).
- *
- * Returns 0 on success and 1 on failure.
- */
-FIO_IFUNC uint8_t fio_trylock(fio_lock_i *lock) {
-  return fio_trylock_group(lock, (uint8_t)1);
-}
-
-/** Busy waits for the default lock to become available - not recommended. */
-FIO_IFUNC void fio_lock(fio_lock_i *lock) { fio_lock_group(lock, (uint8_t)1); }
-
-/** Unlocks the default lock, no matter which thread owns the lock. */
-FIO_IFUNC void fio_unlock(fio_lock_i *lock) {
-  fio_unlock_group(lock, (uint8_t)1);
-}
-
-/** Returns 1 if the lock is locked, 0 otherwise. */
-FIO_IFUNC uint8_t FIO_NAME_BL(fio, locked)(fio_lock_i *lock) {
-  return ((*lock) & 1);
-}
-
-/** Returns 1 if the lock is locked, 0 otherwise. */
-FIO_IFUNC uint8_t FIO_NAME_BL(fio, group_locked)(fio_lock_i *lock,
-                                                 uint8_t group) {
-  return !!((*lock) & group);
+/** Unlocks a spinlock. Returns non-zero if lock wasn't locked. */
+FIO_IFUNC bool fio_unlock(fio_lock_i *lock) {
+  if (!lock)
+    return 0;
+  return fio_atomic_and(lock, 0) == 0;
 }
 
 /* *****************************************************************************
@@ -1312,28 +1334,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
     return (size_t)((max_concurrent_allocations) * (units_per_allocation));    \
   }
 
-/**
- * FIO_STATIC_SAFE_ALLOC_DEF(name, type_T, units_per_allocation,
- *                           max_concurrent_allocations)
- *
- * A contention-safe variant of FIO_STATIC_ALLOC_DEF for short-lived scratch
- * slots with an explicit checkout lifecycle. Unlike the round-robin variant
- * (which silently reuses slots past `max_concurrent_allocations`), this
- * allocator returns NULL when every slot is busy, letting callers fall back
- * gracefully instead of corrupting an in-flight user of the slot.
- *
- * The busy map (a bitmap, one bit per slot) is kept apart from the slot
- * buffer: slots hold only `type_T` data (naturally aligned, cache-line aligned
- * where FIO_ALIGN is supported). Checkout scans the map a word at a time
- * (one read per `sizeof(size_t) * 8` slots) from slot 0, so busy pools scan
- * cheaply and lightly loaded pools keep reusing the same cache-warm slots.
- *
- * Generated API:
- *   type_T *name##_try(void);      - checkout a slot, or NULL if all busy.
- *   void    name##_free(type_T *); - release a slot returned by name##_try
- *                                    (NULL / foreign pointers are ignored).
- *   size_t  name##_size(void);     - logical arena capacity in type_T units.
- */
+/* safe static memory pool allocation helper macros */
 #define FIO___SAFE_ALLOC_MAP_BITS (sizeof(size_t) * 8)
 #define FIO___SAFE_ALLOC_MAP_LEN(n)                                            \
   (((n) + FIO___SAFE_ALLOC_MAP_BITS - 1) / FIO___SAFE_ALLOC_MAP_BITS)
@@ -1346,6 +1347,18 @@ must be returned. The memory remains valid until its round-robin slot is reused.
     !((n) % FIO___SAFE_ALLOC_MAP_BITS))                                        \
        ? ~(size_t)0                                                            \
        : (FIO___SAFE_ALLOC_MAP_BIT(n) - 1))
+/**
+ * FIO_STATIC_SAFE_ALLOC_DEF(name, type_T, units_per_allocation,
+ *                           max_concurrent_allocations)
+ *
+ * Defines a static pool of `max_concurrent_allocations` scratch slots, each
+ * holding `units_per_allocation` elements of `type_T`. Thread-safe.
+ *
+ * Generates three `static` functions:
+ *   type_T *name##_try(void);      - checks out a slot; NULL if all are in use.
+ *   void    name##_free(type_T *); - returns a slot from name##_try.
+ *   size_t  name##_size(void);     - pool capacity in `type_T` units.
+ */
 #define FIO_STATIC_SAFE_ALLOC_DEF(name,                                        \
                                   type_T,                                      \
                                   units_per_allocation,                        \
@@ -1362,7 +1375,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
         map_[FIO___SAFE_ALLOC_MAP_LEN(max_concurrent_allocations)];            \
     FIO_ALIGN(64) name##__slot_s slot_[(max_concurrent_allocations)];          \
   } name##___state;                                                            \
-  /** Checks out a slot; returns its data block, or NULL when all are busy. */ \
+  /** Checks out a slot; returns NULL when all slots are in use. */            \
   FIO_SFUNC FIO_WARN_UNUSED type_T *name##_try(void) {                         \
     for (size_t w = 0;                                                         \
          w < FIO___SAFE_ALLOC_MAP_LEN(max_concurrent_allocations);             \
@@ -1385,18 +1398,341 @@ must be returned. The memory remains valid until its round-robin slot is reused.
     }                                                                          \
     return NULL;                                                               \
   }                                                                            \
-  /** Releases a slot previously returned by name##_try. */                    \
-  FIO_SFUNC void name##_free(type_T *ptr) {                                    \
+  /** Releases a slot previously returned by name##_try. Fails if foreign. */  \
+  FIO_SFUNC int name##_free(type_T *ptr) {                                     \
     size_t at = ((uintptr_t)ptr - (uintptr_t)name##___state.slot_) /           \
                 sizeof(name##__slot_s);                                        \
-    if (at < (size_t)(max_concurrent_allocations) &&                           \
-        ptr == name##___state.slot_[at].data_)                                 \
-      fio_atomic_and(name##___state.map_ + FIO___SAFE_ALLOC_MAP_POS(at),       \
-                     ~FIO___SAFE_ALLOC_MAP_BIT(at));                           \
+    if (FIO_UNLIKELY(at >= (size_t)(max_concurrent_allocations) ||             \
+                     ptr != name##___state.slot_[at].data_))                   \
+      return -1;                                                               \
+    fio_atomic_and(name##___state.map_ + FIO___SAFE_ALLOC_MAP_POS(at),         \
+                   ~FIO___SAFE_ALLOC_MAP_BIT(at));                             \
+    return 0;                                                                  \
   }                                                                            \
   /** Returns the logical arena capacity in `type_T` units. */                 \
   FIO_IFUNC size_t name##_size(void) {                                         \
     return (size_t)((max_concurrent_allocations) * (units_per_allocation));    \
+  }
+
+/** Declares the functions defined by `FIO_STATIC_PAGE_ALLOC_DEF`. */
+#define FIO_STATIC_PAGE_ALLOC_DEC(extern, name, page_log, total_bytes)         \
+  /** Resets the lock. Call in the child process after `fork`. */              \
+  extern FIO_MAYBE_UNUSED FIO___TSAN_AVOID void name##_on_fork(void *is_null); \
+  /** Frees memory. Returns 0 on success, -1 on error (sets errno). */         \
+  extern int name##_free(void *mem, size_t bytes);                             \
+  /** Allocates zeroed, page-aligned memory. Returns NULL on error. */         \
+  extern FIO_WARN_UNUSED void *name##_alloc(size_t bytes, size_t aligned);     \
+  /** Resizes memory; `aligned_hint` applies only if memory moves. */          \
+  extern FIO_WARN_UNUSED void *name##_realloc(void *old,                       \
+                                              size_t old_bytes,                \
+                                              size_t new_bytes,                \
+                                              size_t aligned_hint);
+
+/**
+ * Defines a page allocator over a static arena of `total_bytes` bytes, using
+ * pages of `2^page_log` bytes. The arena must be at least four pages long.
+ *
+ * Generates `name_alloc`, `name_realloc`, `name_free` and `name_on_fork`.
+ */
+#define FIO_STATIC_PAGE_ALLOC_DEF(extern, name, page_log, total_bytes)         \
+  FIO_ASSERT_STATIC((page_log) >= 0 &&                                         \
+                        (page_log) < sizeof(size_t) * CHAR_BIT &&              \
+                        ((size_t)1 << (page_log)) >= sizeof(size_t),           \
+                    "static page size must fit size_t and hold a word");       \
+  FIO_ASSERT_STATIC((total_bytes) >= (1ULL << ((page_log) + 2)) &&             \
+                        (total_bytes) <=                                       \
+                            SIZE_MAX - (((size_t)1 << (page_log)) - 1),        \
+                    "static arena size and page padding must be at least 4 "   \
+                    "pages long and fit size_t");                              \
+  /* Static Memory Allocator State */                                          \
+  static struct {                                                              \
+    fio_lock_line_s lock;                                                      \
+    uint64_t bitmap[1 + ((((total_bytes) + ((1ULL << (page_log)) - 1)) >>      \
+                          (page_log)) >>                                       \
+                         6)];                                                  \
+    uint8_t memory[(((total_bytes) + ((1ULL << (page_log)) - 1)) |             \
+                    ((1ULL << (page_log)) - 1))];                              \
+  } name##___state;                                                            \
+  /* Rounds up `bytes` to nearest number of pages. */                          \
+  FIO_IFUNC size_t name##___pages(size_t bytes) {                              \
+    return (bytes >> (page_log)) + !!(bytes & ((1ULL << (page_log)) - 1));     \
+  }                                                                            \
+  FIO_IFUNC size_t name##___pages_total(void) {                                \
+    return (((total_bytes) + ((1ULL << (page_log)) - 1)) >> (page_log));       \
+  }                                                                            \
+  /* Returns the first page-aligned address in the static buffer. */           \
+  FIO_IFUNC uint8_t *name##___static_buffer(void) {                            \
+    return name##___state.memory +                                             \
+           (((~(uintptr_t)name##___state.memory) + 1) &                        \
+            ((1ULL << (page_log)) - 1));                                       \
+  }                                                                            \
+  /* Returns the page index of `mem`, or SIZE_MAX if outside the arena. */     \
+  FIO_IFUNC size_t name##___pos(void *mem) {                                   \
+    const uintptr_t start = (uintptr_t)name##___static_buffer();               \
+    const uintptr_t address = (uintptr_t)mem;                                  \
+    const size_t capacity = name##___pages_total() << (page_log);              \
+    if (address < start || address - start >= capacity)                        \
+      return SIZE_MAX;                                                         \
+    return (size_t)(address - start) >> (page_log);                            \
+  }                                                                            \
+  typedef struct {                                                             \
+    size_t first;                                                              \
+    size_t last;                                                               \
+    uint64_t head;                                                             \
+    uint64_t tail;                                                             \
+  } name##___bitmap_info_s;                                                    \
+  FIO_IFUNC name##___bitmap_info_s name##___bitmap_info(size_t at,             \
+                                                        size_t pages) {        \
+    const size_t end = at + pages - 1;                                         \
+    return (name##___bitmap_info_s){                                           \
+        .first = at >> 6,                                                      \
+        .last = end >> 6,                                                      \
+        .head = UINT64_MAX << (at & 63),                                       \
+        .tail = UINT64_MAX >> (63 - (end & 63)),                               \
+    };                                                                         \
+  }                                                                            \
+  /* Returns the distance from `at` to the first free run, or SIZE_MAX. */     \
+  FIO_IFUNC size_t name##___next_available(size_t at, size_t pages) {          \
+    const size_t total = name##___pages_total();                               \
+    if (!pages || at >= total || pages > total - at)                           \
+      return SIZE_MAX;                                                         \
+    const size_t original = at;                                                \
+    const size_t last_start = total - pages;                                   \
+    for (;;) {                                                                 \
+      name##___bitmap_info_s info = name##___bitmap_info(at, pages);           \
+      if (info.last >= sizeof(name##___state.bitmap) / sizeof(uint64_t))       \
+        return SIZE_MAX;                                                       \
+      size_t word = info.first;                                                \
+      uint64_t busy = name##___state.bitmap[word] & info.head;                 \
+      if (info.first == info.last) {                                           \
+        /* Only bits shared by head and tail belong to this range. */          \
+        busy &= info.tail;                                                     \
+      } else if (!busy) {                                                      \
+        /* Every bit in an interior word belongs to this range. */             \
+        for (++word; word < info.last; ++word) {                               \
+          busy = name##___state.bitmap[word];                                  \
+          if (busy)                                                            \
+            break;                                                             \
+        }                                                                      \
+        if (word == info.last)                                                 \
+          busy = name##___state.bitmap[word] & info.tail;                      \
+      }                                                                        \
+      if (!busy)                                                               \
+        return at - original;                                                  \
+      /* Skip past the highest occupied page found in this word. */            \
+      at = (word << 6) + fio_msb_index_unsafe(busy) + 1;                       \
+      if (at > last_start)                                                     \
+        return SIZE_MAX;                                                       \
+    }                                                                          \
+  }                                                                            \
+  /* Attempt to occupy range, return error if unavailable (no allocation) */   \
+  FIO_IFUNC int name##___set_used(size_t at, size_t pages) {                   \
+    int err = 0;                                                               \
+    if (!pages || at >= name##___pages_total() ||                              \
+        pages > name##___pages_total() - at)                                   \
+      return -1;                                                               \
+    name##___bitmap_info_s info = name##___bitmap_info(at, pages);             \
+    if (info.last >= sizeof(name##___state.bitmap) / sizeof(uint64_t))         \
+      return -1;                                                               \
+    /* single word fast path */                                                \
+    if (info.first == info.last) {                                             \
+      info.head &= info.tail;                                                  \
+      fio_lock(&name##___state.lock.lock);                                     \
+      if ((name##___state.bitmap[info.first] & info.head))                     \
+        err = -1;                                                              \
+      else                                                                     \
+        name##___state.bitmap[info.first] |= info.head;                        \
+      fio_unlock(&name##___state.lock.lock);                                   \
+      return err;                                                              \
+    }                                                                          \
+    /* multi word test */                                                      \
+    fio_lock(&name##___state.lock.lock);                                       \
+    if ((name##___state.bitmap[info.first] & info.head))                       \
+      err = -1;                                                                \
+    for (size_t wrd = info.first + 1; !err && wrd < info.last; ++wrd)          \
+      err -= !!name##___state.bitmap[wrd];                                     \
+    err -= !!(name##___state.bitmap[info.last] & info.tail);                   \
+    if (!err) {                                                                \
+      name##___state.bitmap[info.first] |= info.head;                          \
+      for (size_t wrd = info.first + 1; !err && wrd < info.last; ++wrd)        \
+        name##___state.bitmap[wrd] = UINT64_MAX;                               \
+      name##___state.bitmap[info.last] |= info.tail;                           \
+    }                                                                          \
+    fio_unlock(&name##___state.lock.lock);                                     \
+    err = 0 - (!!err);                                                         \
+    return err;                                                                \
+  }                                                                            \
+  /* Clears range. Returns -1 if invalid or any requested bit was clear. */    \
+  FIO_SFUNC int name##___set_free(size_t at, size_t pages) {                   \
+    int err = 0;                                                               \
+    if (!pages || at >= name##___pages_total() ||                              \
+        pages > name##___pages_total() - at)                                   \
+      return -1;                                                               \
+    name##___bitmap_info_s info = name##___bitmap_info(at, pages);             \
+    if (info.last >= sizeof(name##___state.bitmap) / sizeof(uint64_t))         \
+      return -1;                                                               \
+    if (info.first == info.last) {                                             \
+      info.head &= info.tail;                                                  \
+      fio_lock(&name##___state.lock.lock);                                     \
+      err |= ((name##___state.bitmap[info.first] & info.head) != info.head);   \
+      name##___state.bitmap[info.first] &= ~info.head;                         \
+      fio_unlock(&name##___state.lock.lock);                                   \
+      if (err)                                                                 \
+        errno = EBADF;                                                         \
+      return err ? -1 : 0;                                                     \
+    }                                                                          \
+    fio_lock(&name##___state.lock.lock);                                       \
+    err |= ((name##___state.bitmap[info.first] & info.head) != info.head);     \
+    name##___state.bitmap[info.first] &= ~info.head;                           \
+    for (size_t wrd = info.first + 1; wrd < info.last; ++wrd) {                \
+      err |= (name##___state.bitmap[wrd] != UINT64_MAX);                       \
+      name##___state.bitmap[wrd] = 0;                                          \
+    }                                                                          \
+    err |= ((name##___state.bitmap[info.last] & info.tail) != info.tail);      \
+    name##___state.bitmap[info.last] &= ~info.tail;                            \
+    fio_unlock(&name##___state.lock.lock);                                     \
+    err = 0 - (!!err);                                                         \
+    if (err)                                                                   \
+      errno = EBADF;                                                           \
+    return err;                                                                \
+  }                                                                            \
+  /** Resets the lock. Call in the child process after `fork`. */              \
+  extern FIO_MAYBE_UNUSED FIO___TSAN_AVOID void name##_on_fork(                \
+      void *is_null) {                                                         \
+    (void)is_null;                                                             \
+    name##___state.lock.lock = FIO_LOCK_INIT;                                  \
+  }                                                                            \
+  /** Frees memory. Returns 0 on success, -1 on error (sets errno). */         \
+  extern int name##_free(void *mem, size_t bytes) {                            \
+    if (!mem)                                                                  \
+      return 0;                                                                \
+    const uintptr_t start = (uintptr_t)name##___static_buffer();               \
+    const uintptr_t address = (uintptr_t)mem;                                  \
+    const size_t capacity = name##___pages_total() << (page_log);              \
+    if (address < start || address - start >= capacity || !bytes ||            \
+        bytes > capacity - (size_t)(address - start)) {                        \
+      errno = EINVAL;                                                          \
+      return -1; /* ERROR: not our memory / not allocated */                   \
+    }                                                                          \
+    const size_t at = (size_t)(address - start) >> (page_log);                 \
+    bytes = name##___pages(bytes);                                             \
+    if (bytes > name##___pages_total() - at) {                                 \
+      errno = EINVAL;                                                          \
+      return -1;                                                               \
+    }                                                                          \
+    /* move pointer to page boundary if user didn't pass allocation root  */   \
+    mem = name##___static_buffer() + (at << (page_log));                       \
+    /* zero out memory, mem is aligned, safe to de-reference. */               \
+    union {                                                                    \
+      void *ptr;                                                               \
+      size_t *wrd;                                                             \
+    } u = {.ptr = mem};                                                        \
+    for (size_t pages = 0; pages < bytes; ++pages) {                           \
+      const size_t offset = (pages << (page_log)) / sizeof(size_t);            \
+      for (size_t words = 0; words < ((1ULL << (page_log)) / sizeof(size_t));  \
+           ++words)                                                            \
+        u.wrd[offset + words] = 0;                                             \
+    }                                                                          \
+    return name##___set_free(name##___pos(mem), bytes);                        \
+  }                                                                            \
+  /** Allocates zeroed, page-aligned memory. Returns NULL on error. */         \
+  extern FIO_WARN_UNUSED void *name##_alloc(size_t bytes, size_t aligned) {    \
+    /* convert requested number of bytes to pages */                           \
+    bytes = name##___pages(bytes);                                             \
+    /* isolate alignment's lowest bit */                                       \
+    aligned = (aligned & ((~aligned) + 1));                                    \
+    aligned = aligned < (1ULL << (page_log)) ? (1ULL << (page_log)) : aligned; \
+    const uintptr_t aligned_head_mask = (aligned - 1);                         \
+    const uintptr_t aligned_tail_mask = ~aligned_head_mask;                    \
+    uint8_t *mem = name##___static_buffer();                                   \
+    if (!bytes)                                                                \
+      return NULL;                                                             \
+    if (aligned > ((total_bytes) >> 2)) {                                      \
+      errno = EINVAL;                                                          \
+      return NULL;                                                             \
+    }                                                                          \
+    if (bytes > (((total_bytes) >> (page_log)) >> 1)) {                        \
+      errno = ENOMEM;                                                          \
+      return NULL;                                                             \
+    }                                                                          \
+    for (;;) {                                                                 \
+      size_t next = name##___next_available(name##___pos(mem), bytes);         \
+      if (next == SIZE_MAX) {                                                  \
+        errno = ENOMEM;                                                        \
+        return NULL;                                                           \
+      }                                                                        \
+      mem += (next << (page_log));                                             \
+      if ((uintptr_t)mem > UINTPTR_MAX - aligned_head_mask) {                  \
+        errno = ENOMEM;                                                        \
+        return NULL;                                                           \
+      }                                                                        \
+      mem = (uint8_t *)(((uintptr_t)mem + aligned_head_mask) &                 \
+                        aligned_tail_mask);                                    \
+      if (name##___pos(mem) == SIZE_MAX) {                                     \
+        errno = ENOMEM;                                                        \
+        return NULL;                                                           \
+      }                                                                        \
+      if (name##___set_used(name##___pos(mem), bytes))                         \
+        continue;                                                              \
+      return mem;                                                              \
+    }                                                                          \
+    return NULL;                                                               \
+  }                                                                            \
+  /** Resizes memory; `aligned_hint` applies only if memory moves. */          \
+  extern FIO_WARN_UNUSED void *name##_realloc(void *old,                       \
+                                              size_t old_bytes,                \
+                                              size_t new_bytes,                \
+                                              size_t aligned_hint) {           \
+    old_bytes = name##___pages(old_bytes);                                     \
+    new_bytes = name##___pages(new_bytes);                                     \
+    if (new_bytes > (((total_bytes) >> (page_log)) >> 1)) {                    \
+      errno = ENOMEM;                                                          \
+      return NULL;                                                             \
+    }                                                                          \
+    if (!old)                                                                  \
+      return name##_alloc((new_bytes << (page_log)), aligned_hint);            \
+    const uintptr_t start = (uintptr_t)name##___static_buffer();               \
+    const uintptr_t address = (uintptr_t)old;                                  \
+    const size_t capacity = name##___pages_total() << (page_log);              \
+    if (address < start || address - start >= capacity || !old_bytes ||        \
+        old_bytes > ((capacity - (size_t)(address - start)) >> (page_log))) {  \
+      errno = EINVAL;                                                          \
+      return NULL;                                                             \
+    }                                                                          \
+    if (old_bytes == new_bytes) {                                              \
+      return old;                                                              \
+    }                                                                          \
+    if (old_bytes < new_bytes) {                                               \
+      /* attempt to occupy adjacent pages, if success, return old */           \
+      if (!name##___set_used(                                                  \
+              name##___pos((uint8_t *)old + (old_bytes << (page_log))),        \
+              new_bytes - old_bytes))                                          \
+        return old;                                                            \
+      /* attempt to allocate, if success, copy and return new */               \
+      void *mem = name##_alloc(new_bytes << (page_log), aligned_hint);         \
+      if (!mem)                                                                \
+        return NULL;                                                           \
+      union {                                                                  \
+        void *ptr;                                                             \
+        size_t *wrd;                                                           \
+      } src = {.ptr = old}, dest = {.ptr = mem};                               \
+      for (size_t pages = 0; pages < old_bytes; ++pages) {                     \
+        const size_t offset = (pages << (page_log)) / sizeof(size_t);          \
+        for (size_t words = 0;                                                 \
+             words < ((1ULL << (page_log)) / sizeof(size_t));                  \
+             ++words)                                                          \
+          dest.wrd[offset + words] = src.wrd[offset + words];                  \
+      }                                                                        \
+      name##_free(old, (old_bytes << (page_log)));                             \
+      return mem;                                                              \
+    }                                                                          \
+    if (!new_bytes) {                                                          \
+      name##_free(old, (old_bytes << (page_log)));                             \
+      return NULL;                                                             \
+    }                                                                          \
+    name##_free((uint8_t *)old + (new_bytes << (page_log)),                    \
+                ((old_bytes - new_bytes) << (page_log)));                      \
+    return old;                                                                \
   }
 
 /* *****************************************************************************
@@ -1977,7 +2313,7 @@ Memory Leak Detection
 #define FIO___LEAK_COUNTER_DEF(name)                                           \
   size_t FIO_NAME(fio___leak_counter, name)(size_t i);                         \
   void FIO_NAME(fio___leak_counter_cleanup, name)(void *i);                    \
-  /* now do not need FIO_WEAK because all _DEF under completeTU gate,
+  /* now do not need FIO_WEAK because all _DEF under completeTU gate,          \
    * deleted to see once-silent link issues explicitly not only on windows */  \
   size_t FIO_NAME(fio___leak_counter, name)(size_t i) {                        \
     static volatile size_t counter = 0;                                        \
@@ -5813,6 +6149,338 @@ FIO_IFUNC uint32_t fio_utf8_peek(const char *str) {
   char *tmp = (char *)(uintptr_t)str;
   return fio_utf8_read(&tmp);
 }
+
+/* *****************************************************************************
+System memory allocation
+***************************************************************************** */
+
+#ifndef FIO_MEM_SYS_STATIC_SIZE_LOG
+/** Fixed backend capacity log2 (28 == 256 MiB), excluding bitmap/page padding.
+ * Used only with FIO_MEM_SYS_FORCE_STATIC or without a native backend.
+ * Must be at least FIO_MEM_PAGE_SIZE_LOG + 2 (4 pages). */
+#define FIO_MEM_SYS_STATIC_SIZE_LOG 28
+#endif
+
+/**
+ * Allocates zeroed, page-aligned system memory (`bytes` rounded up to pages).
+ *
+ * `alignment_log` requests `2^alignment_log` alignment (0 to 24; 0 means page).
+ *
+ * Returns NULL if `bytes` is 0 or on failure (sets `errno`).
+ */
+FIO_MAYBE_UNUSED void *fio_mem_sys_alloc(size_t bytes, uint8_t alignment_log);
+/**
+ * Resizes memory from `fio_mem_sys_alloc`, keeping its existing data.
+ *
+ * `old_len` must be the length used to allocate `mem`. A NULL `mem` allocates;
+ * a zero `new_len` frees and returns NULL.
+ *
+ * Returns the (possibly moved) memory, or NULL on failure, leaving `mem` valid.
+ */
+FIO_MAYBE_UNUSED void *fio_mem_sys_realloc(void *mem,
+                                           size_t old_len,
+                                           size_t new_len,
+                                           uint8_t alignment_log);
+/** Frees memory from `fio_mem_sys_alloc`; `bytes` must be its current length.
+ */
+FIO_MAYBE_UNUSED void fio_mem_sys_free(void *mem, size_t bytes);
+
+/* Implement system based allocation */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+FIO_ASSERT_STATIC(FIO_MEM_PAGE_SIZE_LOG >= 3 && FIO_MEM_PAGE_SIZE_LOG <= 24 &&
+                      FIO_MEM_PAGE_SIZE_LOG < sizeof(size_t) * CHAR_BIT,
+                  "system page size log must be in range 3-24 and fit size_t");
+
+/* Overflow is failure, never an unrounded successful allocation. */
+FIO_IFUNC size_t fio___mem_sys_length(size_t bytes) {
+  const size_t mask = ((size_t)1 << FIO_MEM_PAGE_SIZE_LOG) - 1;
+  if (bytes > SIZE_MAX - mask) {
+    errno = ENOMEM;
+    return 0;
+  }
+  return (bytes + mask) & ~mask;
+}
+
+FIO_IFUNC _Bool fio___mem_sys_request(size_t *bytes, uint8_t alignment_log) {
+  if (alignment_log > 24) {
+    errno = EINVAL;
+    return 0;
+  }
+  const size_t original = *bytes;
+  *bytes = fio___mem_sys_length(original);
+  return !original || *bytes;
+}
+
+/* Word-sized copies, using core's byte-access helpers to avoid type-aliasing
+ * assumptions about caller data or the declared static backing byte array. */
+FIO_SFUNC void fio___mem_sys_copy(void *dest, const void *src, size_t bytes) {
+  for (size_t i = 0; i < bytes; i += sizeof(uint64_t))
+    fio_u2buf64u((uint8_t *)dest + i, fio_buf2u64u((const uint8_t *)src + i));
+}
+
+#if !defined(FIO_MEM_SYS_FORCE_STATIC) &&                                      \
+    (FIO_OS_POSIX ||                                                           \
+     __has_include("sys/mman.h")) /* POSIX `mmap` based alloc */
+#include <sys/mman.h>
+
+/* Mitigates MAP_ANONYMOUS not being defined on older versions of MacOS */
+#if !defined(MAP_ANONYMOUS)
+#if defined(MAP_ANON)
+#define MAP_ANONYMOUS MAP_ANON
+#else
+#define MAP_ANONYMOUS 0
+#endif /* defined(MAP_ANONYMOUS) */
+#endif /* FIO_MEM_SYS_ALLOC */
+
+/** Allocates memory using the system's allocator, enforcing alignment. */
+FIO_MAYBE_UNUSED void *fio_mem_sys_alloc(size_t bytes, uint8_t alignment_log) {
+  void *result;
+  if (!fio___mem_sys_request(&bytes, alignment_log) || !bytes)
+    return NULL;
+  const size_t alignment_mask = (1ULL << alignment_log) - 1;
+  const size_t alignment_size = (1ULL << alignment_log);
+/* hope for the best? */
+#ifdef MAP_ALIGNED
+  result = mmap(NULL,
+                bytes,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_ALIGNED(alignment_log),
+                -1,
+                0);
+#else
+  result = mmap(NULL,
+                bytes,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0);
+#endif /* MAP_ALIGNED */
+  if (result == MAP_FAILED)
+    return (void *)NULL;
+  if (((uintptr_t)result & alignment_mask)) {
+    munmap(result, bytes);
+    if (bytes > SIZE_MAX - alignment_size) {
+      errno = ENOMEM;
+      return NULL;
+    }
+    result = mmap(NULL,
+                  bytes + alignment_size,
+                  PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANONYMOUS,
+                  -1,
+                  0);
+    if (result == MAP_FAILED) {
+      return (void *)NULL;
+    }
+    const uintptr_t offset =
+        (alignment_size - ((uintptr_t)result & alignment_mask));
+    if (offset) {
+      munmap(result, offset);
+      result = (void *)((uintptr_t)result + offset);
+    }
+    munmap((void *)((uintptr_t)result + bytes), alignment_size - offset);
+  }
+  return result;
+}
+
+/** Re-allocates memory using the system's allocator, enforcing alignment. */
+FIO_MAYBE_UNUSED void *fio_mem_sys_realloc(void *mem,
+                                           size_t old_len,
+                                           size_t new_len,
+                                           uint8_t alignment_log) {
+  void *result;
+  if (!mem)
+    return fio_mem_sys_alloc(new_len, alignment_log);
+  if (!new_len)
+    goto free_mem;
+  if (!fio___mem_sys_request(&new_len, alignment_log))
+    return NULL;
+  old_len = fio___mem_sys_length(old_len);
+  if (!old_len)
+    return NULL;
+  if (new_len > old_len) {
+#if defined(__linux__)
+    result = mremap(mem, old_len, new_len, 0);
+    if (result != MAP_FAILED)
+      return result;
+#endif
+    result = mmap((void *)((uintptr_t)mem + old_len),
+                  new_len - old_len,
+                  PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANONYMOUS,
+                  -1,
+                  0);
+    if (result == (void *)((uintptr_t)mem + old_len)) {
+      result = mem;
+    } else {
+      /* copy and free */
+      if (result != MAP_FAILED) /* free the misplaced attempt */
+        munmap(result, new_len - old_len);
+      result =
+          fio_mem_sys_alloc(new_len, alignment_log); /* allocate new memory */
+      if (!result) {
+        return (void *)NULL;
+      }
+      fio___mem_sys_copy(result, mem, old_len);
+      munmap(mem, old_len); /* free original memory */
+    }
+    return result;
+  }
+  if (old_len != new_len) /* remove dangling pages */
+    munmap((void *)((uintptr_t)mem + new_len), old_len - new_len);
+  return mem;
+
+free_mem:
+  fio_mem_sys_free(mem, old_len);
+  mem = NULL;
+  return NULL;
+}
+
+/* frees memory using `munmap`. */
+FIO_MAYBE_UNUSED void fio_mem_sys_free(void *mem, size_t bytes) {
+  if (!mem)
+    return;
+  bytes = fio___mem_sys_length(bytes);
+  if (bytes)
+    munmap(mem, bytes);
+}
+
+/* Windows Allocation */
+#elif !defined(FIO_MEM_SYS_FORCE_STATIC) && FIO_OS_WIN
+#include <memoryapi.h>
+
+FIO_MAYBE_UNUSED void fio_mem_sys_free(void *mem, size_t bytes) {
+  if (!mem)
+    return;
+  if (!VirtualFree(mem, 0, MEM_RELEASE))
+    FIO_LOG_ERROR("Memory address at %p couldn't be returned to the system",
+                  mem);
+  (void)bytes;
+}
+
+/** Allocates memory using the system's allocator, enforcing alignment. */
+FIO_MAYBE_UNUSED void *fio_mem_sys_alloc(size_t bytes, uint8_t alignment_log) {
+  void *result;
+  if (!fio___mem_sys_request(&bytes, alignment_log) || !bytes)
+    return NULL;
+  if (bytes > SIZE_MAX / 4) {
+    errno = ENOMEM;
+    return NULL;
+  }
+  size_t attempts = 0;
+  static uintptr_t next_alloc = 1;
+  static fio_lock_line_s hint_lock;
+  uintptr_t hint;
+  const uintptr_t alignment_rounder = (1ULL << alignment_log) - 1;
+  const uintptr_t alignment_mask = ~alignment_rounder;
+  do {
+    /* Only address-hint bookkeeping is shared, not the system call itself. */
+    fio_lock(&hint_lock.lock);
+    hint = (next_alloc + alignment_rounder) & alignment_mask;
+    next_alloc = hint + (bytes << 2);
+    fio_unlock(&hint_lock.lock);
+    result =
+        VirtualAlloc((void *)hint, (bytes << 2), MEM_RESERVE, PAGE_READWRITE);
+  } while (!result && (attempts++) < 1024);
+  if (result) {
+    void *const reserved = result;
+    result = VirtualAlloc(reserved, bytes, MEM_COMMIT, PAGE_READWRITE);
+    FIO_ASSERT_DEBUG(result, "couldn't commit memory after reservation?!");
+    if (!result) { /* release the reservation rather than leak it */
+      VirtualFree(reserved, 0, MEM_RELEASE);
+      errno = ENOMEM;
+    }
+  } else {
+    FIO_LOG_ERROR("Couldn't allocate memory from the system, error %zu."
+                  "\n\t%zu attempts with final address %p",
+                  (size_t)GetLastError(),
+                  attempts,
+                  (void *)hint);
+    errno = ENOMEM;
+  }
+  return result;
+}
+
+/** Re-allocates memory using the system's allocator, enforcing alignment. */
+FIO_MAYBE_UNUSED void *fio_mem_sys_realloc(void *mem,
+                                           size_t old_len,
+                                           size_t new_len,
+                                           uint8_t alignment_log) {
+  if (!mem)
+    return fio_mem_sys_alloc(new_len, alignment_log);
+  if (!new_len)
+    goto free_mem;
+  if (!fio___mem_sys_request(&new_len, alignment_log))
+    return NULL;
+  old_len = fio___mem_sys_length(old_len);
+  if (!old_len)
+    return NULL;
+  if (new_len > old_len) {
+    /* extend allocation */
+    void *tmp = VirtualAlloc((void *)((uintptr_t)mem + old_len),
+                             new_len - old_len,
+                             MEM_COMMIT,
+                             PAGE_READWRITE);
+    if (tmp)
+      return mem;
+    /* Alloc, Copy, Free... sorry... */
+    tmp = fio_mem_sys_alloc(new_len, alignment_log);
+    if (!tmp) {
+      FIO_LOG_ERROR("system realloc failed to allocate memory.");
+      return NULL;
+    }
+    fio___mem_sys_copy(tmp, mem, old_len);
+    fio_mem_sys_free(mem, old_len);
+    mem = tmp;
+  } else if (old_len > new_len) {
+    /* shrink allocation */
+    if (!VirtualFree((void *)((uintptr_t)mem + new_len),
+                     old_len - new_len,
+                     MEM_DECOMMIT))
+      FIO_LOG_ERROR("failed to decommit memory range @ %p.", mem);
+  }
+  return mem;
+free_mem:
+  fio_mem_sys_free(mem, old_len);
+  mem = NULL;
+  return NULL;
+}
+
+#else /* FIO_OS_POSIX / FIO_OS_WIN => unknown...? */
+
+/* The implementation TU owns the fixed backend's single arena. */
+FIO_ASSERT_STATIC(FIO_MEM_SYS_STATIC_SIZE_LOG >= FIO_MEM_PAGE_SIZE_LOG &&
+                      FIO_MEM_SYS_STATIC_SIZE_LOG < sizeof(size_t) * CHAR_BIT,
+                  "static memory size must hold pages and fit size_t");
+FIO_STATIC_PAGE_ALLOC_DEF(FIO_SFUNC,
+                          fio___mem_sys_static,
+                          FIO_MEM_PAGE_SIZE_LOG,
+                          ((size_t)1 << FIO_MEM_SYS_STATIC_SIZE_LOG))
+
+FIO_MAYBE_UNUSED void *fio_mem_sys_alloc(size_t bytes, uint8_t alignment_log) {
+  return fio___mem_sys_static_alloc(
+      bytes,
+      (size_t)1 << (alignment_log < 24 ? alignment_log : 24));
+}
+
+FIO_MAYBE_UNUSED void fio_mem_sys_free(void *mem, size_t bytes) {
+  (void)fio___mem_sys_static_free(mem, bytes);
+}
+
+FIO_MAYBE_UNUSED void *fio_mem_sys_realloc(void *mem,
+                                           size_t old_len,
+                                           size_t new_len,
+                                           uint8_t alignment_log) {
+  return fio___mem_sys_static_realloc(
+      mem,
+      old_len,
+      new_len,
+      (size_t)1 << (alignment_log < 24 ? alignment_log : 24));
+}
+
+#endif /* FIO_OS_POSIX / FIO_OS_WIN */
+#endif /* extern */
 
 /* *****************************************************************************
 C++ extern end
@@ -14285,6 +14953,26 @@ iMap Creation Macro
     while (a->w && !is_valid_fn((a->ary + a->w - 1)))                          \
       --a->w;                                                                  \
     return 0;                                                                  \
+  }                                                                            \
+  /** Removes and returns an object. Returns all zeros on error/missing. */    \
+  FIO_IFUNC array_type FIO_NAME(array_name,                                    \
+                                extract)(FIO_NAME(array_name, s) * a,          \
+                                         array_type obj) {                     \
+    array_type old = (array_type){0};                                          \
+    array_type zeroed_ = (array_type){0};                                      \
+    if (!a || !is_valid_fn((&obj)) || is_valid_fn((&zeroed_)))                 \
+      return old;                                                              \
+    FIO_NAME(array_name, seeker_s) s = FIO_NAME(array_name, seek)(a, &obj);    \
+    if (s.pos >= a->w)                                                         \
+      return old;                                                              \
+    old = a->ary[s.pos];                                                       \
+    a->ary[s.pos] = zeroed_;                                                   \
+    FIO_NAME(array_name, imap)(a)[s.ipos] = (imap_type)(~(imap_type)0);        \
+    --a->count;                                                                \
+    if (!is_valid_fn((&zeroed_)))                                              \
+      while (a->w && !is_valid_fn((a->ary + a->w - 1)))                        \
+        --a->w;                                                                \
+    return old;                                                                \
   }
 
 #ifndef FIO_TYPEDEF_IMAP_REALLOC
@@ -23120,9 +23808,9 @@ FIO_SFUNC fio_buf_info_s fio___sock_addr2txt(struct sockaddr *addr,
                   len,
                   r.buf,
                   64,
-                  port,
-                  16,
-                  (NI_NUMERICHOST | (with_port ? NI_NUMERICSERV : 0))))
+                  (with_port ? port : NULL),
+                  (with_port ? 16 : 0),
+                  (NI_NUMERICHOST | NI_NUMERICSERV)))
     goto finish;
   r.len = FIO_STRLEN(r.buf);
   if (with_port) {
@@ -23804,7 +24492,7 @@ State Callback Global State and Locks
 ***************************************************************************** */
 /* use `weak` instead of `static` to make sure state callbacks are global. */
 FIO_WEAK_VAR fio___state_map_s FIO___STATE_TASKS_ARRAY[FIO_CALL_NEVER + 1];
-FIO_WEAK_VAR fio_lock_i FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_NEVER + 1];
+FIO_WEAK_VAR fio_lock_line_s FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_NEVER + 1];
 /* The initialize queue lock protects this state and the deferred task list.
  * 0: not started, 1: preparing snapshot, 2: dispatching, 3: complete. */
 typedef struct fio___state_pending_s {
@@ -23817,9 +24505,9 @@ FIO_WEAK_VAR fio___state_pending_s *fio___state_init_pending_tail;
 
 FIO_IFUNC void fio_state_callback_clear_all(void) {
   for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
-    fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+    fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
     fio___state_map_destroy(FIO___STATE_TASKS_ARRAY + i);
-    fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+    fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
   }
   FIO_LOG_DEBUG2("(%d) fio_state_callback maps have been cleared.",
                  fio_getpid());
@@ -23838,7 +24526,7 @@ SFUNC void fio_state_callback_add(fio_state_event_type_e e,
     return;
   fio___state_task_s t = {.func = func, .arg = arg};
   unsigned phase = 0;
-  fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   if (e == FIO_CALL_ON_INITIALIZE)
     phase = fio___state_init_phase;
   if (phase == 2) {
@@ -23855,7 +24543,7 @@ SFUNC void fio_state_callback_add(fio_state_event_type_e e,
     fio___state_init_pending_tail = p;
   }
   fio___state_map_set(FIO___STATE_TASKS_ARRAY + (uintptr_t)e, t, 0);
-  fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   if (phase == 3)
     func(arg);
 }
@@ -23868,9 +24556,9 @@ SFUNC int fio_state_callback_remove(fio_state_event_type_e e,
     return -1;
   int ret;
   fio___state_task_s t = {.func = func, .arg = arg};
-  fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   ret = fio___state_map_remove(FIO___STATE_TASKS_ARRAY + (uintptr_t)e, t);
-  fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   return ret;
 }
 
@@ -23878,9 +24566,9 @@ SFUNC int fio_state_callback_remove(fio_state_event_type_e e,
 SFUNC void fio_state_callback_clear(fio_state_event_type_e e) {
   if ((uintptr_t)e >= FIO_CALL_NEVER)
     return;
-  fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   fio___state_map_destroy(FIO___STATE_TASKS_ARRAY + (uintptr_t)e);
-  fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
 }
 
 FIO_SFUNC void fio___state_cleanup_task_at_exit(void *ignr_); /* fwd decl */
@@ -23908,7 +24596,7 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   if (e == FIO_CALL_IN_CHILD) {
     /* make sure the `in_child` events re-initializes all locks (child only). */
     for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
-      FIO___STATE_TASKS_ARRAY_LOCK[i] = FIO_LOCK_INIT;
+      FIO___STATE_TASKS_ARRAY_LOCK[i].lock = FIO_LOCK_INIT;
     }
     fio_rand_on_fork(NULL); /* re-seed, so child and parent streams diverge */
   }
@@ -23920,17 +24608,17 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   size_t len = 0;
   if (e == FIO_CALL_ON_INITIALIZE) {
     /* FIO_CALL_ON_INITIALIZE should run only once */
-    if (fio_trylock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_NEVER))
+    if (fio_trylock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_NEVER].lock))
       return;
     /* State initialization that should run only once */
-    fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_ON_INITIALIZE);
+    fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_ON_INITIALIZE].lock);
     fio___state_init_phase = 1;
-    fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_ON_INITIALIZE);
+    fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_ON_INITIALIZE].lock);
     for (size_t i = 0; i < FIO_CALL_NEVER; ++i)
       if (i != FIO_CALL_ON_INITIALIZE) {
-        fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+        fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
         fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + i, 32);
-        fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+        fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
       }
     fio_state_callback_add(FIO_CALL_AFTER_EXIT,
                            fio___state_cleanup_task_at_exit,
@@ -23938,7 +24626,7 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
 
   /* copy task queue while holding the lock */
-  fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   FIO_LOG_DEBUG2("(%d) scheduling %s callbacks (%zu tasks).",
                  (int)(fio_getpid()),
                  FIO___STATE_TASKS_NAMES[e],
@@ -23955,7 +24643,7 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
   if (e == FIO_CALL_ON_INITIALIZE)
     fio___state_init_phase = 2;
-  fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
+  fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[(uintptr_t)e].lock);
   if (!len && e != FIO_CALL_ON_INITIALIZE)
     return;
 
@@ -23976,17 +24664,17 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
      * never held while invoking a callback (callbacks may register callbacks).
      */
     for (;;) {
-      fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_ON_INITIALIZE);
+      fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_ON_INITIALIZE].lock);
       fio___state_pending_s *p = fio___state_init_pending_head;
       if (!p) {
         fio___state_init_phase = 3;
-        fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_ON_INITIALIZE);
+        fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_ON_INITIALIZE].lock);
         break;
       }
       fio___state_init_pending_head = p->next;
       if (!p->next)
         fio___state_init_pending_tail = NULL;
-      fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_ON_INITIALIZE);
+      fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[FIO_CALL_ON_INITIALIZE].lock);
       p->task.func(p->task.arg);
       FIO_MEM_FREE(p, sizeof(*p));
     }
@@ -24002,10 +24690,10 @@ Debug Helpers
 FIO_IFUNC void fio_state_callback_print_state(void) {
   FIO_LOG2STDERR("DEBUG:    fio_state_callback maps state:");
   for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
-    fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+    fio_lock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
     const size_t count = FIO___STATE_TASKS_ARRAY[i].count;
     const size_t capa = fio___state_map_capa(FIO___STATE_TASKS_ARRAY + i);
-    fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + i);
+    fio_unlock(&FIO___STATE_TASKS_ARRAY_LOCK[i].lock);
     fprintf(stderr,
             "\t%-32s %-4zu out of %-4zu\n",
             FIO___STATE_TASKS_NAMES[i],
@@ -26994,288 +27682,15 @@ Helpers and System Memory Allocation
 #ifndef H___FIO_MEM_INCLUDE_ONCE___H
 #define H___FIO_MEM_INCLUDE_ONCE___H
 
-#define FIO_MEM_BYTES2PAGES(size)                                              \
-  ((size > (SIZE_MAX - ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)))                  \
-       ? size                                                                  \
-       : (((size_t)(size) + ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)) &            \
-          ((~(size_t)0) << FIO_MEM_PAGE_SIZE_LOG)))
-
-/* *****************************************************************************
-
-
-
-POSIX Allocation
-
-
-
-***************************************************************************** */
-#if FIO_OS_POSIX || __has_include("sys/mman.h")
-#include <sys/mman.h>
-
-/* Mitigates MAP_ANONYMOUS not being defined on older versions of MacOS */
-#if !defined(MAP_ANONYMOUS)
-#if defined(MAP_ANON)
-#define MAP_ANONYMOUS MAP_ANON
-#else
-#define MAP_ANONYMOUS 0
-#endif /* defined(MAP_ANONYMOUS) */
-#endif /* FIO_MEM_SYS_ALLOC */
-
-/* inform the compiler that the returned value is aligned on 16 byte marker */
-#if __clang__ || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 8)
-#define FIO_PAGE_ALIGN                                                         \
-  __attribute__((assume_aligned((1UL << FIO_MEM_PAGE_SIZE_LOG))))
-#define FIO_PAGE_ALIGN_NEW                                                     \
-  __attribute__((malloc, assume_aligned((1UL << FIO_MEM_PAGE_SIZE_LOG))))
-#else
-#define FIO_PAGE_ALIGN
-#define FIO_PAGE_ALIGN_NEW
-#endif /* (__clang__ || __GNUC__)... */
-
-/*
- * allocates memory using `mmap`, but enforces alignment.
- */
-FIO_SFUNC void *FIO_MEM_SYS_ALLOC_def_func(size_t bytes,
-                                           uint8_t alignment_log) {
-  void *result;
-  FIO_ASSERT((alignment_log < 25),
-             "`alignment_log > 24` out of range in FIO_MEM_SYS_ALLOC");
-  static void *next_alloc = (void *)0x01;
-  const size_t alignment_mask = (1ULL << alignment_log) - 1;
-  const size_t alignment_size = (1ULL << alignment_log);
-  bytes = FIO_MEM_BYTES2PAGES(bytes);
-  void *next_hint = next_alloc =
-      (void *)(((uintptr_t)next_alloc + alignment_mask) & (~alignment_mask));
-/* hope for the best? */
-#ifdef MAP_ALIGNED
-  result = mmap(next_hint,
-                bytes,
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_ALIGNED(alignment_log),
-                -1,
-                0);
-#else
-  result = mmap(next_hint,
-                bytes,
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS,
-                -1,
-                0);
-#endif /* MAP_ALIGNED */
-  if (result == MAP_FAILED)
-    return (void *)NULL;
-  if (((uintptr_t)result & alignment_mask)) {
-    munmap(result, bytes);
-    result = mmap(NULL,
-                  bytes + alignment_size,
-                  PROT_READ | PROT_WRITE,
-                  MAP_PRIVATE | MAP_ANONYMOUS,
-                  -1,
-                  0);
-    if (result == MAP_FAILED) {
-      return (void *)NULL;
-    }
-    const uintptr_t offset =
-        (alignment_size - ((uintptr_t)result & alignment_mask));
-    if (offset) {
-      munmap(result, offset);
-      result = (void *)((uintptr_t)result + offset);
-    }
-    munmap((void *)((uintptr_t)result + bytes), alignment_size - offset);
-    next_alloc = (void *)((uintptr_t)result + (bytes << 2));
-  }
-  return result;
-}
-
-/*
- * Re-allocates memory using `mmap`, enforcing alignment.
- */
-FIO_SFUNC void *FIO_MEM_SYS_REALLOC_def_func(void *mem,
-                                             size_t old_len,
-                                             size_t new_len,
-                                             uint8_t alignment_log) {
-  old_len = FIO_MEM_BYTES2PAGES(old_len);
-  new_len = FIO_MEM_BYTES2PAGES(new_len);
-  if (new_len > old_len) {
-    void *result;
-#if defined(__linux__)
-    result = mremap(mem, old_len, new_len, 0);
-    if (result != MAP_FAILED)
-      return result;
-#endif
-    result = mmap((void *)((uintptr_t)mem + old_len),
-                  new_len - old_len,
-                  PROT_READ | PROT_WRITE,
-                  MAP_PRIVATE | MAP_ANONYMOUS,
-                  -1,
-                  0);
-    if (result == (void *)((uintptr_t)mem + old_len)) {
-      result = mem;
-    } else {
-      /* copy and free */
-      if (result != MAP_FAILED) /* free the misplaced attempt */
-        munmap(result, new_len - old_len);
-      result =
-          FIO_MEM_SYS_ALLOC_def_func(new_len,
-                                     alignment_log); /* allocate new memory */
-      if (!result) {
-        return (void *)NULL;
-      }
-      FIO_MEMCPY(result, mem, old_len); /* copy data */
-      munmap(mem, old_len);             /* free original memory */
-    }
-    return result;
-  }
-  if (old_len != new_len) /* remove dangling pages */
-    munmap((void *)((uintptr_t)mem + new_len), old_len - new_len);
-  return mem;
-}
-
-/* frees memory using `munmap`. */
-FIO_IFUNC void FIO_MEM_SYS_FREE_def_func(void *mem, size_t bytes) {
-  bytes = FIO_MEM_BYTES2PAGES(bytes);
-  munmap(mem, bytes);
-}
-
-/* *****************************************************************************
-
-
-
-Windows Allocation
-
-
-
-***************************************************************************** */
-#elif FIO_OS_WIN
-#include <memoryapi.h>
-
-FIO_IFUNC void FIO_MEM_SYS_FREE_def_func(void *mem, size_t bytes) {
-  bytes = FIO_MEM_BYTES2PAGES(bytes);
-  if (!VirtualFree(mem, 0, MEM_RELEASE))
-    FIO_LOG_ERROR("Memory address at %p couldn't be returned to the system",
-                  mem);
-  (void)bytes;
-}
-
-FIO_IFUNC void *FIO_MEM_SYS_ALLOC_def_func(size_t bytes,
-                                           uint8_t alignment_log) {
-  // return aligned_alloc((pages << 12), (1UL << alignment_log));
-  void *result;
-  size_t attempts = 0;
-  static void *next_alloc = (void *)0x01;
-  const uintptr_t alignment_rounder = (1ULL << alignment_log) - 1;
-  const uintptr_t alignment_mask = ~alignment_rounder;
-  bytes = FIO_MEM_BYTES2PAGES(bytes);
-  do {
-    next_alloc =
-        (void *)(((uintptr_t)next_alloc + alignment_rounder) & alignment_mask);
-    FIO_ASSERT_DEBUG(!((uintptr_t)next_alloc & alignment_rounder),
-                     "alignment allocation rounding error?");
-    result =
-        VirtualAlloc(next_alloc, (bytes << 2), MEM_RESERVE, PAGE_READWRITE);
-    next_alloc = (void *)((uintptr_t)next_alloc + (bytes << 2));
-  } while (!result && (attempts++) < 1024);
-  if (result) {
-    void *const reserved = result;
-    result = VirtualAlloc(reserved, bytes, MEM_COMMIT, PAGE_READWRITE);
-    FIO_ASSERT_DEBUG(result, "couldn't commit memory after reservation?!");
-    if (!result) /* release the reservation rather than leak it */
-      VirtualFree(reserved, 0, MEM_RELEASE);
-  } else {
-    FIO_LOG_ERROR("Couldn't allocate memory from the system, error %zu."
-                  "\n\t%zu attempts with final address %p",
-                  GetLastError(),
-                  attempts,
-                  next_alloc);
-  }
-  return result;
-}
-
-FIO_IFUNC void *FIO_MEM_SYS_REALLOC_def_func(void *mem,
-                                             size_t old_len,
-                                             size_t new_len,
-                                             uint8_t alignment_log) {
-  if (!new_len)
-    goto free_mem;
-  old_len = FIO_MEM_BYTES2PAGES(old_len);
-  new_len = FIO_MEM_BYTES2PAGES(new_len);
-  if (new_len > old_len) {
-    /* extend allocation */
-    void *tmp = VirtualAlloc((void *)((uintptr_t)mem + old_len),
-                             new_len - old_len,
-                             MEM_COMMIT,
-                             PAGE_READWRITE);
-    if (tmp)
-      return mem;
-    /* Alloc, Copy, Free... sorry... */
-    tmp = FIO_MEM_SYS_ALLOC_def_func(new_len, alignment_log);
-    if (!tmp) {
-      FIO_LOG_ERROR("sysem realloc failed to allocate memory.");
-      return NULL;
-    }
-    FIO_MEMCPY(tmp, mem, old_len);
-    FIO_MEM_SYS_FREE_def_func(mem, old_len);
-    mem = tmp;
-  } else if (old_len > new_len) {
-    /* shrink allocation */
-    if (!VirtualFree((void *)((uintptr_t)mem + new_len),
-                     old_len - new_len,
-                     MEM_DECOMMIT))
-      FIO_LOG_ERROR("failed to decommit memory range @ %p.", mem);
-  }
-  return mem;
-free_mem:
-  FIO_MEM_SYS_FREE_def_func(mem, old_len);
-  mem = NULL;
-  return NULL;
-}
-
-/* *****************************************************************************
-
-
-Unknown OS... Unsupported?
-
-
-***************************************************************************** */
-#else /* FIO_OS_POSIX / FIO_OS_WIN => unknown...? */
-
-#ifdef FIO_MALLOC_OVERRIDE_SYSTEM
-#error Cannot redefine malloc on this system, no other allocator available.
-#endif
-
-FIO_IFUNC void *FIO_MEM_SYS_ALLOC_def_func(size_t bytes,
-                                           uint8_t alignment_log) {
-  // return aligned_alloc((pages << 12), (1UL << alignment_log));
-  exit(-1);
-  (void)bytes;
-  (void)alignment_log;
-}
-
-FIO_IFUNC void *FIO_MEM_SYS_REALLOC_def_func(void *mem,
-                                             size_t old_len,
-                                             size_t new_len,
-                                             uint8_t alignment_log) {
-  (void)old_len;
-  (void)alignment_log;
-  new_len = FIO_MEM_BYTES2PAGES(new_len);
-  return realloc(mem, new_len);
-}
-
-FIO_IFUNC void FIO_MEM_SYS_FREE_def_func(void *mem, size_t bytes) {
-  free(mem);
-  (void)bytes;
-}
-
-#endif /* FIO_OS_POSIX / FIO_OS_WIN */
 /* *****************************************************************************
 Overridable system allocation macros
 ***************************************************************************** */
 #ifndef FIO_MEM_SYS_ALLOC
 #define FIO_MEM_SYS_ALLOC(pages, alignment_log)                                \
-  FIO_MEM_SYS_ALLOC_def_func((pages), (alignment_log))
+  fio_mem_sys_alloc((pages), (alignment_log))
 #define FIO_MEM_SYS_REALLOC(ptr, old_pages, new_pages, alignment_log)          \
-  FIO_MEM_SYS_REALLOC_def_func((ptr), (old_pages), (new_pages), (alignment_log))
-#define FIO_MEM_SYS_FREE(ptr, pages) FIO_MEM_SYS_FREE_def_func((ptr), (pages))
+  fio_mem_sys_realloc((ptr), (old_pages), (new_pages), (alignment_log))
+#define FIO_MEM_SYS_FREE(ptr, pages) fio_mem_sys_free((ptr), (pages))
 #endif /* FIO_MEM_SYS_ALLOC */
 
 #endif /* H___FIO_MEM_INCLUDE_ONCE___H */
@@ -29776,6 +30191,795 @@ Memory pool cleanup
 #undef FIO_MEMORY_UNLOCK
 
 /* don't undefine FIO_MEMORY_NAME due to possible use in allocation macros */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_QUEUE             /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                                Task / Timer Queues
+                                (Event Loop Engine)
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_QUEUE) && !defined(H___FIO_QUEUE___H)
+#define H___FIO_QUEUE___H
+
+/* *****************************************************************************
+Queue Type(s)
+***************************************************************************** */
+
+#ifndef FIO_QUEUE_RESERVED_TASK_COUNT
+/** The maximum number of tasks the queue could hold. */
+#define FIO_QUEUE_RESERVED_TASK_COUNT 524288
+#endif
+
+#ifndef FIO_QUEUE_DYNAMIC_ALLOC
+#define FIO_QUEUE_DYNAMIC_ALLOC 1
+#endif
+
+/** Task information */
+typedef struct {
+  /** The function to call */
+  void (*fn)(void *udata1, void *udata2);
+  /** Opaque user data pointer */
+  void *udata1;
+  /** Opaque user data pointer */
+  void *udata2;
+} fio_queue_task_s;
+
+/** The queue object - should be considered opaque (or, at least, read only). */
+typedef struct {
+  struct {
+    /** Head / Tail lock. */
+    fio_lock_i lock[FIO_CACHE_LINE_SIZE / sizeof(fio_lock_i)];
+    /** Current block (block[0].udata1 links to the next block). */
+    fio_queue_task_s *volatile tasks;
+    /** Index of the last pushed (head, release) / popped (tail) task. */
+    volatile size_t pos;
+    char padding___[FIO_CACHE_LINE_SIZE -
+                    (sizeof(size_t) + sizeof(fio_queue_task_s *))];
+  } head, tail;
+  /** Global lock (consumer list) */
+  fio_lock_i lock[FIO_CACHE_LINE_SIZE / sizeof(fio_lock_i)];
+  /** linked lists of consumer threads. */
+  FIO_LIST_NODE consumers;
+  /** Workers waiting (or about to wait) on a group condition variable. */
+  volatile size_t sleepers;
+} fio_queue_s;
+
+/* *****************************************************************************
+Queue API
+***************************************************************************** */
+
+/** May be used to initialize global, static memory, queues. */
+#define FIO_QUEUE_STATIC_INIT(queue)                                          \
+  { .consumers = FIO_LIST_INIT((queue).consumers), }
+
+/** Initializes a fio_queue_s object. */
+FIO_IFUNC void fio_queue_init(fio_queue_s *q);
+
+/** Destroys a queue and re-initializes it, after freeing any used resources. */
+SFUNC void fio_queue_destroy(fio_queue_s *q);
+
+/** Pushes a task to the queue. Returns -1 on error. */
+SFUNC int fio_queue_push(fio_queue_s *q, fio_queue_task_s task);
+
+/**
+ * Pushes a task to the queue, offering named arguments for the task.
+ * Returns -1 on error.
+ */
+#define fio_queue_push(q, ...)                                                \
+  fio_queue_push((q), (fio_queue_task_s){__VA_ARGS__})
+
+/** Tries to perform a task from the queue. Returns -1 if no task performed. */
+SFUNC int fio_queue_perform_try(fio_queue_s *q);
+
+/** Performs a task from the queue. Returns -1 on error (queue empty). */
+SFUNC int fio_queue_perform(fio_queue_s *q);
+
+/** Performs all tasks in the queue. */
+SFUNC void fio_queue_perform_all(fio_queue_s *q);
+
+/** returns true if the queue appears empty. */
+FIO_IFUNC bool fio_queue_is_empty(fio_queue_s *q);
+
+/** Adds worker / consumer threads to perform the jobs in the queue. */
+SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t count);
+
+/**
+ * Signals all worker threads to stop performing tasks and terminate.
+ *
+ * Returns the number of worker groups signaled. Does NOT wait and does NOT
+ * promise that pending tasks are performed.
+ */
+SFUNC size_t fio_queue_workers_stop(fio_queue_s *q);
+
+/**
+ * Signals all worker threads to stop, waiting for them to complete.
+ *
+ * If the queue had workers, pending tasks are performed before returning.
+ */
+SFUNC void fio_queue_workers_join(fio_queue_s *q);
+
+/** Wakes a worker per group (woken workers wake others while tasks remain). */
+SFUNC void fio_queue_workers_wake(fio_queue_s *q);
+
+/* *****************************************************************************
+Timer Queue Types and API
+***************************************************************************** */
+
+typedef struct fio___timer_event_s fio___timer_event_s;
+
+typedef struct {
+  FIO___LOCK_TYPE lock;
+  fio___timer_event_s *next;
+} fio_timer_queue_s;
+
+#if FIO_USE_THREAD_MUTEX_TMP
+#define FIO_TIMER_QUEUE_INIT                                                   \
+  { .lock = ((fio_thread_mutex_t)FIO_THREAD_MUTEX_INIT) }
+#else
+#define FIO_TIMER_QUEUE_INIT                                                   \
+  { .lock = FIO_LOCK_INIT }
+#endif
+
+typedef struct {
+  /** The timer function. If it returns a non-zero value, the timer stops. */
+  int (*fn)(void *, void *);
+  /** Opaque user data. */
+  void *udata1;
+  /** Opaque user data. */
+  void *udata2;
+  /** Called when the timer is done (finished). */
+  void (*on_finish)(void *, void *);
+  /** Timer interval, in milliseconds. */
+  uint32_t every;
+  /** The number of times the timer should be performed. -1 == infinity. */
+  int32_t repetitions;
+  /** Millisecond at which to start. If missing, filled automatically. */
+  int64_t start_at;
+} fio_timer_schedule_args_s;
+
+/** Adds a time-bound event to the timer queue. */
+SFUNC void fio_timer_schedule(fio_timer_queue_s *timer_queue,
+                              fio_timer_schedule_args_s args);
+
+/** A MACRO allowing named arguments to be used. See fio_timer_schedule_args_s.
+ */
+#define fio_timer_schedule(timer_queue, ...)                                   \
+  fio_timer_schedule((timer_queue), (fio_timer_schedule_args_s){__VA_ARGS__})
+
+/** Pushes due events from the timer queue to an event queue. */
+SFUNC size_t fio_timer_push2queue(fio_queue_s *queue,
+                                  fio_timer_queue_s *timer_queue,
+                                  int64_t now_in_milliseconds);
+
+/*
+ * Returns the millisecond at which the next event should occur.
+ *
+ * If no timer is due (list is empty), returns the maximum possible value.
+ *
+ * NOTE: unless manually specified, millisecond timers are relative to
+ * `fio_time_milli()`.
+ */
+FIO_IFUNC int64_t fio_timer_next_at(fio_timer_queue_s *timer_queue);
+
+/**
+ * Clears any waiting timer bound tasks.
+ *
+ * NOTE:
+ *
+ * The timer queue must NEVER be freed when there's a chance that timer tasks
+ * are waiting to be performed in a `fio_queue_s`.
+ *
+ * This is due to the fact that the tasks may try to reschedule themselves (if
+ * they repeat).
+ */
+SFUNC void fio_timer_destroy(fio_timer_queue_s *timer_queue);
+
+/* *****************************************************************************
+Queue Inline Helpers
+***************************************************************************** */
+
+/** returns true if the queue appears empty (optimistic, unguarded probe). */
+FIO_IFUNC FIO___TSAN_AVOID bool fio_queue_is_empty(fio_queue_s *q) {
+  return q->head.tasks == q->tail.tasks && q->head.pos == q->tail.pos;
+}
+
+/** Initializes a fio_queue_s object. */
+FIO_IFUNC void fio_queue_init(fio_queue_s *q) {
+  *q = (fio_queue_s)FIO_QUEUE_STATIC_INIT(*q);
+}
+
+/* *****************************************************************************
+Timer Queue Inline Helpers
+***************************************************************************** */
+
+struct fio___timer_event_s {
+  int (*fn)(void *, void *);
+  void *udata1;
+  void *udata2;
+  void (*on_finish)(void *udata1, void *udata2);
+  int64_t due;
+  uint32_t every;
+  int32_t repetitions;
+  struct fio___timer_event_s *next;
+};
+
+/*
+ * Returns the millisecond at which the next event should occur.
+ *
+ * If no timer is due (list is empty), returns the maximum possible value.
+ *
+ * NOTE: unless manually specified, millisecond timers are relative to
+ * `fio_time_milli()`.
+ */
+FIO_IFUNC int64_t fio_timer_next_at(fio_timer_queue_s *tq) {
+  int64_t v = (int64_t)((~(uint64_t)0) >> 1);
+  if (!tq)
+    goto missing_tq;
+  if (!tq->next)
+    return v;
+  FIO___LOCK_LOCK(tq->lock);
+  if (tq->next)
+    v = tq->next->due;
+  FIO___LOCK_UNLOCK(tq->lock);
+  return v;
+
+missing_tq:
+  FIO_LOG_ERROR("`fio_timer_next_at` called with a NULL timer queue!");
+  return v;
+}
+
+/* *****************************************************************************
+Queue Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* Publication: a task's `fn` is its ready flag (release store, acquire load),
+ * so blocks are zeroed. A new block is published by its link
+ * (`block[0].udata1`, release). Consumers only test `fn` at `tail.pos + 1`
+ * (or the link), never reading the producers' (head) cache line. */
+
+/* Entries per block, including the header (block[0].udata1 == next block) */
+#define FIO___QUEUE_TASKS_PER_BLOCK ((4096 / sizeof(fio_queue_task_s) - 1))
+
+/* task queue leak detection */
+FIO_LEAK_COUNTER_DEF(fio_queue_tasks)
+
+/* Bounded Allocator */
+FIO_STATIC_SAFE_ALLOC_DEF(fio___queue_task_buffer,
+                          fio_queue_task_s,
+                          FIO___QUEUE_TASKS_PER_BLOCK,
+                          ((FIO_QUEUE_RESERVED_TASK_COUNT +
+                            (FIO___QUEUE_TASKS_PER_BLOCK - 1)) /
+                           FIO___QUEUE_TASKS_PER_BLOCK))
+
+/* Returns a zeroed block: a non-NULL `fn` marks a published task. */
+FIO_IFUNC fio_queue_task_s *fio___queue_task_new(void) {
+  fio_queue_task_s *buf = fio___queue_task_buffer_try();
+  size_t attempts = 32;
+  while (!buf && --attempts) {
+    FIO_THREAD_RESCHEDULE();
+    buf = fio___queue_task_buffer_try();
+  }
+#if FIO_QUEUE_DYNAMIC_ALLOC
+  if (!buf) { /* dynamic allocation? */
+    buf = FIO_MEM_REALLOC_(NULL,
+                           0,
+                           sizeof(*buf) * FIO___QUEUE_TASKS_PER_BLOCK,
+                           0);
+  }
+#endif
+  if (buf) {
+    FIO_MEMSET(buf, 0, sizeof(*buf) * FIO___QUEUE_TASKS_PER_BLOCK);
+    FIO_LEAK_COUNTER_ON_ALLOC(fio_queue_tasks);
+  }
+  return buf;
+}
+FIO_IFUNC void fio___queue_task_free(fio_queue_task_s *buf) {
+  if (!buf)
+    return;
+  if (fio___queue_task_buffer_free(buf)) {
+#if FIO_QUEUE_DYNAMIC_ALLOC /* dynamic allocation ? */
+    FIO_MEM_FREE_(buf, sizeof(*buf) * FIO___QUEUE_TASKS_PER_BLOCK);
+#endif
+  }
+  FIO_LEAK_COUNTER_ON_FREE(fio_queue_tasks);
+}
+
+typedef struct {
+  FIO_LIST_NODE node;
+  fio_queue_s *queue;
+  fio_thread_t thread;
+  fio_thread_mutex_t mutex;
+  fio_thread_cond_t cond;
+  size_t workers;
+  volatile unsigned stop;
+} fio___queue_group_s;
+
+/** Destroys a queue and re-initializes it, after freeing any used resources. */
+SFUNC void fio_queue_destroy(fio_queue_s *q) {
+  fio_queue_workers_join(q);
+  fio_lock(q->tail.lock);
+  fio_lock(q->head.lock);
+  fio_lock(q->lock);
+  fio_queue_task_s *tail = q->tail.tasks; /* oldest block, links to head */
+  fio_queue_init(q);                      /* unlocks spinlocks */
+  while (tail) {
+    fio_queue_task_s *next = (fio_queue_task_s *)tail[0].udata1;
+    fio___queue_task_free(tail);
+    tail = next;
+  }
+}
+
+/* Wakes one idle worker per group (a no-op for groups without waiters). Call
+ * with `q->lock` held. */
+FIO_SFUNC void fio___queue_workers_signal(fio_queue_s *q) {
+  if (!q->consumers.next || FIO_LIST_IS_EMPTY(&q->consumers))
+    return;
+  FIO_LIST_EACH(fio___queue_group_s, node, &q->consumers, pos) {
+    if (pos->stop)
+      continue;
+    fio_thread_mutex_lock(&pos->mutex);
+    fio_thread_cond_signal(&pos->cond);
+    fio_thread_mutex_unlock(&pos->mutex);
+  }
+}
+
+int fio_queue_push___(void); /* sublime text marker */
+/** Pushes a task to the queue. Returns -1 on error. */
+SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
+  if (!q || !task.fn)
+    return 0;
+  fio_lock(q->head.lock);
+  fio_queue_task_s *b = q->head.tasks;
+  size_t p = q->head.pos + 1;
+  if (!b || p >= FIO___QUEUE_TASKS_PER_BLOCK) {
+    /* rotate: fill the new block, then publish it (link is the release) */
+    fio_queue_task_s *t = fio___queue_task_new();
+    if (!t)
+      goto no_mem;
+    t[1] = task;
+    if (b)
+      fio_atomic_store(&b[0].udata1, (void *)t);
+    else /* first block ever: the tail can't be in use */
+      fio_atomic_store(&q->tail.tasks, t);
+    q->head.tasks = t;
+    q->head.pos = 1;
+  } else {
+    b[p].udata1 = task.udata1;
+    b[p].udata2 = task.udata2;
+    fio_atomic_store(&b[p].fn, task.fn);
+    q->head.pos = p;
+  }
+  fio_unlock(q->head.lock);
+  {
+    size_t sleepers;
+    fio_atomic_load(sleepers, &q->sleepers); /* see worker_task */
+    if (sleepers) {
+      fio_lock(q->lock);
+      fio___queue_workers_signal(q);
+      fio_unlock(q->lock);
+    }
+  }
+  return 0;
+no_mem:
+  fio_unlock(q->head.lock);
+  FIO_LOG_ERROR("No memory for Queue %p to increase task ring buffer.",
+                (void *)q);
+  return -1;
+}
+
+/** Pops a task from the queue (FIFO). Returns a NULL task on error. */
+FIO_IFUNC fio_queue_task_s fio___queue_pop(fio_queue_s *q, bool spin) {
+  fio_queue_task_s t = {.fn = NULL};
+  fio_queue_task_s *to_free = NULL;
+  fio_queue_task_s *tail;
+  /* no `fio_queue_is_empty` probe: it reads the producers' cache line. An
+   * unguarded `fn` probe could read a block freed by another consumer. */
+  if (spin)
+    fio_lock(q->tail.lock);
+  else if (fio_trylock(q->tail.lock))
+    return t;
+  fio_atomic_load(tail, &q->tail.tasks);
+  if (!tail)
+    goto finish;
+  size_t p = q->tail.pos + 1;
+  if (p >= FIO___QUEUE_TASKS_PER_BLOCK) {
+    /* rotate (if the next block was published) */
+    void *next;
+    fio_atomic_load(next, &tail[0].udata1);
+    if (!next)
+      goto finish;
+    to_free = tail;
+    q->tail.tasks = tail = (fio_queue_task_s *)next;
+    q->tail.pos = 0;
+    p = 1;
+  }
+  fio_atomic_load(t.fn, &tail[p].fn);
+  if (t.fn) {
+    t.udata1 = tail[p].udata1;
+    t.udata2 = tail[p].udata2;
+    q->tail.pos = p;
+  }
+finish:
+  fio_unlock(q->tail.lock);
+  fio___queue_task_free(to_free);
+  return t;
+}
+
+/** Tries to perform a task from the queue. Returns -1 if no task performed. */
+SFUNC int fio_queue_perform_try(fio_queue_s *q) {
+  fio_queue_task_s t = fio___queue_pop(q, 0);
+  if (!t.fn)
+    return -1;
+  t.fn(t.udata1, t.udata2);
+  return 0;
+}
+
+/** Performs a task from the queue. Returns -1 on error (queue empty). */
+SFUNC int fio_queue_perform(fio_queue_s *q) {
+  fio_queue_task_s t = fio___queue_pop(q, 1);
+  if (!t.fn)
+    return -1;
+  t.fn(t.udata1, t.udata2);
+  return 0;
+}
+
+/** Performs all tasks in the queue. */
+SFUNC void fio_queue_perform_all(fio_queue_s *q) {
+  fio_queue_task_s t;
+  while ((t = fio___queue_pop(q, 1)).fn)
+    t.fn(t.udata1, t.udata2);
+}
+
+/* *****************************************************************************
+Queue Consumer Threads
+***************************************************************************** */
+
+FIO_LEAK_COUNTER_DEF(fio___queue_worker_manager)
+FIO_LEAK_COUNTER_DEF(fio___queue_worker)
+
+FIO_SFUNC FIO___TSAN_AVOID void *fio___queue_worker_task(void *g_) {
+  fio___queue_group_s *grp = (fio___queue_group_s *)g_;
+  fio_queue_s *q = grp->queue;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker);
+  fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_START);
+  while (!grp->stop) {
+    fio_queue_task_s t = fio___queue_pop(q, 1);
+    if (t.fn) {
+      size_t sleepers; /* wake chaining: more work, more workers */
+      fio_atomic_load(sleepers, &q->sleepers);
+      if (sleepers && !fio_queue_is_empty(q))
+        fio_queue_workers_wake(q);
+      t.fn(t.udata1, t.udata2);
+      fio_queue_perform_all(q);
+    }
+    /* idle: spin re-testing before sleeping */
+    for (size_t i = 0; i < 32 && fio_queue_is_empty(q); ++i)
+      FIO_THREAD_YIELD();
+    if (!fio_queue_is_empty(q))
+      continue;
+    fio_thread_mutex_lock(&grp->mutex);
+    /* Lost wakeup protection: count this sleeper (atomic RMW), then probe. A
+     * pusher publishes, unlocks the head (atomic RMW), then reads `sleepers`.
+     * Either the probe sees the push, or the pusher sees a non-zero count and
+     * signals under the group mutex (held until we wait). Pushes never clear
+     * the count, so a busy worker can't consume an idle worker's request. */
+    fio_atomic_add(&q->sleepers, 1);
+    if (!grp->stop && fio_queue_is_empty(q))
+      fio_thread_cond_wait(&grp->cond, &grp->mutex);
+    fio_atomic_sub(&q->sleepers, 1);
+    fio_thread_mutex_unlock(&grp->mutex);
+  }
+  fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_END);
+  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker);
+  return NULL;
+}
+FIO_SFUNC void *fio___queue_worker_manager(void *g_) {
+  fio_thread_t threads_buf[256] = {0};
+  const fio_thread_t not_a_thread = {0};
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker_manager);
+  fio___queue_group_s grp = *(fio___queue_group_s *)g_;
+  grp.thread = fio_thread_current();
+  FIO_LIST_PUSH(&grp.queue->consumers, &grp.node);
+  grp.stop = 0;
+  fio_thread_t *threads = threads_buf;
+  fio_thread_mutex_init(&grp.mutex);
+  fio_thread_cond_init(&grp.cond);
+  for (size_t i = 0; i < grp.workers; ++i) {
+    if (fio_thread_create(threads + i,
+                          fio___queue_worker_task,
+                          (void *)&grp)) {
+      FIO_LOG_ERROR("(%d) Failed to spawn thread", fio_getpid());
+      threads[i] = not_a_thread;
+      --grp.workers;
+      --i;
+    }
+  }
+  fio_atomic_and(&((fio___queue_group_s *)g_)->stop, 0);
+  /* from this point on, g_ is invalid! */
+  for (size_t i = 0; i < grp.workers; ++i) {
+    if (!FIO_MEMCMP(threads + i, &not_a_thread, sizeof(not_a_thread)))
+      continue;
+    fio_thread_join(threads + i);
+  }
+  fio_queue_perform_all(grp.queue);
+
+  fio_lock(grp.queue->lock);
+  FIO_LIST_REMOVE(&grp.node);
+  if (!(grp.stop & 2)) {
+    fio_unlock(grp.queue->lock);
+    fio_thread_cond_destroy(&grp.cond);
+    fio_thread_mutex_destroy(&grp.mutex);
+    fio_thread_detach(&grp.thread);
+  } else {
+    fio_atomic_or(&grp.stop, 1);
+    fio_atomic_and(&grp.stop, 1);
+    fio_unlock(grp.queue->lock);
+    unsigned stop;
+    do {
+      /* The joiner releases this stack frame by clearing the handshake. */
+      fio_atomic_load(stop, &grp.stop);
+      if (stop & 1)
+        FIO_THREAD_RESCHEDULE();
+    } while (stop & 1);
+  }
+  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker_manager);
+  return NULL;
+}
+
+SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
+  if (!q)
+    return -1;
+  while (workers > 255) {
+    if (fio_queue_workers_add(q, 128))
+      return -1;
+    if (fio_queue_workers_add(q, 128))
+      return -1;
+    workers -= 256;
+  }
+  if (!workers)
+    return 0;
+  fio_lock(q->lock);
+  if (!q->consumers.next || !q->consumers.prev) {
+    q->consumers = FIO_LIST_INIT(q->consumers);
+  }
+  fio___queue_group_s grp = {.queue = q, .workers = workers, .stop = 1};
+  if (fio_thread_create(&grp.thread, fio___queue_worker_manager, &grp)) {
+    fio_unlock(q->lock);
+    return -1;
+  }
+  unsigned stop;
+  while (true) {
+    /* Acquire the manager's copy before releasing this stack argument. */
+    fio_atomic_load(stop, &grp.stop);
+    if (!stop)
+      break;
+    FIO_THREAD_RESCHEDULE();
+  }
+  fio_unlock(q->lock);
+  return 0;
+}
+
+SFUNC FIO___TSAN_AVOID size_t fio_queue_workers_stop(fio_queue_s *q) {
+  if (!q)
+    return 0;
+  size_t count = 0;
+  fio_lock(q->lock);
+  if (q->consumers.next) {
+    FIO_LIST_EACH(fio___queue_group_s, node, &q->consumers, pos) {
+      pos->stop |= 1;
+      fio_thread_mutex_lock(&pos->mutex);
+      fio_thread_cond_broadcast(&pos->cond);
+      fio_thread_mutex_unlock(&pos->mutex);
+      ++count;
+    }
+  }
+  fio_unlock(q->lock);
+  return count;
+}
+
+/** Wakes a worker per group (woken workers wake others while tasks remain). */
+SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
+  if (!q)
+    return;
+  fio_lock(q->lock);
+  fio___queue_workers_signal(q);
+  fio_unlock(q->lock);
+}
+
+/** Signals all worker threads to stop, waiting for them to complete. */
+SFUNC void fio_queue_workers_join(fio_queue_s *q) {
+  if (!q)
+    return;
+  uint8_t had_workers = !!fio_queue_workers_stop(q);
+  fio_lock(q->lock);
+  while (q->consumers.next && q->consumers.next != &q->consumers) {
+    fio___queue_group_s *pos =
+        FIO_PTR_FROM_FIELD(fio___queue_group_s, node, q->consumers.next);
+    fio_atomic_or(&pos->stop, 3);
+    fio_unlock(q->lock);
+    had_workers = 1;
+    unsigned stop;
+    do {
+      /* Acquire the manager's retirement before destroying its wait state. */
+      fio_atomic_load(stop, &pos->stop);
+      if (stop & 2)
+        FIO_THREAD_RESCHEDULE();
+    } while (stop & 2);
+    fio_thread_cond_destroy(&pos->cond);
+    fio_thread_mutex_destroy(&pos->mutex);
+    fio_thread_t thr = pos->thread;
+    fio_atomic_and(&pos->stop, 0); /* releases manager: pos is invalid now */
+    fio_thread_join(&thr);
+    fio_lock(q->lock);
+  }
+  fio_unlock(q->lock);
+  if (had_workers) /* a queue with worker threads is emptied on `join` */
+    fio_queue_perform_all(q);
+}
+
+/* *****************************************************************************
+Timer Queue Implementation
+***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio___timer_event_s)
+
+FIO_IFUNC void fio___timer_insert(fio___timer_event_s **pos,
+                                  fio___timer_event_s *e) {
+  while (*pos && e->due >= (*pos)->due)
+    pos = &((*pos)->next);
+  e->next = *pos;
+  *pos = e;
+}
+
+FIO_IFUNC fio___timer_event_s *fio___timer_pop(fio___timer_event_s **pos,
+                                               int64_t due) {
+  if (!*pos || (*pos)->due > due)
+    return NULL;
+  fio___timer_event_s *t = *pos;
+  *pos = t->next;
+  return t;
+}
+
+FIO_IFUNC fio___timer_event_s *fio___timer_event_new(
+    fio_timer_schedule_args_s args) {
+  fio___timer_event_s *t = NULL;
+  t = (fio___timer_event_s *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*t), 0);
+  if (!t)
+    goto init_error;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___timer_event_s);
+  args.repetitions += !args.repetitions;
+  *t = (fio___timer_event_s){
+      .fn = args.fn,
+      .udata1 = args.udata1,
+      .udata2 = args.udata2,
+      .on_finish = args.on_finish,
+      .due = args.start_at + args.every,
+      .every = args.every,
+      .repetitions = args.repetitions,
+  };
+  return t;
+init_error:
+  if (args.on_finish)
+    args.on_finish(args.udata1, args.udata2);
+  return NULL;
+}
+
+FIO_IFUNC void fio___timer_event_free(fio_timer_queue_s *tq,
+                                      fio___timer_event_s *t) {
+  if (!t)
+    return;
+  if (tq && (t->repetitions < 0 || fio_atomic_sub_fetch(&t->repetitions, 1))) {
+    FIO___LOCK_LOCK(tq->lock);
+    fio___timer_insert(&tq->next, t);
+    FIO___LOCK_UNLOCK(tq->lock);
+    return;
+  }
+  if (t->on_finish)
+    t->on_finish(t->udata1, t->udata2);
+  FIO_LEAK_COUNTER_ON_FREE(fio___timer_event_s);
+  FIO_MEM_FREE_(t, sizeof(*t));
+}
+
+FIO_SFUNC void fio___timer_perform(void *timer_, void *t_) {
+  fio_timer_queue_s *tq = (fio_timer_queue_s *)timer_;
+  fio___timer_event_s *t = (fio___timer_event_s *)t_;
+  if (t->fn(t->udata1, t->udata2))
+    tq = NULL;
+  t->due += t->every;
+  fio___timer_event_free(tq, t);
+}
+
+/** Pushes due events from the timer queue to an event queue. */
+SFUNC size_t fio_timer_push2queue(fio_queue_s *queue,
+                                  fio_timer_queue_s *timer,
+                                  int64_t start_at) {
+  size_t r = 0;
+  if (!start_at)
+    start_at = fio_time_milli();
+  if (FIO___LOCK_TRYLOCK(timer->lock))
+    return 0;
+  fio___timer_event_s *t;
+  while ((t = fio___timer_pop(&timer->next, start_at))) {
+    if (FIO_UNLIKELY(fio_queue_push(queue,
+                                    .fn = fio___timer_perform,
+                                    .udata1 = timer,
+                                    .udata2 = t))) {
+      /* No memory to queue it: keep the (still due) event scheduled and
+       * retry on the next call - never drop it (or its on_finish). */
+      fio___timer_insert(&timer->next, t);
+      break;
+    }
+    ++r;
+  }
+  FIO___LOCK_UNLOCK(timer->lock);
+  return r;
+}
+
+void fio_timer_schedule___(void); /* IDE marker */
+/** Adds a time-bound event to the timer queue. */
+SFUNC void fio_timer_schedule FIO_NOOP(fio_timer_queue_s *timer,
+                                       fio_timer_schedule_args_s args) {
+  fio___timer_event_s *t = NULL;
+  if (!timer || !args.fn || !args.every)
+    goto no_timer_queue;
+  if (!args.start_at)
+    args.start_at = fio_time_milli();
+  t = fio___timer_event_new(args);
+  if (!t)
+    return;
+  FIO___LOCK_LOCK(timer->lock);
+  fio___timer_insert(&timer->next, t);
+  FIO___LOCK_UNLOCK(timer->lock);
+  return;
+no_timer_queue:
+  if (args.on_finish)
+    args.on_finish(args.udata1, args.udata2);
+  FIO_LOG_ERROR("fio_timer_schedule called with illegal arguments.");
+}
+
+/**
+ * Clears any waiting timer bound tasks.
+ *
+ * NOTE:
+ *
+ * The timer queue must NEVER be freed when there's a chance that timer tasks
+ * are waiting to be performed in a `fio_queue_s`.
+ *
+ * This is due to the fact that the tasks may try to reschedule themselves (if
+ * they repeat).
+ */
+SFUNC void fio_timer_destroy(fio_timer_queue_s *tq) {
+  if (!tq)
+    return;
+  fio___timer_event_s *next = NULL;
+  FIO___LOCK_LOCK(tq->lock);
+  next = tq->next;
+  tq->next = NULL;
+  FIO___LOCK_UNLOCK(tq->lock);
+  FIO___LOCK_DESTROY(tq->lock);
+  while (next) {
+    fio___timer_event_s *tmp = next;
+    next = next->next;
+    fio___timer_event_free(NULL, tmp);
+  }
+}
+/* *****************************************************************************
+Queue/Timer Cleanup
+***************************************************************************** */
+#endif /* FIO_EXTERN_COMPLETE */
+#undef FIO_QUEUE
+#endif /* FIO_QUEUE */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -39715,6 +40919,3083 @@ URL-Encoded Cleanup
 #undef FIO_URL_ENCODED
 #endif /* FIO_URL_ENCODED */
 /* ************************************************************************* */
+/*
+ * IO2 — completion IO / stack event draft.
+ * Design only; the operational API remains 401. Copyright: 000 copyright.h.
+ * Select explicitly after loading queue/socket/URL prerequisites.
+ * No reactor implementation or benchmark claim is made here.
+ */
+#if defined(FIO_IO2_DRAFT_021) && !defined(FIO___RECURSIVE_INCLUDE) &&         \
+    !defined(H___FIO_IO2_DRAFT_021___H)
+#define H___FIO_IO2_DRAFT_021___H
+#ifdef H___FIO_IO2___H
+#error "IO2 declarations already selected"
+#endif
+#define H___FIO_IO2___H
+
+/* *****************************************************************************
+Model and configuration
+***************************************************************************** */
+/*
+ * Single-threaded reactor with a FIFO task queue. Protocol 0 is the transport,
+ * followed by optional transforms and an optional application. Input travels up
+ * the stack; output travels down it.
+ *
+ * - Each attachment has private data, one contiguous input backlog and an
+ *   ordered output list.
+ * - Callbacks receive a stack-local event and borrow its payload. They consume
+ *   bytes by advancing the payload and forward data through the event's
+ *   dispatchers, never by calling neighbouring protocols directly.
+ * - A dispatcher may run the next eligible layer inline, or queue the work when
+ *   that attachment is busy. Accepted work belongs to the destination; success
+ *   does not promise it was sent.
+ * - Packets have one owner. A fully consumed source may be transferred instead
+ *   of copied; partial consumption copies.
+ * - All callbacks, including final cleanup, run on the reactor thread. Only
+ *   operations documented as thread-safe may run on workers. The safe attach
+ *   function queues attachment; the unsafe variation requires the reactor.
+ * - Protocol definitions outlive their attachments and queued commands. Queued
+ *   work retains the IO until it completes. The final `on_close` runs after the
+ *   last reference is released, not when the transport closes.
+ *   `fio_io2_close_now` discards pending data.
+ * - On peer EOF (including half-close) the default socket protocol marks the IO
+ *   closed and lets queued input drain. Half-open transports require a custom
+ *   protocol.
+ *
+ * Settings, environments, attachment and some helpers are implemented in the
+ * state header. Data dispatch, close and native transport remain incomplete.
+ */
+#ifndef FIO_IO2_LAYERS_MAX
+/** Maximum attached protocols, including transport and application. */
+#define FIO_IO2_LAYERS_MAX 4
+#endif
+#ifndef FIO_IO2_READ_SIZE
+/** Maximum bytes in a new read or materialized file block. */
+#define FIO_IO2_READ_SIZE 65536U
+#endif
+#ifndef FIO_IO2_INPUT_MAX
+/** Buffered-input high-water mark at one attachment. */
+#define FIO_IO2_INPUT_MAX 262144U
+#endif
+#ifndef FIO_IO2_OUTPUT_MAX
+/** Pending-output high-water mark, used to pace producers. */
+#define FIO_IO2_OUTPUT_MAX 2097152U
+#endif
+#ifndef FIO_IO2_PACKETS_MAX
+/** Advisory queued-packet high-water mark, reserved for producer pacing. */
+#define FIO_IO2_PACKETS_MAX 4096U
+#endif
+#ifndef FIO_IO2_TURN_BUDGET
+/** Maximum callback dispatch steps before yielding to other reactor work. */
+#define FIO_IO2_TURN_BUDGET 64U
+#endif
+#ifndef FIO_IO2_READY_LIMIT
+/** Pending-output low-water mark for on_ready notifications. */
+#define FIO_IO2_READY_LIMIT 65536U
+#endif
+#ifndef FIO_IO2_TIMEOUT_MAX
+/** Maximum idle timeout in milliseconds. */
+#define FIO_IO2_TIMEOUT_MAX 300000U
+#endif
+#ifndef FIO_IO2_SHUTDOWN_TIMEOUT
+/** Graceful close and reactor shutdown timeout, in milliseconds. */
+#define FIO_IO2_SHUTDOWN_TIMEOUT 15000U
+#endif
+#if FIO_IO2_LAYERS_MAX < 2
+#error "IO2 requires at least transport and application layer slots"
+#endif
+/*
+ * The limit macros set the initial reactor settings (see `fio_io2_settings`).
+ * `FIO_IO2_LAYERS_MAX` stays fixed because it determines the IO object layout.
+ */
+
+/** An IO connection (opaque). */
+typedef struct fio_io2_s fio_io2_s;
+
+/** A protocol definition; see `fio_io2_protocol_s` below. */
+typedef struct fio_io2_protocol_s fio_io2_protocol_s;
+
+/** A reference-counted TLS settings object. */
+typedef struct fio_io2_tls_s fio_io2_tls_s;
+
+/** An IO async queue with its own worker threads. */
+typedef struct fio_io2_async_s fio_io2_async_s;
+
+/** A pubsub message. */
+typedef struct fio_pubsub_msg_s fio_pubsub_msg_s;
+
+/** A peer certificate information record. */
+typedef struct fio_x509_cert_s fio_x509_cert_s;
+
+/** Graceful close has begun. */
+#define FIO_IO2_STATE_CLOSING ((uint32_t)1U)
+/** No further transport input will arrive. */
+#define FIO_IO2_STATE_READ_CLOSED ((uint32_t)2U)
+/** The transport write side has closed. */
+#define FIO_IO2_STATE_WRITE_CLOSED ((uint32_t)4U)
+/** Application input callbacks are suspended. */
+#define FIO_IO2_STATE_SUSPENDED ((uint32_t)8U)
+
+/** A callback's borrowed event; see `struct fio_io2_event_s` below. */
+typedef struct fio_io2_event_s fio_io2_event_s;
+
+/**
+ * Describes bytes to write or deliver: memory when `buf` is non-NULL, otherwise
+ * the file `fd`.
+ *
+ * - Use `fd = -1` for an empty description. A zero-initialized value names
+ *   descriptor 0, a valid file.
+ * - Memory starts at `buf + offset`. File offsets are absolute and leave the
+ *   seek position unchanged.
+ * - `len` is exact; zero never means "whole file". The core rejects arithmetic
+ *   overflow and invalid ranges; the caller guarantees the source's real size
+ *   and lifetime.
+ * - Submission transfers memory (released by `dealloc`) or the descriptor
+ *   unless `copy` is set, which copies the memory or duplicates the descriptor
+ *   before returning. Memory without `dealloc` is copied, except when
+ *   forwarding the current event's own source.
+ *
+ * See `fio_io2_write2` for ownership rules.
+ */
+typedef struct {
+  /** Memory allocation base; NULL selects a file or an empty description. */
+  char *buf;
+  /** File descriptor, ignored when buf is non-NULL; -1 means no file. */
+  intptr_t fd;
+  /** Offset from buf, or an absolute file offset. */
+  uint64_t offset;
+  /** Number of bytes to process. */
+  uint64_t len;
+  /** Releases the original memory base once; NULL requests a copy. */
+  void (*dealloc)(void *);
+  /** Copy memory or duplicate a file rather than transfer ownership. */
+  uint8_t copy;
+} fio_io2_write_args_s;
+
+/**
+ * A callback's borrowed, stack-local context. Do not retain the event, its
+ * payload or its `pdata` pointer after the callback returns. Deferred work
+ * retains the IO and any independently owned state, then requests a fresh
+ * callback.
+ *
+ * - Only `pdata` and the payload's position and length may change. Input memory
+ *   is writable; output memory is read-only.
+ * - Payloads never own resources: never call their `dealloc`, free their `buf`
+ *   or close their `fd`. Borrowed views have `copy = 0` and `dealloc = NULL`.
+ * - Consume a prefix by increasing `payload.offset` and decreasing
+ *   `payload.len` by the same amount (for memory, advancing `payload.buf`
+ *   instead of the offset also works). Count each byte once; never grow the
+ *   window or change its storage kind. Empty lifecycle events keep `fd = -1`.
+ * - To forward a range, save its description before consuming it. Once the
+ *   window is fully consumed, the first successful same-direction forward of
+ *   the source ends access to the source and every saved range, whether the
+ *   core transferred the packet or copied a bounded window. Forward earlier
+ *   ranges before consuming the last bytes; those are copied. Cross-direction
+ *   forwards always copy and keep source access.
+ * - Callbacks are not transactions: children may have observed accepted work
+ *   even if the parent later fails.
+ */
+struct fio_io2_event_s {
+  /** Borrowed connection identity; NULL when attachment arguments are rejected. */
+  fio_io2_s *io;
+  /** Borrowed attached definition; read-only. */
+  fio_io2_protocol_s *protocol;
+  /**
+   * Attachment data, saved on return except from `on_detach` and `on_close`.
+   */
+  void *pdata;
+  /**
+   * Read-only application-data snapshot at callback entry. Available even when
+   * io is NULL for rejected-argument cleanup. Assignments are not saved; use
+   * fio_io2_udata_set on a live IO to replace its hint.
+   */
+  void *udata;
+  /** Borrowed input or output window. */
+  fio_io2_write_args_s payload;
+  /**
+   * Delivers writable memory above this attachment (never files). Returns 0
+   * once the whole range belongs to the destination, even if a child then
+   * closes the IO, or -1 if it was rejected before reaching a child.
+   *
+   * - Requires the currently executing original event; unavailable during
+   *   `on_close`, `on_detach` and read-only queries.
+   * - Owned arguments are released on either path. Invalid ranges or allocation
+   *   failure abort an open IO. Accepted work is not rolled back; there is no
+   *   partial admission.
+   * - Calls into a busy attachment wait rather than re-enter it. Existing work
+   *   on a route precedes newer work. Input arrivals merge into one contiguous
+   *   backlog, so input windows may relocate between callbacks.
+   * - Transport closure alone does not reject delivery of queued input; an
+   *   abort does.
+   * - Upstream dispatch and transport reads stop while the receiving backlog is
+   *   at or above `input_max`. A running callback may overshoot by its window's
+   *   output (expanding codecs bound it). A stalled backlog waits for
+   *   consumption or the idle timeout.
+   */
+  int (*deliver)(fio_io2_event_s *event, fio_io2_write_args_s args);
+  /**
+   * Writes memory or a file below this attachment, under the same contract as
+   * `deliver`. New external memory and files follow the `fio_io2_write2`
+   * ownership rules.
+   *
+   * - Lifecycle callbacks such as `on_attach` and `on_finish` may emit data.
+   * - Forwarding the source: if it is entirely consumed, the core may transfer
+   *   the packet with the selected range. Otherwise memory is copied before any
+   *   child runs and a file descriptor is duplicated. Borrowed files are never
+   *   closed by argument cleanup. Passing `dealloc` for borrowed source memory
+   *   is invalid.
+   * - After a whole-source transfer, no callback may access the packet,
+   *   including read-only queries of its old contents.
+   * - Files are validated and materialized on workers, not read in callbacks.
+   *   Memory-only transforms receive bounded blocks; `accepts_files` handlers
+   *   may receive the remaining range directly. A short file or later IO error
+   *   aborts rather than truncating an exact-length write.
+   * - `fio_io2_write2` targets the top; this targets below the current layer.
+   *   Do not mix the routes for one ordered sequence: a lower-route trailer
+   *   could overtake a body waiting at the top.
+   */
+  int (*write)(fio_io2_event_s *event, fio_io2_write_args_s args);
+  /** Read-only connection state snapshot. */
+  uint32_t state;
+};
+
+/* *****************************************************************************
+Starting / Stopping the IO Reactor
+***************************************************************************** */
+
+/** Stops the IO reactor. */
+SFUNC void fio_io2_stop(void);
+
+/** Adds `workers` worker processes to the root IO reactor process. */
+SFUNC void fio_io2_add_workers(int workers);
+
+/**
+ * Starts the IO reactor, optionally with `workers` worker processes.
+ *
+ * This call blocks while the reactor runs.
+ */
+SFUNC void fio_io2_start(int workers);
+
+/** Retires all existing workers and restarts with `workers` workers. */
+SFUNC void fio_io2_restart(int workers);
+
+/* *****************************************************************************
+The IO Reactor's State
+***************************************************************************** */
+
+/**
+ * Returns 1 if the IO reactor is running, or 0 if it is stopped or shutting
+ * down.
+ */
+SFUNC int fio_io2_is_running(void);
+
+/** Returns true if the current process is the IO reactor's master process. */
+SFUNC int fio_io2_is_master(void);
+
+/** Returns true if the current process is an IO reactor's worker process. */
+SFUNC int fio_io2_is_worker(void);
+
+/**
+ * Returns the number of workers the IO reactor will actually run when
+ * `workers_requested` workers are requested.
+ */
+SFUNC uint16_t fio_io2_workers(int workers_requested);
+
+/** Returns the current process id. */
+SFUNC int fio_io2_pid(void);
+
+/** Returns the root / master process id. */
+SFUNC int fio_io2_root_pid(void);
+
+/**
+ * Returns the monotonic time, in milliseconds, at which the IO reactor last
+ * processed completions. While the reactor is stopped, returns the current
+ * monotonic time.
+ */
+SFUNC int64_t fio_io2_last_tick(void);
+
+/**
+ * Returns a cached wall-clock timestamp in milliseconds, updated each IO tick
+ * alongside `fio_io2_last_tick`. While the reactor is stopped, returns the
+ * current time.
+ */
+SFUNC int64_t fio_io2_last_tick_time(void);
+
+/* *****************************************************************************
+Listening to Incoming Connections
+***************************************************************************** */
+
+/** Named arguments for the `fio_io2_listen` function. */
+typedef struct {
+  /**
+   * The binding address in URL format. Defaults to `tcp://0.0.0.0:3000`.
+   *
+   * The URL may include an optional query used to build a TLS context.
+   * Supported query values include:
+   *
+   * - `tls` or `ssl` (no value): enables TLS, possibly with a self-signed
+   *   certificate.
+   * - `tls=` or `ssl=`: the value is a file-name prefix for `key.pem` and
+   *   `cert.pem`.
+   * - `key=` and `cert=`: paths to the `.pem` files.
+   */
+  const char *url;
+  /**
+   * The top protocol layer for accepted connections. When TLS is in effect,
+   * the listener's TLS layer sits between this protocol and the endpoint.
+   *
+   * May be NULL when TLS is used and ALPN selection pushes the protocol
+   * (see `fio_io2_protocol_push`).
+   */
+  fio_io2_protocol_s *protocol;
+  /**
+   * Shared service data, borrowed by every accepted IO.
+   *
+   * The listener may stop before its accepted connections close, so keep
+   * `udata` alive until every consumer has detached.
+   */
+  void *udata;
+  /**
+   * TLS settings. The call takes ownership of this reference whether it
+   * succeeds or fails.
+   */
+  fio_io2_tls_s *tls;
+  /**
+   * Called when the listening socket starts listening.
+   *
+   * May be called more than once (for example, if the IO reactor stops and
+   * restarts).
+   */
+  void (*on_start)(fio_io2_protocol_s *protocol, void *udata);
+  /**
+   * Called during listener cleanup.
+   *
+   * It is called separately in every process before that process exits.
+   */
+  void (*on_stop)(fio_io2_protocol_s *protocol, void *udata);
+  /**
+   * Optional queue used to schedule a pre-accept task.
+   *
+   * This can be used to check worker-thread load before accepting new
+   * connections.
+   */
+  fio_io2_async_s *queue_for_accept;
+  /** If set and the IO reactor forks, only the root process listens. */
+  uint8_t on_root;
+  /** If set, hides the "started/stopped listening" log messages. */
+  uint8_t hide_from_log;
+} fio_io2_listen_args_s;
+
+/**
+ * A borrowed handle to the listener's retained service arguments. This is not
+ * an owned IO reference. Stopping the listener consumes the handle; connections
+ * it already accepted stay alive.
+ */
+typedef struct fio_io2_listener_s fio_io2_listener_s;
+
+/**
+ * Sets up a network service on a listening socket. Returns a listener handle on
+ * success, or NULL on error. The handle is borrowed from the reactor and stays
+ * valid until `fio_io2_listen_stop` consumes it.
+ *
+ * - The call always releases its `.tls` reference, on success or failure. Pass
+ *   `fio_io2_tls_dup(tls)` to keep your own.
+ * - TLS is mandatory when requested: if a TLS object is in effect (through
+ *   `.tls`, a TLS URL scheme or URL TLS hints) and the TLS backend's
+ *   `layer_new` returns NULL, no listener is created and NULL is returned. As
+ *   with a failed bind, `on_stop` (if set) is still called.
+ * - Accepted IOs keep their own protocol and service lifetime requirements,
+ *   independent of the listener.
+ *
+ * **Note**: this schedules a task; do not call it from a PRE_START or ON_START
+ * state callback.
+ */
+SFUNC fio_io2_listener_s *fio_io2_listen(fio_io2_listen_args_s args);
+#define fio_io2_listen(...) fio_io2_listen((fio_io2_listen_args_s){__VA_ARGS__})
+
+/** Stops listening and destroys the listener, consuming the handle. */
+SFUNC void fio_io2_listen_stop(fio_io2_listener_s *l);
+
+/** Returns the listener's top protocol. */
+SFUNC fio_io2_protocol_s *fio_io2_listener_protocol(fio_io2_listener_s *l);
+
+/** Returns the listener's associated `udata`. */
+SFUNC void *fio_io2_listener_udata(fio_io2_listener_s *l);
+
+/** Sets the listener's associated `udata`, returning the old value. */
+SFUNC void *fio_io2_listener_udata_set(fio_io2_listener_s *l, void *new_udata);
+
+/** Returns the URL the listener is listening on. */
+SFUNC fio_buf_info_s fio_io2_listener_url(fio_io2_listener_s *l);
+
+/** Returns true if the listener attaches a TLS layer to connections. */
+SFUNC int fio_io2_listener_is_tls(fio_io2_listener_s *l);
+
+/* *****************************************************************************
+Connecting as a Client
+***************************************************************************** */
+
+/** Named arguments for the `fio_io2_connect` function. */
+typedef struct {
+  /**
+   * The URL to connect to. TLS may be requested through a `tls` scheme or URL
+   * query hints.
+   */
+  const char *url;
+  /**
+   * The top protocol layer. When TLS is in effect, the TLS layer attaches below
+   * it.
+   */
+  fio_io2_protocol_s *protocol;
+  /**
+   * Called when the connection fails; use it for cleanup.
+   *
+   * Always runs on the reactor thread, possibly asynchronously after
+   * `fio_io2_connect` returns (even when it returns NULL).
+   */
+  void (*on_failed)(fio_io2_protocol_s *protocol, void *udata);
+  /**
+   * Application data visible while layers attach. If the top protocol never
+   * attaches, `on_failed` must clean it up.
+   */
+  void *udata;
+  /**
+   * TLS settings for TLS connections. The call takes ownership of this
+   * reference.
+   */
+  fio_io2_tls_s *tls;
+  /** Connection timeout in milliseconds (defaults to 30 seconds). */
+  uint32_t timeout;
+  /**
+   * Opt-in peer verification for TLS connections.
+   *
+   * When set and the connection uses TLS, a TLS object without any trust
+   * entries gets the system trust store (same as `?trust=sys` or
+   * `fio_io2_tls_trust_add(tls, NULL)`). Explicit trust entries are kept.
+   *
+   * Ignored for non-TLS connections (the scheme is never changed).
+   */
+  uint8_t verify;
+} fio_io2_connect_args_s;
+
+/**
+ * Connects to a URL, returning the new IO or NULL. The IO belongs to the
+ * reactor; the pointer is valid only until the next event is processed. The
+ * connection completes asynchronously: `on_failed` runs on the reactor thread,
+ * possibly after this call returns (even when it returns NULL).
+ *
+ * Ownership:
+ *
+ * - `protocol` is borrowed and must outlive every attachment.
+ * - `udata` is released exactly once: by `on_failed` if the application's top
+ *   layer never attached, otherwise by the application (for example in the top
+ *   layer's `on_close` or `on_detach`, or through an env entry). Lower layers
+ *   never free it, and a NULL return alone does not release it. By contrast,
+ *   attachment functions consume data on failure too, using each supplied
+ *   protocol's on_close with io = NULL and the submitted event.udata. A
+ *   connection attempt must hand cleanup to either attachment or on_failed,
+ *   never both for the same data.
+ * - `tls` is consumed on every path; use `fio_io2_tls_dup` to keep a reference.
+ *
+ * TLS is mandatory when requested: if a TLS object is in effect and the
+ * backend's `layer_new` returns NULL, no connection is attempted, NULL is
+ * returned and `on_failed` runs.
+ */
+SFUNC fio_io2_s *fio_io2_connect(fio_io2_connect_args_s args);
+#define fio_io2_connect(url_, ...)                                             \
+  fio_io2_connect((fio_io2_connect_args_s){.url = url_, __VA_ARGS__})
+
+/* *****************************************************************************
+Construction, attachment and access
+***************************************************************************** */
+
+/** Named arguments shared by the safe and unsafe attachment functions. */
+typedef struct {
+  /**
+   * Layers from bottom to top. Protocol 0 is required; a definition may appear
+   * only once. A NULL protocol ends the stack; all later entries must be zero.
+   * A full array needs no sentinel. Each non-NULL pdata requires a protocol
+   * that knows how to release it, including when attachment is rejected.
+   */
+  struct {
+    /** Borrowed definition; outlives queued attachment and final cleanup. */
+    fio_io2_protocol_s *protocol;
+    /** Initial owned attachment data, including NULL; interpreted by protocol. */
+    void *pdata;
+  } protocols[FIO_IO2_LAYERS_MAX];
+  /**
+   * Application data passed as event.udata to every layer. Its cleanup belongs
+   * to the application protocol, not to each layer or an independent core
+   * destructor. Supply that protocol even when lower-layer arguments are bad.
+   */
+  void *udata;
+} fio_io2_attach_args_s;
+
+/**
+ * Thread-safe attachment submission. Always queues, even on the reactor thread;
+ * no protocol callbacks or reactor-list mutations run inline. Returns 0 if the
+ * arguments are valid and attachment is scheduled, or -1 for a missing protocol
+ * 0, duplicate definitions or a nonempty entry after the NULL terminator.
+ *
+ * Both results consume the supplied layer data and application data. Rejected
+ * submissions queue cleanup on the reactor: each supplied protocol's on_close
+ * runs once per entry, top-down across the entire array, with io = NULL,
+ * initial pdata, the submitted udata, empty payload and NULL dispatchers. There
+ * is no on_attach or on_detach. A protocol owning data must define on_close;
+ * each supplied entry must own its own data/reference. Do not retry consumed
+ * arguments. NULL-protocol entries have no cleanup callback and must not own
+ * data. The single shared udata hint is released once by its designated
+ * application owner, not once per entry; lower-layer cleanup treats it as
+ * opaque. While stopped, attachment/cleanup waits for the queue to drain.
+ *
+ * Copies the argument structure into one temporary allocation, freed by the
+ * event after attachment or cleanup. Allocation failure follows the queue's
+ * fatal policy. A 0 return does not promise IO allocation will succeed later;
+ * that failure also runs rejection cleanup with io = NULL. No IO pointer or
+ * reference is returned. Validation is O(FIO_IO2_LAYERS_MAX squared); enqueue
+ * is O(1) amortized.
+ */
+SFUNC int fio_io2_attach(fio_io2_attach_args_s args);
+#define fio_io2_attach(...) fio_io2_attach((fio_io2_attach_args_s){__VA_ARGS__})
+
+/**
+ * Synchronous attachment; call only on the reactor thread. Consumes arguments
+ * under the same ownership and rejection-cleanup contract as fio_io2_attach,
+ * but cleanup completes before a NULL return. Returns NULL for argument or IO
+ * allocation failure; otherwise returns a reactor-owned IO borrowed until the
+ * next reactor event. No owned reference is returned.
+ *
+ * Initializes all supplied layer data, then calls on_attach bottom-up and saves
+ * pdata on return. A NULL callback preserves initial data. Protocols cannot
+ * refuse attachment: even after a close request every supplied layer completes
+ * attachment before invalidation, unlinking or release of the open reference.
+ * Data dispatch waits until attachment completes; handshake success is not
+ * implied. Final cleanup uses on_close, never on_detach. Validation is bounded
+ * as above; allocation, initialization and callbacks run inline.
+ */
+SFUNC fio_io2_s *fio_io2_attach_unsafe(fio_io2_attach_args_s args);
+#define fio_io2_attach_unsafe(...)                                            \
+  fio_io2_attach_unsafe((fio_io2_attach_args_s){__VA_ARGS__})
+
+/**
+ * Queues a protocol above the current top. Always queues, even on the reactor
+ * thread; no attachment callback runs inline. Its initial `pdata` is NULL.
+ * Call on the reactor thread.
+ *
+ * Returns 0 if queued, or -1 for NULL arguments or a closing IO. The command
+ * retains the IO and borrows `protocol`. Commands run in FIFO order outside
+ * callbacks. A closing IO discards them; a duplicate definition or a full stack
+ * aborts an open IO. A successful attachment cannot be refused; a close request
+ * takes effect after its `on_attach` returns. O(1) to enqueue, O(layers) to
+ * execute.
+ */
+SFUNC int fio_io2_protocol_push(fio_io2_protocol_s *protocol, fio_io2_s *io);
+
+/**
+ * Queues replacement of the top non-transport protocol, under the same command
+ * and return contract as `fio_io2_protocol_push`. Execution detaches the old
+ * definition, attaches the new one and preserves unread input. It does not call
+ * `on_finish` or `on_close`, flush old output or wait for lower-layer output.
+ * Protocol 0 cannot be replaced.
+ *
+ * - Hand all old-top output below that layer before requesting replacement.
+ *   Residual old-top output at execution is a protocol error and aborts the IO.
+ *   A successful `event.write` hands work to the lower route, and a NULL
+ *   `on_write` forwards there directly. Queueing `fio_io2_write2` then `set` is
+ *   therefore safe only with a NULL `on_write`; otherwise dispatch may still be
+ *   waiting.
+ * - For HTTP upgrades, forward the complete 101 response before requesting
+ *   `set`, and queue new-protocol writes after it. Suspend input before
+ *   returning unread upgraded bytes from the old `on_data`. The new protocol
+ *   normally resumes input in `on_attach`; replacement itself neither suspends
+ *   nor resumes input.
+ * - The old definition stays borrowed until `on_detach` returns. The IO keeps
+ *   its activity timestamp. The new layer starts with NULL `pdata`; if its
+ *   `on_attach` closes the IO, attachment completes before teardown and the old
+ *   definition is not restored.
+ * - Use env for handoff data that must survive a detached protocol or a
+ *   discarded command.
+ */
+SFUNC int fio_io2_protocol_set(fio_io2_protocol_s *protocol, fio_io2_s *io);
+
+/**
+ * Returns the borrowed current top definition, or NULL. Queued changes have no
+ * effect until executed. O(layers), bounded by `FIO_IO2_LAYERS_MAX`.
+ */
+SFUNC fio_io2_protocol_s *fio_io2_protocol(fio_io2_s *io);
+
+/**
+ * Replaces the application hint and returns its old value without cleanup. Call
+ * on the reactor thread. O(1).
+ */
+SFUNC void *fio_io2_udata_set(fio_io2_s *io, void *udata);
+
+/** Returns the borrowed application hint. Call on the reactor thread. O(1). */
+SFUNC void *fio_io2_udata(fio_io2_s *io);
+
+/**
+ * Returns a diagnostic descriptor, or INVALID for closed or custom transports.
+ * Use it for options and addresses, never to bypass the transport's IO. O(1).
+ */
+SFUNC fio_socket_i fio_io2_fd(fio_io2_s *io);
+
+/**
+ * Queries the first defining layer from the top down. Returns 0 for an item, or
+ * -1 when done or `dest` is NULL. Start with a zeroed `dest`; at most 128 items
+ * are exposed. Borrowed result fields expire at the next peer query on any IO,
+ * at connection close, or when the callback or task that made the query
+ * returns.
+ *
+ * A layer with a live event is queried with that event as const, so `pdata` is
+ * current; otherwise the core supplies an empty read-only event. The query
+ * reads only `io`, `protocol` and `pdata`, and cannot mutate state, dispatch
+ * work or issue another peer query. Protocols return -1 while their `pdata` is
+ * not ready. No allocation; O(layers + callback depth).
+ */
+SFUNC int fio_io2_peer_info_next(fio_x509_cert_s *dest, fio_io2_s *io);
+
+/**
+ * Resets idle activity and moves the IO to the tail of its top protocol's
+ * activity list. Useful IO also touches; callbacks making no progress do not.
+ * Call on the reactor thread. O(layers).
+ */
+SFUNC void fio_io2_touch(fio_io2_s *io);
+
+/* *****************************************************************************
+Writing and delivering
+***************************************************************************** */
+
+/**
+ * Queues application output for the top protocol. Thread-safe. Always queues,
+ * even on the reactor thread; FIFO order with protocol changes decides which
+ * top receives the write. The caller keeps the IO alive; the queued command
+ * holds its own reference until processed.
+ *
+ * Returns 0 once the complete submission is queued (not consumed or sent), or
+ * -1 on preparation failure, releasing transferred arguments. Copy or dup
+ * failure also queues an abort.
+ *
+ * - Memory with `dealloc` transfers its allocation on every path, including
+ *   errors; the callback receives the original `buf` once, not `buf + offset`.
+ *   Memory without `dealloc` is copied. `copy` also requests copying and
+ *   requires `dealloc = NULL`.
+ * - A file transfers with `copy = 0`, or is duplicated with `copy` set
+ *   (duplication shares file contents, not a snapshot).
+ * - A non-NULL `buf` selects memory and ignores `fd`. Empty descriptions use
+ *   `fd = -1` and zero offset and length; they still release transferred
+ *   resources.
+ * - Offset, length and their sum must fit `SIZE_MAX`. Invalid metadata, file
+ *   failure or backlog allocation failure abort an open IO when processed; a
+ *   closed IO discards and releases the submission.
+ * - File length counts as pending bytes without allocating them. Pace producers
+ *   through `fio_io2_backlog` or `on_ready`; the task queue is not bounded by
+ *   `output_max`.
+ *
+ * Copying is O(len); transfer and file submission are O(1) and read no file
+ * contents.
+ */
+SFUNC int fio_io2_write2(fio_io2_s *io, fio_io2_write_args_s args);
+#define fio_io2_write2(io, ...)                                                \
+  fio_io2_write2(io, (fio_io2_write_args_s){__VA_ARGS__})
+
+/**
+ * Writes memory using the ordinary copy policy. Evaluates each argument once.
+ */
+#define fio_io2_write(io, buf_, len_)                                          \
+  fio_io2_write2(io, .buf = (char *)(buf_), .fd = -1, .len = (len_))
+
+/**
+ * Sends exactly `len_` bytes and consumes `fd_` on every path. To keep the
+ * original descriptor, use `fio_io2_write2` with `copy` set. Evaluates each
+ * argument once.
+ */
+#define fio_io2_sendfile(io, fd_, offset_, len_)                               \
+  fio_io2_write2(io, .fd = (fd_), .offset = (offset_), .len = (len_))
+
+/* *****************************************************************************
+Lifetime and flow control
+***************************************************************************** */
+
+/**
+ * Queues a graceful close. Thread-safe and idempotent; O(1). Always queues,
+ * even on the reactor thread, so it cannot overtake earlier writes. Writes
+ * queued before it are processed first; later application work is discarded.
+ *
+ * Each layer, in turn, drains its earlier output, calls its `on_finish` once,
+ * then drains its final output before the next layer down finishes. Lower
+ * control input may continue meanwhile, but finalizers cannot wait for a new
+ * peer reply. This application-requested close stops application input when its
+ * command runs; transport EOF instead lets queued input drain.
+ *
+ * Closing IOs stay on their top protocol's activity list. A stalled close
+ * aborts at the shorter of the protocol's idle timeout and `shutdown_timeout`;
+ * reactor shutdown has its own global deadline. The final `on_close` still
+ * waits for destruction.
+ */
+SFUNC void fio_io2_close(fio_io2_s *io);
+
+/**
+ * Aborts the connection. Thread-safe and idempotent; O(1). Outside attachment,
+ * it stops dispatch immediately on the reactor thread; elsewhere it queues an
+ * abort command.
+ * Active callbacks unwind and save `pdata` first. During attachment, an abort
+ * only records the request: every supplied layer completes `on_attach` with
+ * the pre-abort state and normal dispatchers. Terminal state, `is_open` becoming
+ * false, write rejection, protocol 0 cancellation and unlinking wait until the
+ * whole attachment completes. No data callback runs in that interval; accepted
+ * output is discarded by the abort. Effects children already accepted cannot
+ * be undone.
+ *
+ * Protocol 0 stops submissions and requests cancellation. Each submitted
+ * operation keeps its IO reference and packets until it actually completes, not
+ * merely until cancellation is acknowledged; late completions only release
+ * resources.
+ *
+ * The IO is unlinked from its top protocol and the reactor's open reference is
+ * released after callbacks unwind. The last reference schedules destruction on
+ * the reactor: `on_close` for each layer, top-down, then environment, backlog
+ * and IO storage cleanup. `on_detach` is never called, and no ordinary callback
+ * runs afterwards.
+ */
+SFUNC void fio_io2_close_now(fio_io2_s *io);
+
+/**
+ * Returns an owned reference to a borrowed live IO. Thread-safe; O(1). Keeps
+ * storage and final cleanup alive, not a particular attachment or event view.
+ * Final cleanup callbacks must not duplicate the IO.
+ */
+SFUNC fio_io2_s *fio_io2_dup(fio_io2_s *io);
+
+/**
+ * Consumes an owned reference by queueing its release on the reactor.
+ * Thread-safe; O(1); does not itself close an open IO. While the reactor is
+ * stopped, the release runs once its queue is drained.
+ */
+SFUNC void fio_io2_free(fio_io2_s *io);
+
+/**
+ * Suspends application `on_data`. Lower control layers may continue within
+ * their input bounds. Reactor thread; idempotent.
+ */
+SFUNC void fio_io2_suspend(fio_io2_s *io);
+
+/**
+ * Resumes application input. Reactor thread; idempotent. Suspension carries
+ * across top-protocol replacement.
+ */
+SFUNC void fio_io2_unsuspend(fio_io2_s *io);
+
+/** Returns whether application input is suspended. Reactor thread; O(1). */
+SFUNC int fio_io2_is_suspended(fio_io2_s *io);
+
+/**
+ * Queues a retry of both data handlers for an attached definition, or for all
+ * attachments when `protocol` is NULL. Call on the reactor thread; O(layers).
+ *
+ * The command waits until callbacks unwind and skips detached definitions.
+ * Handlers receive an empty window (`{ .fd = -1 }`). Use it to flush private
+ * work after a known trigger (handshake, timer or downstream progress), not to
+ * poll: a callback making no progress cannot schedule its own immediate retry.
+ * Application input still honors suspension. Retries stop after abort or
+ * `on_finish`.
+ */
+SFUNC void fio_io2_protocol_schedule(fio_io2_protocol_s *protocol,
+                                     fio_io2_s *io);
+
+/**
+ * Returns the CLOSING, READ_CLOSED, WRITE_CLOSED and SUSPENDED state flags
+ * only; private work flags are excluded. Reactor thread; O(1).
+ */
+SFUNC uint32_t fio_io2_state(fio_io2_s *io);
+
+/**
+ * Returns whether the IO is open for new application work. Returns 0 after
+ * closure, even while retained queued work drains. It does not say whether the
+ * object is safe to free; references control its lifetime. A queued close takes
+ * effect when processed. Reactor thread; O(1).
+ */
+SFUNC int fio_io2_is_open(fio_io2_s *io);
+
+/**
+ * Returns output bytes waiting in core queues across all layers. Excludes
+ * submitted operations, unprocessed application commands and codec-private
+ * buffers. File ranges contribute their remaining length, not a memory
+ * reservation. A packet moving between layers is not counted twice. Reactor
+ * thread; O(1).
+ *
+ * This is a producer-pacing snapshot, not an allocation cap, socket writability
+ * or peer receipt. Workers should defer a query task rather than read
+ * reactor-owned accounting directly.
+ */
+SFUNC size_t fio_io2_backlog(fio_io2_s *io);
+
+/** Does nothing. O(1). */
+SFUNC void fio_io2_noop(fio_io2_s *io);
+
+/* *****************************************************************************
+Scheduling and protocol definition
+***************************************************************************** */
+
+/**
+ * Queues a task in FIFO order and wakes the reactor. Thread-safe; never runs
+ * inline. The task owns its arguments and releases them when done; retain IO
+ * references explicitly. O(1) amortized; allocation failure follows the queue
+ * policy.
+ */
+SFUNC void fio_io2_defer(void (*task)(void *, void *),
+                         void *udata1,
+                         void *udata2);
+
+/**
+ * Schedules a timer under `fio_timer_schedule`'s ownership and cancellation
+ * contract.
+ */
+SFUNC void fio_io2_run_every(fio_timer_schedule_args_s args);
+#define fio_io2_run_every(...)                                                 \
+  fio_io2_run_every((fio_timer_schedule_args_s){__VA_ARGS__})
+
+/**
+ * Returns the borrowed task queue. Prefer `fio_io2_defer`, which also wakes an
+ * idle reactor. O(1).
+ */
+SFUNC fio_queue_s *fio_io2_queue(void);
+
+/**
+ * Shared protocol definition. Zero-initialize before first use. Callbacks and
+ * options must not change while attached; `reserved` belongs to the reactor.
+ * Every layer receives events with its own `pdata`, while only the top protocol
+ * owns the IO's activity-list membership and timeout policy.
+ */
+struct fio_io2_protocol_s {
+  /** Reactor-owned membership and registration state; callers leave it zero. */
+  struct {
+    /** IOs whose current top is this protocol, ordered by activity. */
+    FIO_LIST_HEAD ios;
+    /** Membership in the reactor's registered-protocol list. */
+    FIO_LIST_NODE protocols;
+    /** Internal registration flags. */
+    uintptr_t flags;
+  } reserved;
+  /**
+   * Called once per attachment. `pdata` starts with this layer's value from
+   * attachment arguments, or NULL for a queued push/replacement. Assign owned
+   * state to `event.pdata`; release any initial state replaced here. Attachment
+   * cannot be refused: closing the IO takes effect only after all supplied layers
+   * complete attachment. NULL keeps the initial data without a callback.
+   */
+  void (*on_attach)(fio_io2_event_s *event);
+  /**
+   * Releases attachment state when this protocol is replaced, not when the IO
+   * is destroyed. Writeback is ignored. Replacement never calls `on_close`.
+   */
+  void (*on_detach)(fio_io2_event_s *event);
+  /**
+   * Consumes borrowed, writable input by advancing the payload. The core
+   * repeats the call while progress is made and bytes remain, within the turn
+   * budget. Without progress, wait for more input or an explicit
+   * `fio_io2_protocol_schedule` rather than polling.
+   *
+   * Queued input work may run after transport closure; test `is_open` to
+   * process EOF-delimited input. Each callback still receives a fresh, borrowed
+   * event, and an abort discards pending input. NULL forwards bytes through a
+   * transform and discards them at the application.
+   */
+  void (*on_data)(fio_io2_event_s *event);
+  /**
+   * Consumes one borrowed output range. Memory is read-only; files are offered
+   * only when `accepts_files` is set (memory-only handlers receive file blocks
+   * loaded asynchronously). NULL forwards either kind below this attachment; a
+   * custom transport with no handler discards it.
+   *
+   * Bound any private buffering. Flush now, or arrange a known external trigger
+   * for `fio_io2_protocol_schedule`. Graceful close calls `on_finish` for the
+   * final flush; replacement requires flushing before requesting `set`. The
+   * built-in transport owns submitted packets until they actually complete, so
+   * callbacks never retain borrowed descriptors or bytes.
+   */
+  void (*on_write)(fio_io2_event_s *event);
+  /**
+   * Called on the current top when pending output falls from above
+   * `ready_limit` to at or below it. Notifications coalesce. Signals producer
+   * pacing only, not codec-private drainage, socket writability or peer
+   * delivery.
+   */
+  void (*on_ready)(fio_io2_event_s *event);
+  /**
+   * Called when the top protocol's idle timeout expires, after the core
+   * confirms the IO is still idle under this protocol. NULL aborts; otherwise
+   * touch or close explicitly. Callbacks making no progress are not activity.
+   * Closing IOs abort directly at the shorter of this timeout and
+   * `shutdown_timeout`, without calling `on_timeout`.
+   */
+  void (*on_timeout)(fio_io2_event_s *event);
+  /** Called before graceful close during reactor shutdown. NULL skips it. */
+  void (*on_shutdown)(fio_io2_event_s *event);
+  /**
+   * Called once after this attachment's earlier output drains during graceful
+   * close. Flush private output below this layer without waiting for new peer
+   * replies. Replacement does not call it. NULL skips it.
+   */
+  void (*on_finish)(fio_io2_event_s *event);
+  /**
+   * Releases this layer's data. Also called for rejected attachment arguments
+   * without on_attach: io is NULL, pdata is the submitted value, and udata is
+   * the application hint. Release only this entry's owned data; the application
+   * owner releases the single shared udata hint exactly once, even when a
+   * rejected stack repeats its definition. Lower layers treat udata as opaque
+   * during cleanup. No IO API calls are allowed with NULL io.
+   *
+   * For attached IOs, this is the final callback at destruction, top-down on the
+   * reactor after all retained tasks and operations finish. Release `pdata`
+   * here; no `on_detach` follows and writeback is ignored. Do not emit IO,
+   * queue work, retain events or resurrect references.
+   */
+  void (*on_close)(fio_io2_event_s *event);
+  /**
+   * Optional read-only peer query. Reads only `io`, `protocol` and `pdata`;
+   * does not allocate, mutate, dispatch or recurse. May borrow an existing live
+   * event.
+   */
+  int (*peer_info_next)(fio_x509_cert_s *dest, const fio_io2_event_s *event);
+  /** Receives a pubsub message, borrowed for the callback. */
+  void (*on_pubsub)(fio_pubsub_msg_s *msg);
+  /** Receives user event 1, under the existing user-event contract. */
+  void (*on_user1)(fio_io2_s *io, void *user_data);
+  /** Receives user event 2, under the existing user-event contract. */
+  void (*on_user2)(fio_io2_s *io, void *user_data);
+  /** Receives user event 3, under the existing user-event contract. */
+  void (*on_user3)(fio_io2_s *io, void *user_data);
+  /** Reserved application-event callback. */
+  void (*on_reserved)(fio_io2_s *io, void *user_data);
+  /**
+   * Idle timeout in milliseconds while this protocol is the top. Zero uses
+   * `timeout_max`; a nonzero value is clamped to it. Lower transforms arrange
+   * protocol-specific timers through their own state.
+   */
+  uint32_t timeout;
+  /**
+   * Nonzero lets `on_write` receive files as well as memory; such a handler
+   * must not block reading files. Zero requests asynchronous materialization
+   * before a defined `on_write`; a NULL handler always forwards files
+   * unchanged.
+   */
+  uint8_t accepts_files;
+};
+
+/**
+ * Visits non-terminal IOs whose current top is `protocol`, stopping at the tail
+ * recorded at entry. Returns the number visited. Call on the reactor thread;
+ * O(visited IOs).
+ *
+ * The task may touch or close its own IO; other membership changes are
+ * deferred. Arguments are borrowed; retaining an IO requires `fio_io2_dup`. No
+ * `pdata` lookup is provided.
+ */
+SFUNC size_t fio_io2_protocol_each(fio_io2_protocol_s *protocol,
+                                   void (*task)(fio_io2_s *, void *),
+                                   void *udata2);
+
+/* *****************************************************************************
+Connection Object Links / Environment
+***************************************************************************** */
+
+/** Named arguments for the `fio_io2_env_set` function. */
+typedef struct {
+  /** A numerical type filter. Defaults to 0; negative values are reserved. */
+  intptr_t type;
+  /**
+   * The name of the link. The name and type together uniquely identify the
+   * object.
+   */
+  fio_buf_info_s name;
+  /** The object being linked to the IO object. */
+  void *udata;
+  /**
+   * Releases `udata`. Called when the IO object is freed (its last reference is
+   * released), or when the entry is removed or replaced.
+   */
+  void (*on_close)(void *data);
+  /**
+   * Set to 1 if the name string stays valid for as long as the entry exists, so
+   * it can be borrowed instead of copied.
+   */
+  uint8_t const_name;
+} fio_io2_env_set_args_s;
+
+/**
+ * Named arguments for `fio_io2_env_get`, `fio_io2_env_unset` and
+ * `fio_io2_env_remove`.
+ */
+typedef struct {
+  /** The numerical type filter used with `fio_io2_env_set`. */
+  intptr_t type;
+  /** The object's name, as used with `fio_io2_env_set`. */
+  fio_buf_info_s name;
+} fio_io2_env_get_args_s;
+
+/**
+ * Returns the `udata` linked to the IO under the given type and name, or NULL.
+ * Thread-safe, but the result is borrowed: the caller must synchronize with any
+ * concurrent removal or replacement. A NULL `io` selects the global
+ * environment.
+ */
+SFUNC void *fio_io2_env_get(fio_io2_s *io, fio_io2_env_get_args_s);
+#define fio_io2_env_get(io, ...)                                               \
+  fio_io2_env_get(io, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/**
+ * Links an object to the IO's lifetime. Thread-safe; takes ownership of
+ * `udata`. An existing entry with the same type and name is replaced and its
+ * `on_close` is called, on the calling thread and outside the map lock.
+ *
+ * `on_close` otherwise runs on the reactor thread when the IO is freed (its
+ * last reference is released), not when the connection closes, so tasks that
+ * still hold a reference can reach the env. If `io` is NULL, the value is
+ * stored in the global environment and `on_close` runs when the process exits.
+ * Allocation failure is fatal.
+ *
+ * **Note**: a value must not hold a reference to its own IO; that would prevent
+ * the IO and its env from ever being destroyed.
+ */
+SFUNC void fio_io2_env_set(fio_io2_s *io, fio_io2_env_set_args_s);
+#define fio_io2_env_set(io, ...)                                               \
+  fio_io2_env_set(io, (fio_io2_env_set_args_s){__VA_ARGS__})
+
+/**
+ * Unlinks an object without calling its `on_close`; cleanup becomes the
+ * caller's responsibility. Thread-safe. Returns 0 on success, or -1 if the
+ * object was not found.
+ */
+SFUNC int fio_io2_env_unset(fio_io2_s *io, fio_io2_env_get_args_s);
+#define fio_io2_env_unset(io, ...)                                             \
+  fio_io2_env_unset(io, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/**
+ * Removes an object and calls its `on_close` on the calling thread.
+ * Thread-safe. Returns 0 on success, or -1 if the object was not found.
+ */
+SFUNC int fio_io2_env_remove(fio_io2_s *io, fio_io2_env_get_args_s);
+#define fio_io2_env_remove(io, ...)                                            \
+  fio_io2_env_remove(io, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/* *****************************************************************************
+TLS Settings (unchanged builder) and the TLS Layer Backend
+***************************************************************************** */
+
+/** Creates a new TLS settings object. Release it with `fio_io2_tls_free`. */
+SFUNC fio_io2_tls_s *fio_io2_tls_new(void);
+
+/**
+ * Applies a parsed URL's TLS hints to `target_or_null` and returns that same
+ * reference. If the target is NULL and TLS is requested, creates an owned
+ * settings object; otherwise NULL stays NULL. Does not duplicate or consume an
+ * existing target reference.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_from_url(fio_io2_tls_s *target_or_null,
+                                          fio_url_s url);
+
+/** Increases the object's reference count and returns the object. */
+SFUNC fio_io2_tls_s *fio_io2_tls_dup(fio_io2_tls_s *);
+
+/**
+ * Decreases the object's reference count, freeing it when no references remain.
+ */
+SFUNC void fio_io2_tls_free(fio_io2_tls_s *);
+
+/**
+ * TLS-local named storage. Keys are exact (binary-safe) name/type pairs.
+ * Lookups do not lock: populate before sharing with listeners/connections,
+ * then only read until final cleanup. Mutations require exclusive access.
+ * NULL tls never selects the global environment.
+ * Payload aliases, type namespaces and cleanup dependencies belong to callers.
+ */
+
+/**
+ * Returns borrowed data, or NULL for an absent entry or NULL tls. The result
+ * lasts until replacement/removal or final TLS release. No allocation; expected
+ * O(name.len). Unlike SNI lookup, names are byte-exact and case-sensitive.
+ */
+SFUNC void *fio_io2_tls_env_get(fio_io2_tls_s *tls, fio_io2_env_get_args_s);
+#define fio_io2_tls_env_get(tls, ...)                                          \
+  fio_io2_tls_env_get(tls, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/**
+ * Stores an owned value using the existing env argument fields. Copies the
+ * binary key unless const_name is set; borrowed keys must outlive the entry.
+ * Replacement releases the old value through on_close. A value with neither
+ * data nor callback is ignored. NULL tls releases the supplied value without
+ * storing it. NULL key buffers with nonzero length, or lengths above
+ * UINT32_MAX, also release the supplied value without storing it. Allocation
+ * failure is fatal after releasing the supplied value. Expected amortized
+ * O(name.len), may allocate; callbacks run synchronously on the calling thread,
+ * including final TLS release. No payload references are added. Never retain a
+ * reference from a value to its own owning TLS object.
+ */
+SFUNC void fio_io2_tls_env_set(fio_io2_tls_s *tls, fio_io2_env_set_args_s);
+#define fio_io2_tls_env_set(tls, ...)                                          \
+  fio_io2_tls_env_set(tls, (fio_io2_env_set_args_s){__VA_ARGS__})
+
+/**
+ * Unlinks an entry without invoking on_close; the caller owns its cleanup.
+ * Returns 0, or -1 if absent/tls is NULL. No allocation; expected O(name.len).
+ */
+SFUNC int fio_io2_tls_env_unset(fio_io2_tls_s *tls, fio_io2_env_get_args_s);
+#define fio_io2_tls_env_unset(tls, ...)                                        \
+  fio_io2_tls_env_unset(tls, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/**
+ * Unlinks an entry and invokes on_close synchronously. Returns 0, or -1 if
+ * absent/tls is NULL. No allocation; expected O(name.len), plus callback work.
+ * Final cleanup detaches entries before calling back; callbacks may unlink
+ * aliases, but cannot rely on their presence or on destruction order.
+ */
+SFUNC int fio_io2_tls_env_remove(fio_io2_tls_s *tls, fio_io2_env_get_args_s);
+#define fio_io2_tls_env_remove(tls, ...)                                       \
+  fio_io2_tls_env_remove(tls, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/**
+ * Registers a prepared credential/alias in TLS storage using env fields.
+ * Lowercases and copies name, ignoring const_name. Accepts 1..255 printable
+ * ASCII bytes; '*' is allowed only as a leading '*.' with a nonempty suffix.
+ * An empty name registers the default for this type. Names are DNS selection
+ * keys, not parsed/verified certificates; callers register each desired SAN.
+ * Duplicate normalized names replace the old entry, as env_set does.
+ * Returns 0, or -1 for NULL tls / invalid name, releasing the supplied value
+ * through on_close on failure. Allocation failure follows env_set policy.
+ * May allocate; expected amortized O(name.len), plus callback work. Call during
+ * setup.
+ */
+SFUNC int fio_io2_tls_sni_add(fio_io2_tls_s *tls, fio_io2_env_set_args_s);
+#define fio_io2_tls_sni_add(tls, ...)                                          \
+  fio_io2_tls_sni_add(tls, (fio_io2_env_set_args_s){__VA_ARGS__})
+
+/**
+ * Returns borrowed prepared data for name/type: case-insensitive exact match,
+ * then a single-label wildcard, then the empty-name default or first non-NULL
+ * value stored for this type. Empty/malformed names select that default.
+ * No type match / NULL tls returns NULL. No allocation or file/certificate
+ * parsing. Expected O(name.len) with an explicit default; otherwise fallback
+ * scans entries in registration order, O(entries + name.len).
+ * Lookup never mutates storage. Returned data has env_get lifetime.
+ */
+SFUNC void *fio_io2_tls_sni_find(fio_io2_tls_s *tls, fio_io2_env_get_args_s);
+#define fio_io2_tls_sni_find(tls, ...)                                         \
+  fio_io2_tls_sni_find(tls, (fio_io2_env_get_args_s){__VA_ARGS__})
+
+/** Borrowed certificate configuration; not a parsed credential. */
+typedef struct {
+  /** Lowercased selection name, or NULL for the unnamed default. */
+  const char *server_name;
+  /** Certificate path, or NULL if unspecified. */
+  const char *public_cert_file;
+  /** Private key path, or NULL if unspecified. */
+  const char *private_key_file;
+  /** Private key password, or NULL if unspecified. */
+  const char *pk_password;
+} fio_io2_tls_cert_s;
+
+/**
+ * Gets configuration at a dense zero-based index in tls_each visitation order.
+ * Returns 0; -1 for NULL tls/out or an invalid index (clears non-NULL out).
+ * Strings last until any configuration mutation or final TLS release. O(1);
+ * no allocation, file access or parsing. Adding names appends; replacement
+ * keeps the index. Do not mutate configuration while consumers use it.
+ */
+SFUNC int fio_io2_tls_cert(const fio_io2_tls_s *tls,
+                           size_t index,
+                           fio_io2_tls_cert_s *out);
+
+/**
+ * Finds a configuration index: exact, single-label wildcard, then default
+ * (unnamed entry, else index 0). Empty/malformed names select the default.
+ * Returns SIZE_MAX for NULL tls / no configured certificates. Expected
+ * O(name_len). Does not allocate, mutate tls, access files or parse
+ * credentials. Use sni_find instead to retrieve prepared data from TLS-local
+ * storage.
+ */
+SFUNC size_t fio_io2_tls_cert_find(const fio_io2_tls_s *tls,
+                                   const char *server_name,
+                                   size_t name_len);
+
+/**
+ * Adds a certificate for `server_name` (SNI support). Same contract as the
+ * existing TLS API.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_cert_add(fio_io2_tls_s *,
+                                          const char *server_name,
+                                          const char *public_cert_file,
+                                          const char *private_key_file,
+                                          const char *pk_password);
+
+/**
+ * Adds an ALPN protocol callback. `on_selected` runs on the reactor thread
+ * after the handshake and normally calls `fio_io2_protocol_push(protocol, io)`.
+ * The TLS layer owns application selection, including its no-ALPN/default
+ * policy, and must arrange application attachment before delivering plaintext.
+ * The core neither interprets ALPN nor reserves an application slot.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_alpn_add(fio_io2_tls_s *tls,
+                                          const char *protocol_name,
+                                          void (*on_selected)(fio_io2_s *));
+
+/**
+ * Calls the registered ALPN callback synchronously on the reactor thread and
+ * returns 0. Returns -1 if `tls` or `protocol_name` is NULL, `name_length`
+ * exceeds 255, or the name is not registered.
+ */
+SFUNC int fio_io2_tls_alpn_select(fio_io2_tls_s *tls,
+                                  const char *protocol_name,
+                                  size_t name_length,
+                                  fio_io2_s *);
+
+/**
+ * Adds a trusted certificate; a NULL file adds the system trust store. Same
+ * contract as the existing TLS API.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_trust_add(fio_io2_tls_s *,
+                                           const char *public_cert_file);
+
+/**
+ * Sets the SNI host name a TLS client sends. Same contract as the existing TLS
+ * API.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_sni_set(fio_io2_tls_s *tls,
+                                         const char *hostname,
+                                         size_t hostname_len);
+
+/** Returns the number of certificates added with `fio_io2_tls_cert_add`. */
+SFUNC uintptr_t fio_io2_tls_cert_count(fio_io2_tls_s *tls);
+
+/** Returns the number of registered ALPN protocol names. */
+SFUNC uintptr_t fio_io2_tls_alpn_count(fio_io2_tls_s *tls);
+
+/** Returns the number of trust entries added with `fio_io2_tls_trust_add`. */
+SFUNC uintptr_t fio_io2_tls_trust_count(fio_io2_tls_s *tls);
+
+/** Named arguments for `fio_io2_tls_each`; also passed to each callback. */
+typedef struct fio_io2_tls_each_s {
+  /** The TLS settings to visit. */
+  fio_io2_tls_s *tls;
+  /** Opaque user data for the callbacks. */
+  void *udata;
+  /** Second opaque user data pointer. */
+  void *udata2;
+  /**
+   * Called for each certificate; strings are borrowed. Return 0 to continue, or
+   * nonzero to stop.
+   */
+  int (*each_cert)(struct fio_io2_tls_each_s *,
+                   const char *server_name,
+                   const char *public_cert_file,
+                   const char *private_key_file,
+                   const char *pk_password);
+  /**
+   * Called for each ALPN protocol; strings are borrowed. Return 0 to continue,
+   * or nonzero to stop.
+   */
+  int (*each_alpn)(struct fio_io2_tls_each_s *,
+                   const char *protocol_name,
+                   void (*on_selected)(fio_io2_s *));
+  /**
+   * Called for each trust entry; the string is borrowed. Return 0 to continue,
+   * or nonzero to stop.
+   */
+  int (*each_trust)(struct fio_io2_tls_each_s *, const char *public_cert_file);
+} fio_io2_tls_each_s;
+
+/**
+ * Visits certificates, ALPN protocols and trust entries, in that order.
+ * Callback arguments are borrowed for the call. Returns 0 on completion, or -1
+ * for a NULL `tls`, an interrupted visit or an incomplete trust configuration.
+ * Setup callbacks may populate TLS-local env/SNI storage; configuration entries
+ * must not be added/replaced during a visit. Earlier stored values remain owned
+ * by tls if a later callback stops the visit (there is no rollback).
+ */
+SFUNC int fio_io2_tls_each(fio_io2_tls_each_s);
+#define fio_io2_tls_each(tls_, ...)                                            \
+  fio_io2_tls_each(((fio_io2_tls_each_s){.tls = tls_, __VA_ARGS__}))
+
+/* *****************************************************************************
+Reactor settings
+***************************************************************************** */
+
+/**
+ * Reactor-wide settings. Zero fields passed to `fio_io2_settings` leave their
+ * current values unchanged. The limit macros provide the initial values and IO
+ * objects keep no private copies. These settings do not bound codec,
+ * environment, submitted-operation or task-queue allocations.
+ */
+typedef struct {
+  /** The default protocol layer for managing socket IO. */
+  fio_io2_protocol_s *sockets;
+  /** The default protocol layer for managing file IO. */
+  fio_io2_protocol_s *files;
+  /** The default protocol layer for TLS encryption (sockets). */
+  fio_io2_protocol_s *tls;
+  /** Maximum bytes per new read or materialized file block. */
+  size_t read_size;
+  /** Buffered-input high-water mark at one attachment. */
+  size_t input_max;
+  /** Pending-output high-water mark used to pace producers. */
+  size_t output_max;
+  /** Advisory queued-packet high-water mark, reserved for producer pacing. */
+  size_t packets_max;
+  /** Pending-output low-water mark for on_ready. */
+  size_t ready_limit;
+  /** Callback dispatch steps per reactor turn. */
+  size_t turn_budget;
+  /** Graceful close and reactor shutdown timeout, in milliseconds. */
+  size_t shutdown_timeout;
+  /** Maximum idle timeout, in milliseconds. */
+  uint32_t timeout_max;
+  /** Positive restart signal number, installed on the next reactor start. */
+  int restart_signal;
+} fio_io2_settings_s;
+
+/**
+ * Merges nonzero fields into the current settings and returns the result;
+ * `fio_io2_settings(0)` reads without changing anything. Returns an all-zero
+ * struct and changes nothing for invalid limits or a negative restart signal
+ * (success has a nonzero `read_size`).
+ *
+ * - Size thresholds and timeouts must be positive. `read_size` must not exceed
+ *   `input_max`, and `ready_limit` must be below `output_max`. A zero initial
+ *   `ready_limit` requests notification when output becomes empty. The initial
+ *   macro values undergo the same validation at startup.
+ * - Zero cannot clear the restart signal or a default protocol pointer, or
+ *   disable a timeout. The restart signal is recorded, not checked against the
+ *   operating system.
+ * - Updated limits apply to subsequent work and discard no queued data. Output
+ *   and packet thresholds pace producers; they are not hard bounds on queued
+ *   commands, allocation or file length. Running callbacks may cross the input
+ *   mark; codecs bound their expansion per window.
+ * - `timeout_max` and `shutdown_timeout` apply at the next idle review (an
+ *   active global shutdown deadline stays fixed), `turn_budget` at the next
+ *   turn and `restart_signal` at the next start. Default protocol pointers
+ *   apply to future IOs only; they are borrowed and must outlive their use.
+ *
+ * Call on the reactor thread or before start; workers defer an update task.
+ * Does not allocate, call back, block or take pointer ownership. O(1) and safe
+ * to retry. Settings are process-local.
+ */
+SFUNC fio_io2_settings_s fio_io2_settings(fio_io2_settings_s args);
+#define fio_io2_settings(...)                                                  \
+  fio_io2_settings((fio_io2_settings_s){__VA_ARGS__})
+
+/* *****************************************************************************
+IO Async Queue - Worker Threads for non-IO tasks
+***************************************************************************** */
+
+/** A worker queue for tasks that must not block the reactor thread. */
+struct fio_io2_async_s {
+  /**
+   * Queue currently receiving tasks; re-routed by the reactor on start and
+   * stop.
+   */
+  fio_queue_s *q;
+  /** Requested number of worker threads. */
+  uint32_t count;
+  /** The queue served by this object's worker threads. */
+  fio_queue_s queue;
+  /** Timers scheduled with `fio_io2_async_every`. */
+  fio_timer_queue_s timers;
+  /** Registration in the reactor's async queue list. */
+  FIO_LIST_NODE node;
+};
+
+/**
+ * Static initializer for an IO async queue; queues should use static storage.
+ */
+#define FIO_IO2_ASYN_INIT                                                      \
+  { 0 }
+
+/** Returns the task queue currently associated with the IO async queue. */
+FIO_IFUNC fio_queue_s *fio_io2_async_queue(fio_io2_async_s *q) {
+  return q->q; /* the reactor thread re-routes it on start / stop */
+}
+
+/**
+ * Attaches worker threads to an IO async queue. Call from the reactor thread.
+ *
+ * A `threads` value of 0 selects one thread. Negative values scale with the CPU
+ * count, as `fio_io2_workers` does. Positive values are capped at 4096.
+ */
+SFUNC void fio_io2_async_attach(fio_io2_async_s *q, int threads);
+
+/** Pushes a task onto an IO async queue (a `fio_queue_push` wrapper). */
+#define fio_io2_async(q_, ...)                                                 \
+  fio_queue_push(fio_io2_async_queue(q_), __VA_ARGS__)
+
+/**
+ * Schedules a timer task on the IO async queue, with the same arguments as
+ * `fio_timer_schedule`.
+ */
+SFUNC void fio_io2_async_every(fio_io2_async_s *q, fio_timer_schedule_args_s);
+#define fio_io2_async_every(async, ...)                                        \
+  fio_io2_async_every(async, (fio_timer_schedule_args_s){__VA_ARGS__})
+
+/* *****************************************************************************
+Callback examples (compile-time API checks, not a TLS implementation)
+***************************************************************************** */
+#if defined(FIO_IO2_DRAFT_EXAMPLES)
+/**
+ * Processes one illustrative record with a four-byte header and a four-byte
+ * tag. Real TLS authenticates and decrypts before exposing plaintext. With one
+ * full record in the source, forwarding may transfer the packet; with trailing
+ * records, it copies because unread bytes remain.
+ */
+FIO_SFUNC void fio_io2_example_data(fio_io2_event_s *event) {
+  if (event->payload.len < 16)
+    return;
+  fio_io2_write_args_s plaintext = event->payload;
+  plaintext.offset += 4;
+  plaintext.len = 8;
+  event->payload.offset += 16;
+  event->payload.len -= 16;
+  (void)event->deliver(event, plaintext);
+  /* The source may have transferred; do not access its bytes again. */
+}
+
+/**
+ * Forwards a whole output window without taking ownership of its borrowed fd. A
+ * file-aware definition sets `accepts_files`; otherwise it receives memory.
+ */
+FIO_SFUNC void fio_io2_example_write(fio_io2_event_s *event) {
+  if (!event->payload.len)
+    return;
+  fio_io2_write_args_s bytes = event->payload;
+  event->payload.offset += bytes.len;
+  event->payload.len = 0;
+  (void)event->write(event, bytes);
+}
+
+/** Stack memory is copied before dispatch returns. */
+FIO_SFUNC void fio_io2_example_header(fio_io2_event_s *event) {
+  char header[] = "example\r\n";
+  (void)event->write(
+      event,
+      (fio_io2_write_args_s){.buf = header, .len = sizeof(header) - 1});
+}
+
+/** Memory consumption may advance buf instead of offset. */
+FIO_SFUNC void fio_io2_example_memory(fio_io2_event_s *event) {
+  if (!event->payload.len)
+    return;
+  fio_io2_write_args_s bytes = event->payload;
+  event->payload.buf += (size_t)bytes.len;
+  event->payload.len = 0;
+  (void)event->write(event, bytes);
+}
+
+/** Attachment data is assigned through the event, not an external setter. */
+FIO_SFUNC void fio_io2_example_attach(fio_io2_event_s *event) {
+  /* Replace NULL with a checked protocol-specific allocation. */
+  event->pdata = NULL;
+}
+#endif /* FIO_IO2_DRAFT_EXAMPLES */
+
+#endif /* FIO_IO2_DRAFT_021 */
+/* ************************************************************************* */
+/* IO2 draft internals. Load 020 io api.h and queue/socket/URL,
+ * string/keystr and IMAP prerequisites first. No production inclusion wiring,
+ * reactor/backend implementation or performance claim is provided here. */
+/* *****************************************************************************
+
+
+
+
+              IO2 API - Completion Event Design Draft
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_IO2_DRAFT_021) && defined(H___FIO_IO2_DRAFT_021___H) &&        \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
+    !defined(H___FIO_IO2_STATE___H) && !defined(FIO___RECURSIVE_INCLUDE)
+#define H___FIO_IO2_STATE___H
+
+/* *****************************************************************************
+`env` structure and helpers
+***************************************************************************** */
+
+/** An environment entry. Both udata and on_close are NULL in an empty slot. */
+typedef struct {
+  fio_keystr_s name;
+  intptr_t type;
+  void *udata;
+  void (*on_close)(void *);
+} fio___io2_env_entry_s;
+
+#define FIO___IO2_ENV_HASH(o)                                                  \
+  fio_risky_num(fio_keystr_hash((o)->name), (uint64_t)(o)->type)
+#define FIO___IO2_ENV_CMP(a, b)                                                \
+  ((a)->type == (b)->type && fio_keystr_is_eq((a)->name, (b)->name))
+#define FIO___IO2_ENV_VALID(o) ((o)->udata || (o)->on_close)
+FIO_TYPEDEF_IMAP_ARRAY(fio___io2_env_map,
+                       fio___io2_env_entry_s,
+                       uint32_t,
+                       FIO___IO2_ENV_HASH,
+                       FIO___IO2_ENV_CMP,
+                       FIO___IO2_ENV_VALID)
+#undef FIO___IO2_ENV_VALID
+#undef FIO___IO2_ENV_CMP
+#undef FIO___IO2_ENV_HASH
+
+/** Environment storage used by connections and the reactor. Initialize to zero.
+ */
+typedef struct {
+  fio_lock_i lock;
+  fio___io2_env_map_s map;
+} fio___io2_env_s;
+
+/** Releases a detached entry outside the environment lock. */
+FIO_IFUNC void fio___io2_env_entry_destroy(fio___io2_env_entry_s *entry) {
+  fio___io2_env_entry_s old = *entry;
+  *entry = (fio___io2_env_entry_s){0};
+  fio_keystr_destroy(&old.name, FIO_STRING_FREE_KEY);
+  if (old.on_close)
+    old.on_close(old.udata);
+}
+
+/** Returns borrowed data. The caller synchronizes its use with removal. */
+FIO_IFUNC void *fio___io2_env_get(fio___io2_env_s *env,
+                                  fio_io2_env_get_args_s args) {
+  fio___io2_env_entry_s key = {
+      .name = fio_keystr_tmp(args.name.buf, (uint32_t)args.name.len),
+      .type = args.type,
+      .udata = env};
+  fio_lock(&env->lock);
+  fio___io2_env_entry_s *entry = fio___io2_env_map_get(&env->map, key);
+  void *udata = entry ? entry->udata : NULL;
+  fio_unlock(&env->lock);
+  return udata;
+}
+
+/** Stores an owned value, ignoring entries with neither data nor a callback.
+ * Replacement invokes the old callback after unlocking. Allocation failure
+ * releases the supplied value and follows the fatal allocation policy. */
+FIO_IFUNC void fio___io2_env_set(fio___io2_env_s *env,
+                                 fio_io2_env_set_args_s args) {
+  if (!args.udata && !args.on_close)
+    return;
+  fio___io2_env_entry_s entry = {
+      .name = fio_keystr_tmp(args.name.buf, (uint32_t)args.name.len),
+      .type = args.type,
+      .udata = args.udata,
+      .on_close = args.on_close};
+  fio___io2_env_entry_s old = {0};
+  fio_lock(&env->lock);
+  uint32_t count = env->map.count;
+  fio___io2_env_entry_s *found = fio___io2_env_map_set(&env->map, entry, 0);
+  if (!found)
+    goto no_mem;
+  if (env->map.count != count) {
+    /* Only a new entry needs a persistent name. The temporary key never
+     * escapes the lock; initialization preserves its hash and equality. */
+    fio_keystr_s name =
+        fio_keystr_init(FIO_STR_INFO3(args.name.buf,
+                                      args.name.len,
+                                      args.const_name ? FIO_KEYSTR_CONST : 0),
+                        FIO_STRING_ALLOC_KEY);
+    if (args.name.len && !fio_keystr_buf(&name).len) {
+      /* The key helper logs but returns empty on allocation failure. Extract
+       * with the still-valid temporary key BEFORE replacing its hash identity.
+       */
+      (void)fio___io2_env_map_extract(&env->map, entry);
+      found = NULL;
+      goto no_mem;
+    }
+    found->name = name;
+  } else {
+    /* Keep the existing name and its ownership; replace only the value. */
+    old.udata = found->udata;
+    old.on_close = found->on_close;
+    found->udata = args.udata;
+    found->on_close = args.on_close;
+  }
+  fio_unlock(&env->lock);
+  fio___io2_env_entry_destroy(&old);
+  return;
+
+no_mem:
+  fio_unlock(&env->lock);
+  if (args.on_close)
+    args.on_close(args.udata);
+  FIO_ASSERT_ALLOC(found);
+}
+
+/** Detaches an entry into out without invoking its callback. Returns 0 on
+ * success, or -1 with a zeroed out value when the entry is absent. */
+FIO_IFUNC int fio___io2_env_take(fio___io2_env_s *env,
+                                 fio_io2_env_get_args_s args,
+                                 fio___io2_env_entry_s *out) {
+  fio___io2_env_entry_s key = {
+      .name = fio_keystr_tmp(args.name.buf, (uint32_t)args.name.len),
+      .type = args.type,
+      .udata = env};
+  fio_lock(&env->lock);
+  *out = fio___io2_env_map_extract(&env->map, key);
+  fio_unlock(&env->lock);
+  return fio___io2_env_map_is_valid(out) ? 0 : -1;
+}
+
+/** Removes an entry without invoking its callback or freeing its data. */
+FIO_IFUNC int fio___io2_env_unset(fio___io2_env_s *env,
+                                  fio_io2_env_get_args_s args) {
+  fio___io2_env_entry_s old;
+  int result = fio___io2_env_take(env, args, &old);
+  old.on_close = NULL;
+  fio___io2_env_entry_destroy(&old);
+  return result;
+}
+
+/** Removes an entry and invokes its callback outside the lock. */
+FIO_IFUNC int fio___io2_env_remove(fio___io2_env_s *env,
+                                   fio_io2_env_get_args_s args) {
+  fio___io2_env_entry_s old;
+  int result = fio___io2_env_take(env, args, &old);
+  fio___io2_env_entry_destroy(&old);
+  return result;
+}
+
+/** Destroys the environment after all other users have stopped accessing it.
+ * Cleanup callbacks may add entries; keep draining until none remain. */
+FIO_IFUNC void fio___io2_env_destroy(fio___io2_env_s *env) {
+  for (;;) {
+    fio_lock(&env->lock);
+    fio___io2_env_map_s map = env->map;
+    env->map = (fio___io2_env_map_s){0};
+    fio_unlock(&env->lock);
+    if (!map.ary)
+      return;
+    for (uint32_t i = 0; i < map.w; ++i) {
+      if (fio___io2_env_map_is_valid(map.ary + i))
+        fio___io2_env_entry_destroy(map.ary + i);
+    }
+    fio___io2_env_map_destroy(&map);
+  }
+}
+
+/* *****************************************************************************
+Incoming and outgoing packets
+***************************************************************************** */
+
+/**
+ * Owns one memory buffer or file range. Packets have one routing owner; extra
+ * lifetime references do not share slices. Output packets form an ordered
+ * list; an input packet is unlinked.
+ *
+ * Embedded bytes are accessed through packet->buf. Keeping this last flexible
+ * member outside the union makes the header valid ISO C.
+ * Allocate the header with the library allocator, checking capacity against
+ * SIZE_MAX - sizeof(*packet). Destruction releases external data or the file
+ * through its callback, then frees the packet. Embedded bytes need no separate
+ * cleanup.
+ */
+typedef struct fio___io2_packet_s {
+  /** Links queued output. Both pointers are NULL for input packets. */
+  FIO_LIST_NODE node;
+  /** Additional lifetime references; zero means one owner remains. These do
+   * not permit shared slices or membership in more than one output list. */
+  volatile size_t ref;
+  /** Offset of the first unread or unsent byte. */
+  size_t offset;
+  /** Number of bytes remaining from offset. */
+  size_t length;
+  /** Selects the storage owned by this packet. */
+  enum {
+    /** Bytes are allocated in the packet's trailing buf array. */
+    FIO___IO2_PACKET_DATA = 0,
+    /** The packet owns a separately allocated or static buffer. */
+    FIO___IO2_PACKET_EXTERNAL = 1,
+    /** The packet describes a file range. */
+    FIO___IO2_PACKET_FILE = 2
+  } etype;
+  union {
+    struct {
+      /** Capacity of the embedded buffer; offset + length must fit. */
+      size_t capa;
+    } data;
+    struct {
+      /** Releases buf when the packet is destroyed; NULL leaves it untouched.
+       */
+      void (*dealloc)(void *);
+      /** Original buffer address, passed unchanged to dealloc. */
+      char *buf;
+    } external;
+    struct {
+      /** Closes fd when the packet is destroyed; NULL leaves it open. */
+      void (*close)(intptr_t);
+      /** File descriptor for this range. Zero is a valid descriptor. */
+      intptr_t fd;
+    } file;
+  };
+  /** Access to the FIO___IO2_PACKET_DATA buffer (must be last). */
+  char buf[];
+} fio___io2_packet_s;
+
+FIO_LEAK_COUNTER_DEF(fio___io2_packet_s)
+
+/** Allocates an empty packet with one owned reference. Zero capacity also
+ * supports a later external/file tag. Returns NULL on overflow or allocation
+ * failure without callbacks. Embedded bytes are initially unspecified. */
+FIO_SFUNC fio___io2_packet_s *fio___io2_packet_new(size_t capacity) {
+  fio___io2_packet_s *r = NULL;
+  if (capacity > SIZE_MAX - sizeof(*r))
+    return NULL;
+  size_t size = sizeof(*r) + capacity;
+  if (capacity) {
+    size_t rounded = FIO_MEM_ALLOC_SIZE(size);
+    if (rounded < size)
+      return NULL;
+    size = rounded;
+  }
+  r = FIO_MEM_REALLOC_(NULL, 0, size, 0);
+  if (!r)
+    return NULL;
+  *r = (fio___io2_packet_s){.data = {.capa = size - sizeof(*r)}};
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___io2_packet_s);
+  return r;
+}
+
+/** Retains a live packet, or returns NULL for NULL. Does not grant another
+ * queue membership or independent mutable view. Thread-safe; O(1). */
+FIO_IFUNC fio___io2_packet_s *fio___io2_packet_dup(fio___io2_packet_s *p) {
+  if (p)
+    fio_atomic_add_fetch(&p->ref, 1);
+  return p;
+}
+
+/** Consumes a packet reference on the reactor thread. Returns 0 after final
+ * resource cleanup, or -1 for NULL/a retained packet. Final release unlinks
+ * queued output; unlinked input has NULL links. O(1), excluding cleanup. */
+FIO_SFUNC int fio___io2_packet_free(fio___io2_packet_s *p) {
+  if (!p || fio_atomic_add(&p->ref, (~(size_t)0)))
+    return -1;
+  if (p->node.next)
+    FIO_LIST_REMOVE(&p->node);
+  switch (p->etype) {
+  case FIO___IO2_PACKET_DATA: break;
+  case FIO___IO2_PACKET_EXTERNAL:
+    if (p->external.dealloc)
+      p->external.dealloc(p->external.buf);
+    break;
+  case FIO___IO2_PACKET_FILE:
+    if (p->file.close)
+      p->file.close(p->file.fd);
+    break;
+  }
+  FIO_MEM_FREE_(p,
+                sizeof(*p) +
+                    (p->etype == FIO___IO2_PACKET_DATA ? p->data.capa : 0));
+  FIO_LEAK_COUNTER_ON_FREE(fio___io2_packet_s);
+  return 0;
+}
+
+/* *****************************************************************************
+The IO Object
+***************************************************************************** */
+
+/**
+ * Reactor-owned connection state. Protocol pointers occupy a separate array
+ * because they change less often than the layer backlogs. Traversal always
+ * checks the array bound; a full stack needs no extra NULL sentinel.
+ *
+ * Protocol 0 owns transport state through pdata. Each layer holds one
+ * contiguous input packet and an ordered output list. Incoming bytes merge
+ * into the input backlog rather than creating an input list. Packets contain
+ * data and ownership information, not transport closure state.
+ *
+ * The IO belongs only to the top protocol's activity list. That protocol owns
+ * timeout policy and enumeration for the connection. Allocate IO storage with
+ * FIO_MEM_REALLOC_ALIGNED_ and FIO_ALIGNOF(fio_io2_s), and release it with
+ * FIO_MEM_FREE_ALIGNED_. Alignment is advisory on unsupported compilers, not a
+ * synchronization mechanism.
+ */
+struct fio_io2_s {
+  /** Attached definitions, bottom to top; unused slots are NULL. */
+  fio_io2_protocol_s *protocols[FIO_IO2_LAYERS_MAX];
+  struct {
+    /** Attachment data; the live event holds its current value in a callback.
+     */
+    void *pdata;
+    /** Contiguous input backlog, or NULL when no bytes are waiting. */
+    fio___io2_packet_s *in;
+    /** Ordered output packets, with an initialized list sentinel. */
+    FIO_LIST_HEAD out;
+  } layers[FIO_IO2_LAYERS_MAX];
+  /** Membership in the top protocol's IO list, ordered by activity. */
+  FIO_LIST_NODE node;
+  /** Last useful activity, in monotonic milliseconds. */
+  int64_t active;
+  /** Application hint. The IO has no independent destructor for this pointer.
+   */
+  void *udata;
+  /** Output bytes waiting in core queues, excluding submitted operations. */
+  size_t pending;
+  /** Connection state and pending reactor work. */
+  uint32_t flags;
+  /** Membership in the reactor's deferred-dispatch list. */
+  FIO_LIST_NODE runnable;
+  /** Additional lifetime references; zero means one owner remains. Updated
+   * through atomic helpers; final release is performed on the reactor. */
+  FIO_ALIGN(FIO_CACHE_LINE_SIZE) volatile size_t ref;
+  /** Separately locked environment, available until final destruction. */
+  fio___io2_env_s env;
+};
+
+FIO_LEAK_COUNTER_DEF(fio_io2_s)
+
+/** Allocates initialized IO storage with one owned reference and no started
+ * attachments. Returns NULL on allocation failure without callbacks. */
+FIO_SFUNC fio_io2_s *fio___io2_new(void) {
+  fio_io2_s *r = NULL;
+  FIO_MEM_REALLOC_ALIGNED_(r, 0, sizeof(*r), 0, FIO_ALIGNOF(fio_io2_s));
+  if (!r)
+    return NULL;
+  *r = (fio_io2_s){0};
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_io2_s);
+  r->node = FIO_LIST_INIT(r->node);
+  r->runnable = FIO_LIST_INIT(r->runnable);
+  for (size_t i = 0; i < FIO_IO2_LAYERS_MAX; ++i)
+    r->layers[i].out = FIO_LIST_INIT(r->layers[i].out);
+  return r;
+}
+
+/** Retains a live IO, or returns NULL for NULL. Thread-safe; O(1). Final
+ * cleanup callbacks must not duplicate or resurrect the IO. */
+FIO_IFUNC fio_io2_s *fio___io2_dup(fio_io2_s *io) {
+  if (io)
+    fio_atomic_add_fetch(&io->ref, 1);
+  return io;
+}
+
+/* *****************************************************************************
+Dispatch invariants (the dispatcher is not implemented in this draft)
+***************************************************************************** */
+/* A callback borrows one source packet. Whole-source forwarding may transfer
+ * ownership; partial forwarding copies. Clear transferred ownership before
+ * invoking a child callback. No independently retained slices share a buffer.
+ *
+ * Move live input out of the layer backlog before invoking on_data. Nested
+ * arrivals must not relocate that callback's bytes; merge any surviving source
+ * before newer arrivals on return. Busy attachments cannot be re-entered.
+ * Dispatcher-local bookkeeping belongs with the implementation, not a
+ * speculative shared callback representation here.
+ */
+
+/** Terminal close has stopped new work; final destruction still awaits. */
+#define FIO___IO2_TERMINAL ((uint32_t)32U)
+/** Structural attachment is running. Complete every supplied on_attach and
+ * save pdata before applying a close request or dispatching data. See the
+ * fio_io2_close_now attachment exception for state and cancellation timing. */
+#define FIO___IO2_ATTACHING ((uint32_t)64U)
+/** Reactor-thread close_now latches this during attachment. Worker calls
+ * queue an abort command; they never inspect or mutate these flags. */
+#define FIO___IO2_ABORT_PENDING ((uint32_t)128U)
+/** A coalesced low-water notification is waiting for the top protocol. */
+#define FIO___IO2_READY_PENDING ((uint32_t)256U)
+/* Bits 9-31 hold the graceful-close cursor: zero means no layer remains;
+ * otherwise cursor - 1 identifies the next layer to finish. Decrement before
+ * calling on_finish so it runs once. Output at and above that layer still
+ * drains before its callback runs. */
+#define FIO___IO2_FINISH_SHIFT 9U
+#if FIO_IO2_LAYERS_MAX > 0x7FFFFF
+#error "IO2 layer count does not fit the graceful-close cursor"
+#endif
+
+/*
+ * Protocol changes are FIFO commands, not per-connection pending state. They
+ * execute outside callbacks. Replacement preserves unread input, detaches the
+ * old top, and attaches the new one. It neither finishes the old protocol nor
+ * waits for output already owned by lower layers.
+ *
+ * Attachment accepts every supplied layer as one structural operation, then
+ * calls on_attach bottom-up with each layer's initial pdata. NULL callbacks
+ * preserve that data. A close request cannot refuse or skip later attachments:
+ * save every callback's pdata and finish the whole stack before invalidation,
+ * unlinking or release of the reactor's open reference. No data dispatch runs
+ * during attachment. TLS owns application selection and plaintext ordering;
+ * the reactor has no pending-application state.
+ *
+ * Terminal close stops submissions and asks protocol 0 to cancel outstanding
+ * operations. After callbacks and any structural attachment complete, it
+ * releases the reactor's open reference.
+ * Each queued task or submitted operation retains its own IO reference and
+ * owns any packet it uses until actual completion. Cancellation does not make
+ * referenced storage safe to free. Backend operation records belong to their
+ * transport, not to this generic IO representation.
+ *
+ * Transport closure makes is_open false; retained queued work can still drain
+ * input using fresh stack-local callback events. This differs from an abort,
+ * which stops dispatch and discards pending data.
+ * The default socket protocol closes on peer EOF instead of keeping the write
+ * side open. Already queued input remains eligible to drain, unlike the input
+ * stop requested explicitly by fio_io2_close.
+ *
+ * The last reference schedules final destruction on the reactor. It calls
+ * on_close top-down, then destroys the environment, backlogs and IO storage.
+ * on_detach is a protocol-replacement event, never a destruction callback.
+ * Final callbacks cannot retain or resurrect the connection.
+ */
+
+/* *****************************************************************************
+Reactor core state
+***************************************************************************** */
+/** Reactor state. Only stop, the task queue and environments are shared with
+ * worker threads; connection dispatch runs on one reactor thread. */
+static struct {
+  FIO_ALIGN(FIO_CACHE_LINE_SIZE) fio_queue_s queue;
+  fio_timer_queue_s timer;
+  FIO_LIST_NODE runnable;
+  FIO_LIST_NODE protocols;
+  FIO_LIST_NODE listeners;
+  FIO_LIST_NODE async;
+  FIO_LIST_NODE pids;
+  int64_t monotonic;
+  int64_t wall_clock;
+  /** Dispatch steps remaining in the current turn. */
+  size_t turn_remaining;
+  /** Current reactor-wide settings. */
+  fio_io2_settings_s settings;
+  /** Reactor shutdown deadline for switching graceful close to abort. */
+  int64_t shutdown_deadline;
+  uintptr_t io_thread;
+  fio_thread_pid_t root_pid;
+  fio_thread_pid_t pid;
+  uint32_t flags;
+  uint32_t to_spawn;
+  uint16_t workers;
+  uint8_t is_worker;
+  /** Prevents recursive peer queries. */
+  uint8_t querying;
+  /** Access through the atomic helpers. */
+  volatile uint8_t stop;
+  FIO_ALIGN(FIO_CACHE_LINE_SIZE) fio___io2_env_s env;
+} FIO___IO2 = {
+    .queue = FIO_QUEUE_STATIC_INIT(FIO___IO2.queue),
+    .timer = FIO_TIMER_QUEUE_INIT,
+    .runnable = FIO_LIST_INIT(FIO___IO2.runnable),
+    .protocols = FIO_LIST_INIT(FIO___IO2.protocols),
+    .listeners = FIO_LIST_INIT(FIO___IO2.listeners),
+    .async = FIO_LIST_INIT(FIO___IO2.async),
+    .pids = FIO_LIST_INIT(FIO___IO2.pids),
+    .settings =
+        {
+            .read_size = FIO_IO2_READ_SIZE,
+            .input_max = FIO_IO2_INPUT_MAX,
+            .output_max = FIO_IO2_OUTPUT_MAX,
+            .packets_max = FIO_IO2_PACKETS_MAX,
+            .ready_limit = FIO_IO2_READY_LIMIT,
+            .turn_budget = FIO_IO2_TURN_BUDGET,
+            .shutdown_timeout = FIO_IO2_SHUTDOWN_TIMEOUT,
+            .timeout_max = FIO_IO2_TIMEOUT_MAX,
+        },
+    .stop = 1,
+};
+
+/** Consumes an IO reference on the reactor, outside active callbacks. Returns
+ * 0 after final destruction, or -1 for NULL/a retained IO. The reactor keeps
+ * its open reference until terminal close and completes all supplied
+ * attachments before releasing it. Membership removed earlier must have been
+ * reset to self-links.
+ * Cleanup runs top-down, then env, packets and aligned storage. */
+FIO_SFUNC int fio___io2_free(fio_io2_s *io) {
+  if (!io || fio_atomic_add(&io->ref, (~(size_t)0)))
+    return -1;
+  FIO_LIST_REMOVE_RESET(&io->node);
+  FIO_LIST_REMOVE_RESET(&io->runnable);
+  for (size_t i = FIO_IO2_LAYERS_MAX; i--;) {
+    fio_io2_protocol_s *p = io->protocols[i];
+    if (!p)
+      continue;
+    if (p->reserved.protocols.next && p->reserved.ios.next &&
+        FIO_LIST_IS_EMPTY(&p->reserved.ios))
+      FIO_LIST_REMOVE_RESET(&p->reserved.protocols);
+    break;
+  }
+  for (size_t i = FIO_IO2_LAYERS_MAX; i--;) {
+    if (!io->protocols[i])
+      continue;
+    fio_io2_event_s event = {
+        .io = io,
+        .protocol = io->protocols[i],
+        .pdata = io->layers[i].pdata,
+        .udata = io->udata,
+        .payload = {.fd = -1},
+        .state =
+            io->flags & (FIO_IO2_STATE_CLOSING | FIO_IO2_STATE_READ_CLOSED |
+                         FIO_IO2_STATE_WRITE_CLOSED | FIO_IO2_STATE_SUSPENDED)};
+    if (io->protocols[i]->on_close)
+      io->protocols[i]->on_close(&event);
+    io->layers[i].pdata = NULL;
+    io->protocols[i] = NULL;
+  }
+  fio___io2_env_destroy(&io->env);
+  for (size_t i = FIO_IO2_LAYERS_MAX; i--;) {
+    fio___io2_packet_free(io->layers[i].in);
+    while (!FIO_LIST_IS_EMPTY(&io->layers[i].out)) {
+      fio___io2_packet_s *p;
+      FIO_LIST_POP(fio___io2_packet_s, node, p, &io->layers[i].out);
+      /* A retained packet must no longer refer to this IO's list sentinel. */
+      p->node = (fio_list_node_s){0};
+      fio___io2_packet_free(p);
+    }
+  }
+  FIO_MEM_FREE_ALIGNED_(io, sizeof(*io));
+  FIO_LEAK_COUNTER_ON_FREE(fio_io2_s);
+  return 0;
+}
+
+FIO_SFUNC void fio___io2_free_task(void *io, void *null_) {
+  fio___io2_free(io);
+  (void)null_;
+}
+
+/** Consumes an owned reference through the reactor's FIFO/wakeup path. */
+SFUNC void fio_io2_free(fio_io2_s *io) {
+  if (io)
+    fio_io2_defer(fio___io2_free_task, io, NULL);
+}
+
+SFUNC fio_io2_s *fio_io2_dup(fio_io2_s *io) { return fio___io2_dup(io); }
+
+/* *****************************************************************************
+Attachment
+***************************************************************************** */
+
+/* The data dispatcher supplies these routes. While ATTACHING is set they
+ * enqueue accepted work without invoking data callbacks. Their implementation,
+ * like the public close_now/defer paths, is not implemented yet. These are
+ * blocking dependencies for linking attachment, not fallback dispatchers. */
+FIO_SFUNC int fio___io2_event_deliver(fio_io2_event_s *event,
+                                      fio_io2_write_args_s args);
+FIO_SFUNC int fio___io2_event_write(fio_io2_event_s *event,
+                                    fio_io2_write_args_s args);
+
+/** Checks the whole array without callbacks, allocation or shared mutation. */
+FIO_SFUNC int fio___io2_attach_validate(const fio_io2_attach_args_s *args) {
+  int ended = 0;
+  if (!args->protocols[0].protocol)
+    return -1;
+  for (size_t i = 0; i < FIO_IO2_LAYERS_MAX; ++i) {
+    if (!args->protocols[i].protocol) {
+      ended = 1;
+      if (args->protocols[i].pdata)
+        return -1;
+      continue;
+    }
+    if (ended)
+      return -1;
+    for (size_t j = 0; j < i; ++j)
+      if (args->protocols[i].protocol == args->protocols[j].protocol)
+        return -1;
+  }
+  return 0;
+}
+
+/** Consumes rejected entries on the reactor even if the stack is malformed.
+ * Each entry owns its own data; repeated definitions still get one close per
+ * entry. No IO allocation is needed for failure cleanup. */
+FIO_SFUNC void fio___io2_attach_reject(fio_io2_attach_args_s args) {
+  for (size_t i = FIO_IO2_LAYERS_MAX; i--;) {
+    fio_io2_protocol_s *p = args.protocols[i].protocol;
+    if (!p || !p->on_close)
+      continue;
+    fio_io2_event_s event = {.protocol = p,
+                            .pdata = args.protocols[i].pdata,
+                            .udata = args.udata,
+                            .payload = {.fd = -1}};
+    p->on_close(&event);
+  }
+}
+
+int fio_io2_attach_unsafe___(void); /* IDE Marker */
+/** Accepts a stack as one structural operation on the reactor thread. A
+ * temporary reference survives callbacks and close_now's open-ref release;
+ * its queued release preserves a borrowed result after an attachment abort. */
+SFUNC fio_io2_s *fio_io2_attach_unsafe FIO_NOOP(fio_io2_attach_args_s args) {
+  if (fio___io2_attach_validate(&args)) {
+    fio___io2_attach_reject(args);
+    return NULL;
+  }
+  fio_io2_s *io = fio___io2_new();
+  if (!io) {
+    fio___io2_attach_reject(args);
+    return NULL;
+  }
+  size_t count = 0;
+  while (count < FIO_IO2_LAYERS_MAX && args.protocols[count].protocol)
+    ++count;
+  io->udata = args.udata;
+  io->active = fio_io2_last_tick();
+  io->flags = FIO___IO2_ATTACHING;
+  for (size_t i = 0; i < count; ++i) {
+    fio_io2_protocol_s *p = args.protocols[i].protocol;
+    io->protocols[i] = p;
+    io->layers[i].pdata = args.protocols[i].pdata;
+    if (!p->reserved.ios.next) {
+      p->reserved.ios = FIO_LIST_INIT(p->reserved.ios);
+      p->reserved.protocols = FIO_LIST_INIT(p->reserved.protocols);
+    }
+  }
+  fio_io2_protocol_s *top = io->protocols[count - 1];
+  if (top->reserved.protocols.next == &top->reserved.protocols)
+    FIO_LIST_PUSH(&FIO___IO2.protocols, &top->reserved.protocols);
+  FIO_LIST_PUSH(&top->reserved.ios, &io->node);
+  fio___io2_dup(io);
+  for (size_t i = 0; i < count; ++i) {
+    fio_io2_protocol_s *p = io->protocols[i];
+    if (!p->on_attach)
+      continue;
+    fio_io2_event_s event = {
+        .io = io,
+        .protocol = p,
+        .pdata = io->layers[i].pdata,
+        .udata = io->udata,
+        .payload = {.fd = -1},
+        .deliver = fio___io2_event_deliver,
+        .write = fio___io2_event_write,
+        .state =
+            io->flags & (FIO_IO2_STATE_CLOSING | FIO_IO2_STATE_READ_CLOSED |
+                         FIO_IO2_STATE_WRITE_CLOSED | FIO_IO2_STATE_SUSPENDED)};
+    p->on_attach(&event);
+    io->layers[i].pdata = event.pdata;
+  }
+  uint32_t abort_pending = io->flags & FIO___IO2_ABORT_PENDING;
+  io->flags &= ~(FIO___IO2_ATTACHING | FIO___IO2_ABORT_PENDING);
+  if (abort_pending) {
+    fio_io2_close_now(io);
+    fio_io2_free(io);
+  } else {
+    fio___io2_free(io); /* the reactor still owns its open reference */
+  }
+  return io;
+}
+
+/** Owns the copied arguments until synchronous attach or rejection completes.
+ * Reactor stop/fork handling must execute owned tasks once, never drop them or
+ * replay them in both parent and child. */
+FIO_SFUNC void fio___io2_attach_task(void *args_, void *null_) {
+  fio_io2_attach_args_s *args = (fio_io2_attach_args_s *)args_;
+  (void)(fio_io2_attach_unsafe)(*args);
+  FIO_MEM_FREE_(args, sizeof(*args));
+  (void)null_;
+}
+
+int fio_io2_attach___(void); /* IDE Marker */
+/** Validation reads only the submitted value. Even invalid submissions queue
+ * their owned arguments so no protocol cleanup runs on a submitting worker. */
+SFUNC int fio_io2_attach FIO_NOOP(fio_io2_attach_args_s args) {
+  int status = fio___io2_attach_validate(&args);
+  fio_io2_attach_args_s *copy = FIO_MEM_REALLOC_(NULL, 0, sizeof(*copy), 0);
+  FIO_ASSERT_ALLOC(copy);
+  *copy = args;
+  fio_io2_defer(fio___io2_attach_task, copy, NULL);
+  return status;
+}
+
+/* Native reactor/start/stop/fork and global-env exit cleanup remain
+ * unimplemented. */
+
+/* *****************************************************************************
+Runtime settings (reactor thread only)
+***************************************************************************** */
+
+/** Validates a complete candidate before any runtime setting changes. */
+FIO_IFUNC int fio___io2_settings_validate(const fio_io2_settings_s *s) {
+  return (!s->read_size || !s->input_max || !s->output_max || !s->packets_max ||
+          !s->timeout_max || !s->shutdown_timeout || !s->turn_budget ||
+          s->restart_signal < 0 || s->read_size > s->input_max ||
+          s->ready_limit >= s->output_max)
+             ? -1
+             : 0;
+}
+
+SFUNC fio_io2_settings_s fio_io2_settings FIO_NOOP(fio_io2_settings_s args) {
+  fio_io2_settings_s next = FIO___IO2.settings;
+#define FIO___IO2_SETTING_MERGE(field)                                         \
+  if (args.field)                                                              \
+  next.field = args.field
+  FIO___IO2_SETTING_MERGE(sockets);
+  FIO___IO2_SETTING_MERGE(files);
+  FIO___IO2_SETTING_MERGE(tls);
+  FIO___IO2_SETTING_MERGE(read_size);
+  FIO___IO2_SETTING_MERGE(input_max);
+  FIO___IO2_SETTING_MERGE(output_max);
+  FIO___IO2_SETTING_MERGE(packets_max);
+  FIO___IO2_SETTING_MERGE(ready_limit);
+  FIO___IO2_SETTING_MERGE(turn_budget);
+  FIO___IO2_SETTING_MERGE(timeout_max);
+  FIO___IO2_SETTING_MERGE(shutdown_timeout);
+  FIO___IO2_SETTING_MERGE(restart_signal);
+#undef FIO___IO2_SETTING_MERGE
+  if (fio___io2_settings_validate(&next))
+    return (fio_io2_settings_s){0};
+  FIO___IO2.settings = next;
+  return next;
+}
+
+/* *****************************************************************************
+Clock updates
+***************************************************************************** */
+
+FIO_IFUNC void fio___io2_tick(void *ignr_, void *ignr2_) {
+  FIO___IO2.monotonic = fio_time_milli();
+  FIO___IO2.wall_clock = fio_time2milli(fio_time_real());
+  (void)ignr_, (void)ignr2_;
+}
+
+/* *****************************************************************************
+Reactor core startup state
+***************************************************************************** */
+
+FIO_IFUNC void fio___io2_init(void) {
+  FIO___IO2.root_pid = FIO___IO2.pid = fio_thread_getpid();
+  fio___io2_tick(NULL, NULL);
+}
+
+FIO_CONSTRUCTOR(fio___io2_initialize) {
+  FIO_ASSERT(!fio___io2_settings_validate(&FIO___IO2.settings),
+             "Invalid IO2 default settings");
+  fio___io2_init();
+}
+
+/* *****************************************************************************
+`env` public API
+***************************************************************************** */
+
+int fio_io2_env_get___(void); /* IDE Mark */
+/** Returns borrowed named data from the IO, or the global environment for NULL.
+ */
+SFUNC void *fio_io2_env_get FIO_NOOP(fio_io2_s *io, fio_io2_env_get_args_s a) {
+  fio___io2_env_s *env = &FIO___IO2.env;
+  if (io)
+    env = &io->env;
+  return fio___io2_env_get(env, a);
+}
+
+int fio_io2_env_set___(void); /* IDE Mark */
+/** Stores owned named data on the IO, or in the global environment for NULL. */
+SFUNC void fio_io2_env_set FIO_NOOP(fio_io2_s *io, fio_io2_env_set_args_s a) {
+  fio___io2_env_s *env = &FIO___IO2.env;
+  if (io)
+    env = &io->env;
+  fio___io2_env_set(env, a);
+}
+
+int fio_io2_env_unset___(void); /* IDE Mark */
+/** Removes named data without calling on_close. Returns 0 on success, -1 if
+ * absent. A NULL IO selects the global environment. */
+SFUNC int fio_io2_env_unset FIO_NOOP(fio_io2_s *io, fio_io2_env_get_args_s a) {
+  fio___io2_env_s *env = &FIO___IO2.env;
+  if (io)
+    env = &io->env;
+  return fio___io2_env_unset(env, a);
+}
+
+int fio_io2_env_remove___(void); /* IDE Mark */
+/** Removes named data and calls on_close. Returns 0 on success, -1 if absent.
+ * A NULL IO selects the global environment. */
+SFUNC int fio_io2_env_remove FIO_NOOP(fio_io2_s *io, fio_io2_env_get_args_s a) {
+  fio___io2_env_s *env = &FIO___IO2.env;
+  if (io)
+    env = &io->env;
+  return fio___io2_env_remove(env, a);
+}
+
+/* *****************************************************************************
+The IO Reactor's State
+***************************************************************************** */
+
+/** Returns true while the reactor is running, or 0 when stopping or stopped. */
+SFUNC int fio_io2_is_running(void) {
+  uint8_t stop;
+  fio_atomic_load(stop, &FIO___IO2.stop);
+  return !stop;
+}
+
+/** Returns true if the current process is the IO reactor's master process. */
+SFUNC int fio_io2_is_master(void) {
+  return FIO___IO2.root_pid == FIO___IO2.pid;
+}
+
+/** Returns true if the current process is an IO reactor's worker process. */
+SFUNC int fio_io2_is_worker(void) { return FIO___IO2.is_worker; }
+
+/** Returns the current process ID. */
+SFUNC int fio_io2_pid(void) { return (int)FIO___IO2.pid; }
+
+/** Returns the root / master process id. */
+SFUNC int fio_io2_root_pid(void) { return (int)FIO___IO2.root_pid; }
+
+/** Returns the last millisecond when the IO reactor processed completions.
+ *
+ * While the reactor is stopped, returns the current (monotonic) time. */
+SFUNC int64_t fio_io2_last_tick(void) {
+  return fio_io2_is_running() ? FIO___IO2.monotonic
+                              : (FIO___IO2.monotonic = fio_time_milli());
+}
+
+/** Returns a cached real-time (wall-clock) timestamp in milliseconds,
+ * updated each IO tick alongside `fio_io2_last_tick`. While the reactor is
+ * stopped, returns the current time. */
+SFUNC int64_t fio_io2_last_tick_time(void) {
+  return fio_io2_is_running()
+             ? FIO___IO2.wall_clock
+             : (FIO___IO2.wall_clock = fio_time2milli(fio_time_real()));
+}
+
+/* *****************************************************************************
+`fio_io2_workers`
+***************************************************************************** */
+
+/** Resolves the requested worker count, including negative CPU-based scaling.
+ */
+SFUNC uint16_t fio_io2_workers(int workers) {
+  if (workers < 0) {
+    long cores = -1;
+#ifdef _SC_NPROCESSORS_ONLN
+    cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif /* _SC_NPROCESSORS_ONLN */
+    if (cores == -1L) {
+      cores = 8;
+      FIO_LOG_WARNING("fio_io2_workers called with negative value for worker "
+                      "count, but auto-detect failed, assuming %ld CPU cores",
+                      cores);
+    }
+    workers = (int)(cores / (0 - (int64_t)workers)); /* INT_MIN safe */
+    workers += !workers;
+  }
+  if (workers > 0x0FFF)
+    workers = 0x0FFF;
+  return (uint16_t)workers;
+}
+
+/* *****************************************************************************
+Async public API
+***************************************************************************** */
+
+/** Registers an async queue once and preserves its tasks and timers on
+ * reattach. Timer-only registrations do not start worker threads. */
+FIO_IFUNC void fio___io2_async_init(fio_io2_async_s *q) {
+  if (!q->node.next) {
+    *q = (fio_io2_async_s){
+        .q = &FIO___IO2.queue,
+        .queue = FIO_QUEUE_STATIC_INIT(q->queue),
+        .timers = FIO_TIMER_QUEUE_INIT,
+        .node = FIO_LIST_INIT(q->node),
+    };
+    FIO_LIST_PUSH(&FIO___IO2.async, &q->node);
+  }
+}
+
+SFUNC void fio_io2_async_attach(fio_io2_async_s *q, int threads) {
+  if (!q)
+    return;
+  fio___io2_async_init(q);
+  if (!threads)
+    threads = 1;
+  if (threads > 4096)
+    threads = 4096;
+  if (threads > 0)
+    q->count = threads;
+  else
+    q->count = fio_io2_workers(threads);
+  (void)fio_queue_workers_stop(&q->queue);
+  if (!fio_io2_is_running()) {
+    q->q = &FIO___IO2.queue;
+  } else {
+    if (!fio_queue_workers_add(&q->queue, q->count)) {
+      q->q = &q->queue;
+    } else {
+      q->q = &FIO___IO2.queue;
+      (void)fio_queue_workers_stop(
+          &q->queue); /* partial creation is possible */
+      FIO_LOG_ERROR("IO2 Async Queue couldn't spawn threads; using IO queue");
+      fio_queue_perform_all(&q->queue);
+    }
+  }
+}
+
+/** Schedules a timer bound task for the async queue (`fio_timer_schedule`). */
+SFUNC void fio_io2_async_every FIO_NOOP(fio_io2_async_s *q,
+                                        fio_timer_schedule_args_s args) {
+  if (q)
+    fio___io2_async_init(q);
+  fio_timer_schedule FIO_NOOP(q ? &q->timers : NULL, args);
+}
+
+/* *****************************************************************************
+TLS Context Type and Helpers
+***************************************************************************** */
+
+typedef struct {
+  fio_keystr_s nm;
+  void (*fn)(fio_io2_s *);
+} fio___io2_tls_alpn_s;
+
+typedef struct {
+  fio_keystr_s nm;
+  fio_keystr_s public_cert_file;
+  fio_keystr_s private_key_file;
+  fio_keystr_s pk_password;
+} fio___io2_tls_cert_s;
+
+typedef struct {
+  fio_keystr_s nm;
+} fio___io2_tls_trust_s;
+
+#define FIO___IO2_ALPN_HASH(o)   ((uint16_t)fio_keystr_hash(o->nm))
+#define FIO___IO2_ALPN_CMP(a, b) fio_keystr_is_eq(a->nm, b->nm)
+#define FIO___IO2_ALPN_VALID(o)  fio_keystr_buf(&o->nm).len
+
+FIO_TYPEDEF_IMAP_ARRAY(fio___io2_tls_alpn_map,
+                       fio___io2_tls_alpn_s,
+                       uint16_t,
+                       FIO___IO2_ALPN_HASH,
+                       FIO___IO2_ALPN_CMP,
+                       FIO___IO2_ALPN_VALID)
+FIO_TYPEDEF_IMAP_ARRAY(fio___io2_tls_trust_map,
+                       fio___io2_tls_trust_s,
+                       uint16_t,
+                       FIO___IO2_ALPN_HASH,
+                       FIO___IO2_ALPN_CMP,
+                       FIO___IO2_ALPN_VALID)
+FIO_TYPEDEF_IMAP_ARRAY(fio___io2_tls_cert_map,
+                       fio___io2_tls_cert_s,
+                       uint16_t,
+                       FIO___IO2_ALPN_HASH,
+                       FIO___IO2_ALPN_CMP,
+                       FIO_IMAP_ALWAYS_VALID)
+
+#undef FIO___IO2_ALPN_HASH
+#undef FIO___IO2_ALPN_CMP
+#undef FIO___IO2_ALPN_VALID
+
+struct fio_io2_tls_s {
+  fio___io2_env_s env;
+  fio___io2_tls_cert_map_s cert;
+  fio___io2_tls_alpn_map_s alpn;
+  fio___io2_tls_trust_map_s trust;
+  /** Client's expected server name: verified, and sent as SNI unless it is an
+   * IP literal (empty = no SNI / no host name check). */
+  fio_keystr_s sni;
+  uint8_t trust_sys; /** Set to 1 if system certificate registry is trusted */
+  /** Set to 1 if a requested trust entry couldn't be added (fail closed). */
+  uint8_t trust_failed;
+};
+
+/** Destroys a key string that may hold a secret, wiping owned copies. */
+FIO_IFUNC void fio___io2_tls_keystr_destroy_secret(fio_keystr_s *k) {
+  if (!k->info && k->buf) /* owned heap copy (const / tmp have info 0xFF) */
+    fio_secure_zero((void *)k->buf, k->len);
+  fio_keystr_destroy(k, FIO_STRING_FREE_KEY);
+  fio_secure_zero(k, sizeof(*k)); /* embedded (short) strings */
+}
+
+#define FIO___RECURSIVE_INCLUDE 1
+#define FIO_REF_NAME            fio_io2_tls
+#define FIO_REF_INIT(tls)       ((tls) = (fio_io2_tls_s){0})
+#define FIO_REF_DESTROY(tls)                                                   \
+  do {                                                                         \
+    fio___io2_env_destroy(&tls.env);                                           \
+    FIO_IMAP_EACH(fio___io2_tls_alpn_map, &tls.alpn, i) {                      \
+      fio_keystr_destroy(&tls.alpn.ary[i].nm, FIO_STRING_FREE_KEY);            \
+    }                                                                          \
+    FIO_IMAP_EACH(fio___io2_tls_trust_map, &tls.trust, i) {                    \
+      fio_keystr_destroy(&tls.trust.ary[i].nm, FIO_STRING_FREE_KEY);           \
+    }                                                                          \
+    FIO_IMAP_EACH(fio___io2_tls_cert_map, &tls.cert, i) {                      \
+      fio_keystr_destroy(&tls.cert.ary[i].nm, FIO_STRING_FREE_KEY);            \
+      fio_keystr_destroy(&tls.cert.ary[i].public_cert_file,                    \
+                         FIO_STRING_FREE_KEY);                                 \
+      fio_keystr_destroy(&tls.cert.ary[i].private_key_file,                    \
+                         FIO_STRING_FREE_KEY);                                 \
+      fio___io2_tls_keystr_destroy_secret(&tls.cert.ary[i].pk_password);       \
+    }                                                                          \
+    fio_keystr_destroy(&tls.sni, FIO_STRING_FREE_KEY);                         \
+    fio___io2_tls_alpn_map_destroy(&tls.alpn);                                 \
+    fio___io2_tls_trust_map_destroy(&tls.trust);                               \
+    fio___io2_tls_cert_map_destroy(&tls.cert);                                 \
+  } while (0)
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+
+/** Performs a `new` operation, returning a new `fio_io2_tls_s` context. */
+SFUNC fio_io2_tls_s *fio_io2_tls_new(void) {
+  fio_io2_tls_s *r = fio_io2_tls_new2();
+  FIO_ASSERT_ALLOC(r);
+  *r = (fio_io2_tls_s){.trust_sys = 0};
+  return r;
+}
+
+/** Performs a `dup` operation, increasing the object's reference count. */
+SFUNC fio_io2_tls_s *fio_io2_tls_dup(fio_io2_tls_s *tls) {
+  return fio_io2_tls_dup2(tls);
+}
+
+/** Performs a `free` operation, reducing the reference count and freeing. */
+SFUNC void fio_io2_tls_free(fio_io2_tls_s *tls) {
+  if (!tls)
+    return;
+  fio_io2_tls_free2(tls);
+}
+
+/** Takes a parsed URL and optional TLS target and returns a TLS if needed. */
+SFUNC fio_io2_tls_s *fio_io2_tls_from_url(fio_io2_tls_s *tls, fio_url_s url) {
+  /* test for TLS info in URL */
+  fio_url_tls_info_s tls_info = fio_url_is_tls(url);
+  if (!tls_info.tls)
+    return tls;
+
+  if (!tls && tls_info.tls)
+    tls = fio_io2_tls_new();
+
+  if (tls_info.key.buf && tls_info.cert.buf) {
+    const char *tmp = NULL;
+    FIO_STR_INFO_TMP_VAR(host_tmp, 512);
+    FIO_STR_INFO_TMP_VAR(key_tmp, 128);
+    FIO_STR_INFO_TMP_VAR(cert_tmp, 128);
+    FIO_STR_INFO_TMP_VAR(pass_tmp, 128);
+    if (url.host.len < 512 && url.host.buf)
+      fio_string_write(&host_tmp, NULL, url.host.buf, url.host.len);
+    else
+      host_tmp.buf = NULL;
+
+    if (tls_info.key.len < 124 && tls_info.cert.len < 124 &&
+        tls_info.pass.len < 124) {
+      fio_string_write(&key_tmp, NULL, tls_info.key.buf, tls_info.key.len);
+      fio_string_write(&cert_tmp, NULL, tls_info.cert.buf, tls_info.cert.len);
+      if (tls_info.pass.len)
+        fio_string_write(&pass_tmp, NULL, tls_info.pass.buf, tls_info.pass.len);
+      else
+        pass_tmp.buf = NULL;
+
+      if (tls_info.key.buf ==
+          tls_info.cert.buf) { /* assume value is prefix / folder */
+        if ((tmp = fio_sys_env(cert_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            key_tmp.len = cert_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(key_tmp.buf, buf_tmp.buf, buf_tmp.len);
+            FIO_MEMCPY(cert_tmp.buf, buf_tmp.buf, buf_tmp.len);
+          }
+        }
+        fio_string_write(&key_tmp, NULL, "key.pem", 7);
+        fio_string_write(&cert_tmp, NULL, "cert.pem", 8);
+      } else {
+        if ((tmp = fio_sys_env(key_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            key_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(key_tmp.buf, buf_tmp.buf, buf_tmp.len);
+          }
+        }
+
+        if ((tmp = fio_sys_env(cert_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            cert_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(cert_tmp.buf, buf_tmp.buf, buf_tmp.len);
+          }
+        }
+
+        if (tls_info.key.len < 5 ||
+            (fio_buf2u32u(tls_info.key.buf + (tls_info.key.len - 4)) |
+             0x20202020UL) != fio_buf2u32u(".pem")) {
+          fio_string_write(&key_tmp, NULL, ".pem", 4);
+        }
+        if (tls_info.cert.len < 5 ||
+            (fio_buf2u32u(tls_info.cert.buf + (tls_info.cert.len - 4)) |
+             0x20202020UL) != fio_buf2u32u(".pem")) {
+          fio_string_write(&cert_tmp, NULL, ".pem", 4);
+        }
+      }
+      fio_io2_tls_cert_add(tls,
+                           host_tmp.buf,
+                           cert_tmp.buf,
+                           key_tmp.buf,
+                           pass_tmp.buf);
+      if (pass_tmp.buf)
+        fio_secure_zero(pass_tmp.buf, pass_tmp.len);
+    } else {
+      FIO_LOG_ERROR("TLS files in `fio_io2_listen` URL too long, "
+                    "construct TLS object separately");
+    }
+  }
+
+  if (tls_info.trust.len) {
+    if (((tls_info.trust.len == 6 &&
+          ((fio_buf2u32u(tls_info.trust.buf + 2) | 0x20202020UL) ==
+           fio_buf2u32u((char *)"stem"))) ||
+         (tls_info.trust.len == 3)) &&
+        ((tls_info.trust.buf[0] | 32) == 's') &&
+        ((tls_info.trust.buf[1] | 32) == 'y') &&
+        ((tls_info.trust.buf[2] | 32) == 's')) {
+      fio_io2_tls_trust_add(tls, NULL);
+    } else if (tls_info.trust.len < 124) {
+      FIO_STR_INFO_TMP_VAR(trust_tmp, 128);
+      fio_string_write(&trust_tmp,
+                       NULL,
+                       tls_info.trust.buf,
+                       tls_info.trust.len);
+      if (tls_info.trust.len < 5 ||
+          (fio_buf2u32u(tls_info.trust.buf + (tls_info.trust.len - 4)) |
+           0x20202020UL) != fio_buf2u32u(".pem")) {
+        fio_string_write(&trust_tmp, NULL, ".pem", 4);
+      }
+      fio_io2_tls_trust_add(tls, trust_tmp.buf);
+    } else {
+      FIO_LOG_ERROR("TLS trust file in `fio_io2_listen` URL too long, "
+                    "construct TLS object separately");
+      tls->trust_failed = 1; /* never silently drop peer verification */
+    }
+  }
+  return tls;
+}
+
+/** Adds a certificate a new SSL/TLS context / settings object (SNI support). */
+SFUNC fio_io2_tls_s *fio_io2_tls_cert_add(fio_io2_tls_s *t,
+                                          const char *server_name,
+                                          const char *public_cert_file,
+                                          const char *private_key_file,
+                                          const char *pk_password) {
+  if (!t)
+    return t;
+  /* server names are case-insensitive: store them lowercased (SNI index) */
+  char nm_buf[256];
+  size_t nm_len = server_name ? FIO_STRLEN(server_name) : 0;
+  if (nm_len > 255) {
+    FIO_LOG_ERROR("fio_io2_tls_cert_add: server name too long (max 255)");
+    return t;
+  }
+  for (size_t i = 0; i < nm_len; ++i)
+    nm_buf[i] = (char)(server_name[i] |
+                       ((server_name[i] >= 'A' && server_name[i] <= 'Z') << 5));
+  fio___io2_tls_cert_s o = {
+      .nm =
+          fio_keystr_init(FIO_STR_INFO2(nm_buf, nm_len), FIO_STRING_ALLOC_KEY),
+      .public_cert_file =
+          fio_keystr_init(FIO_STR_INFO1((char *)public_cert_file),
+                          FIO_STRING_ALLOC_KEY),
+      .private_key_file =
+          fio_keystr_init(FIO_STR_INFO1((char *)private_key_file),
+                          FIO_STRING_ALLOC_KEY),
+      .pk_password = fio_keystr_init(FIO_STR_INFO1((char *)pk_password),
+                                     FIO_STRING_ALLOC_KEY),
+  };
+  fio___io2_tls_cert_s *old = fio___io2_tls_cert_map_get(&t->cert, o);
+  if (old)
+    goto replace_old;
+  if (fio___io2_tls_cert_map_set(&t->cert, o, 1))
+    return t;
+  FIO_LOG_ERROR("fio_io2_tls_cert_add failed to store certificate!");
+  fio_keystr_destroy(&o.nm, FIO_STRING_FREE_KEY);
+  fio_keystr_destroy(&o.public_cert_file, FIO_STRING_FREE_KEY);
+  fio_keystr_destroy(&o.private_key_file, FIO_STRING_FREE_KEY);
+  fio___io2_tls_keystr_destroy_secret(&o.pk_password);
+  return t;
+replace_old:
+  fio_keystr_destroy(&old->nm, FIO_STRING_FREE_KEY);
+  fio_keystr_destroy(&old->public_cert_file, FIO_STRING_FREE_KEY);
+  fio_keystr_destroy(&old->private_key_file, FIO_STRING_FREE_KEY);
+  fio___io2_tls_keystr_destroy_secret(&old->pk_password);
+  *old = o;
+  return t;
+}
+
+/**
+ * Adds an ALPN protocol callback to the SSL/TLS context.
+ *
+ * The first protocol added will act as the default protocol to be selected.
+ *
+ * Except for the `tls` and `protocol_name` arguments, all arguments can be
+ * NULL.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_alpn_add(fio_io2_tls_s *t,
+                                          const char *protocol_name,
+                                          void (*on_selected)(fio_io2_s *)) {
+  if (!t || !protocol_name)
+    return t;
+  size_t pr_name_len = FIO_STRLEN(protocol_name);
+  if (pr_name_len > 255) {
+    FIO_LOG_ERROR(
+        "fio_io2_tls_alpn_add called with name longer than 255 chars!");
+    return t;
+  }
+  fio___io2_tls_alpn_s o = {
+      .nm = fio_keystr_init(FIO_STR_INFO2((char *)protocol_name, pr_name_len),
+                            FIO_STRING_ALLOC_KEY),
+      .fn = on_selected,
+  };
+  fio___io2_tls_alpn_s *old = fio___io2_tls_alpn_map_get(&t->alpn, o);
+  if (old)
+    goto replace_old;
+  if (!fio___io2_tls_alpn_map_set(&t->alpn, o, 1)) {
+    FIO_LOG_ERROR("fio_io2_tls_alpn_add failed to store protocol!");
+    fio_keystr_destroy(&o.nm, FIO_STRING_FREE_KEY);
+  }
+  return t;
+replace_old:
+  fio_keystr_destroy(&old->nm, FIO_STRING_FREE_KEY);
+  *old = o;
+  return t;
+}
+
+/** Calls the `on_selected` callback for the `fio_io2_tls_s` object. */
+SFUNC int fio_io2_tls_alpn_select(fio_io2_tls_s *t,
+                                  const char *protocol_name,
+                                  size_t name_length,
+                                  fio_io2_s *io) {
+  if (!t || !protocol_name || name_length > 0xFF)
+    return -1;
+  fio___io2_tls_alpn_s seeking = {
+      .nm = fio_keystr_tmp(protocol_name, (uint32_t)name_length)};
+  fio___io2_tls_alpn_s *alpn = fio___io2_tls_alpn_map_get(&t->alpn, seeking);
+  if (!alpn) {
+    FIO_LOG_DDEBUG2("TLS ALPN %.*s not found in %zu long list",
+                    (int)name_length,
+                    protocol_name,
+                    (size_t)t->alpn.count);
+    return -1;
+  }
+  if (alpn->fn)
+    alpn->fn(io);
+  return 0;
+}
+
+/**
+ * Adds a certificate to the "trust" list, which automatically adds a peer
+ * verification requirement.
+ *
+ * If `public_cert_file` is `NULL`, adds the system's default trust registry.
+ *
+ * Note: when the `fio_io2_tls_s` object is used for server connections, this
+ * will limit connections to clients that connect using a trusted certificate.
+ *
+ *      fio_io2_tls_trust_add(tls, "google-ca.pem" );
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_trust_add(fio_io2_tls_s *t,
+                                           const char *public_cert_file) {
+  if (!t)
+    return t;
+  if (!public_cert_file) {
+    t->trust_sys = 1;
+    return t;
+  }
+  fio___io2_tls_trust_s o = {
+      .nm = fio_keystr_init(FIO_STR_INFO1((char *)public_cert_file),
+                            FIO_STRING_ALLOC_KEY),
+  };
+  fio___io2_tls_trust_s *old = fio___io2_tls_trust_map_get(&t->trust, o);
+  if (old)
+    goto replace_old;
+  if (fio___io2_tls_trust_map_set(&t->trust, o, 1))
+    return t;
+  /* fail closed: a dropped trust entry must never disable verification */
+  FIO_LOG_ERROR("fio_io2_tls_trust_add failed to store trust certificate!");
+  fio_keystr_destroy(&o.nm, FIO_STRING_FREE_KEY);
+  t->trust_failed = 1;
+  return t;
+replace_old:
+  fio_keystr_destroy(&old->nm, FIO_STRING_FREE_KEY);
+  *old = o;
+  return t;
+}
+
+/** Returns true if `host` is an IP literal rather than a DNS host name. */
+FIO_IFUNC int fio___io2_tls_is_ip_literal(const char *host, size_t len) {
+  /* RFC 6066, section 3: SNI carries DNS host names only, never IP literals. */
+  if (!host || !len)
+    return 1;
+  if (host[0] == '[')
+    return 1; /* bracketed IPv6 */
+  int has_colon = 0, has_name_char = 0;
+  for (size_t i = 0; i < len; ++i) {
+    const char c = (char)(host[i] | 32);
+    has_colon |= (host[i] == ':');
+    has_name_char |= (c >= 'a' && c <= 'z');
+  }
+  if (has_colon)
+    return 1; /* IPv6 */
+  /* only digits and dots => IPv4 (a DNS name has at least one letter) */
+  return !has_name_char;
+}
+
+/**
+ * Sets the SNI (Server Name Indication) host name a TLS client should send
+ * during the handshake (RFC 6066).
+ *
+ * `fio_io2_connect` sets this automatically from the URL's host name, so
+ * manual calls are rarely needed.
+ *
+ * NULL / empty host names and IP literals (IPv4 / IPv6) are silently
+ * ignored, leaving any previously set name untouched.
+ */
+SFUNC fio_io2_tls_s *fio_io2_tls_sni_set(fio_io2_tls_s *t,
+                                         const char *hostname,
+                                         size_t len) {
+  if (!t || !hostname || !len || len > 255 ||
+      fio___io2_tls_is_ip_literal(hostname, len))
+    return t;
+  fio_keystr_s nm = fio_keystr_init(FIO_STR_INFO2((char *)hostname, len),
+                                    FIO_STRING_ALLOC_KEY);
+  fio_keystr_destroy(&t->sni, FIO_STRING_FREE_KEY);
+  t->sni = nm;
+  return t;
+}
+
+/**
+ * Internal: sets a client's expected server identity (the URL host).
+ *
+ * Unlike `fio_io2_tls_sni_set`, IP literals are stored and any previous name is
+ * always replaced, so a reused TLS object never verifies a stale identity.
+ * Backends verify the peer against this name and send it as SNI only when it
+ * is a DNS host name (never an IP literal, RFC 6066).
+ */
+FIO_SFUNC void fio___io2_tls_peer_name_set(fio_io2_tls_s *t,
+                                           const char *host,
+                                           size_t len) {
+  if (!t)
+    return;
+  fio_keystr_s nm = {0};
+  if (host && len && len < 256)
+    nm =
+        fio_keystr_init(FIO_STR_INFO2((char *)host, len), FIO_STRING_ALLOC_KEY);
+  fio_keystr_destroy(&t->sni, FIO_STRING_FREE_KEY);
+  t->sni = nm;
+}
+
+/**
+ * Returns the number of `fio_io2_tls_cert_add` instructions.
+ *
+ * This could be used when deciding if to add a NULL instruction (self-signed).
+ *
+ * If `fio_io2_tls_cert_add` was never called, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io2_tls_cert_count(fio_io2_tls_s *tls) {
+  return tls ? tls->cert.count : 0;
+}
+
+/**
+ * Returns the number of registered ALPN protocol names.
+ *
+ * This could be used when deciding if protocol selection should be delegated to
+ * the ALPN mechanism, or whether a protocol should be immediately assigned.
+ *
+ * If no ALPN protocols are registered, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io2_tls_alpn_count(fio_io2_tls_s *tls) {
+  return tls ? tls->alpn.count : 0;
+}
+
+/**
+ * Returns the number of `fio_io2_tls_trust_add` instructions.
+ *
+ * This could be used when deciding if to disable peer verification or not.
+ *
+ * If `fio_io2_tls_trust_add` was never called, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io2_tls_trust_count(fio_io2_tls_s *tls) {
+  /* a failed trust instruction still counts, so verification stays on */
+  return tls ? ((uintptr_t)tls->trust.count + tls->trust_failed) : 0;
+}
+
+/** Calls callbacks for certificate, trust certificate and ALPN added. */
+void fio_io2_tls_each___(void); /* IDE Marker*/
+SFUNC int fio_io2_tls_each FIO_NOOP(fio_io2_tls_each_s a) {
+  if (!a.tls)
+    return -1;
+  if (a.each_cert) {
+    FIO_IMAP_EACH(fio___io2_tls_cert_map, &a.tls->cert, i) {
+      if (a.each_cert(&a,
+                      fio_keystr_buf(&a.tls->cert.ary[i].nm).buf,
+                      fio_keystr_buf(&a.tls->cert.ary[i].public_cert_file).buf,
+                      fio_keystr_buf(&a.tls->cert.ary[i].private_key_file).buf,
+                      fio_keystr_buf(&a.tls->cert.ary[i].pk_password).buf))
+        return -1;
+    }
+  }
+  if (a.each_alpn) {
+    FIO_IMAP_EACH(fio___io2_tls_alpn_map, &a.tls->alpn, i) {
+      if (a.each_alpn(&a,
+                      fio_keystr_buf(&a.tls->alpn.ary[i].nm).buf,
+                      a.tls->alpn.ary[i].fn))
+        return -1;
+    }
+  }
+  if (a.each_trust) {
+    if (a.tls->trust_failed) {
+      FIO_LOG_ERROR("TLS trust configuration incomplete (failed trust_add)");
+      return -1; /* fail closed: the context must not be built */
+    }
+    if (a.tls->trust_sys && a.each_trust(&a, NULL))
+      return -1;
+    FIO_IMAP_EACH(fio___io2_tls_trust_map, &a.tls->trust, i) {
+      if (a.each_trust(&a, fio_keystr_buf(&a.tls->trust.ary[i].nm).buf))
+        return -1;
+    }
+  }
+  return 0;
+}
+
+/* *****************************************************************************
+TLS-local storage and certificate selection
+***************************************************************************** */
+
+SFUNC void *fio_io2_tls_env_get FIO_NOOP(fio_io2_tls_s *tls,
+                                         fio_io2_env_get_args_s args) {
+  if (!tls || args.name.len > UINT32_MAX || (!args.name.buf && args.name.len))
+    return NULL;
+  fio___io2_env_entry_s key = {
+      .name = fio_keystr_tmp(args.name.buf, (uint32_t)args.name.len),
+      .type = args.type,
+      .udata = tls};
+  fio___io2_env_entry_s *entry = fio___io2_env_map_get(&tls->env.map, key);
+  return entry ? entry->udata : NULL;
+}
+
+SFUNC void fio_io2_tls_env_set FIO_NOOP(fio_io2_tls_s *tls,
+                                        fio_io2_env_set_args_s args) {
+  if (!tls || args.name.len > UINT32_MAX || (!args.name.buf && args.name.len)) {
+    if (args.on_close)
+      args.on_close(args.udata);
+    return;
+  }
+  fio___io2_env_set(&tls->env, args);
+}
+
+SFUNC int fio_io2_tls_env_unset FIO_NOOP(fio_io2_tls_s *tls,
+                                         fio_io2_env_get_args_s args) {
+  if (!tls || args.name.len > UINT32_MAX || (!args.name.buf && args.name.len))
+    return -1;
+  return fio___io2_env_unset(&tls->env, args);
+}
+
+SFUNC int fio_io2_tls_env_remove FIO_NOOP(fio_io2_tls_s *tls,
+                                          fio_io2_env_get_args_s args) {
+  if (!tls || args.name.len > UINT32_MAX || (!args.name.buf && args.name.len))
+    return -1;
+  return fio___io2_env_remove(&tls->env, args);
+}
+
+/** Lowercases a length-delimited selection name; 0 means empty or invalid. */
+FIO_SFUNC size_t fio___io2_tls_sni_normalize(char *dest,
+                                             const char *name,
+                                             size_t len,
+                                             int allow_wildcard) {
+  if (!name || !len || len > 255)
+    return 0;
+  for (size_t i = 0; i < len; ++i) {
+    const uint8_t c = (uint8_t)name[i];
+    if (c <= 0x20 || c >= 0x7F ||
+        (c == '*' && (!allow_wildcard || i || len < 3 || name[1] != '.')))
+      return 0;
+    dest[i] = (char)fio_ct_tolower(c);
+  }
+  return len;
+}
+
+/** Changes a normalized exact name into its one-label wildcard view. */
+FIO_SFUNC fio_buf_info_s fio___io2_tls_sni_wildcard(char *buf, size_t len) {
+  char *dot = (char *)FIO_MEMCHR(buf + 1, '.', len);
+  if (!dot || dot == buf + 1 || (size_t)(dot - buf) == len)
+    return (fio_buf_info_s){0};
+  dot[-1] = '*';
+  return FIO_BUF_INFO2(dot - 1, len + 2 - (size_t)(dot - buf));
+}
+
+SFUNC int fio_io2_tls_sni_add FIO_NOOP(fio_io2_tls_s *tls,
+                                       fio_io2_env_set_args_s args) {
+  char buf[256];
+  size_t len = args.name.len;
+  if (!tls ||
+      (len &&
+       !(len = fio___io2_tls_sni_normalize(buf, args.name.buf, len, 1)))) {
+    if (args.on_close)
+      args.on_close(args.udata);
+    return -1;
+  }
+  args.name = FIO_BUF_INFO2(buf, len);
+  args.const_name = 0; /* the normalized key lives only for this call */
+  fio_io2_tls_env_set FIO_NOOP(tls, args);
+  return 0;
+}
+
+SFUNC void *fio_io2_tls_sni_find FIO_NOOP(fio_io2_tls_s *tls,
+                                          fio_io2_env_get_args_s args) {
+  if (!tls)
+    return NULL;
+  char buf[257];
+  size_t len =
+      fio___io2_tls_sni_normalize(buf + 1, args.name.buf, args.name.len, 0);
+  void *found;
+  if (len) {
+    args.name = FIO_BUF_INFO2(buf + 1, len);
+    if ((found = fio_io2_tls_env_get FIO_NOOP(tls, args)))
+      return found;
+    args.name = fio___io2_tls_sni_wildcard(buf, len);
+    if (args.name.len && (found = fio_io2_tls_env_get FIO_NOOP(tls, args)))
+      return found;
+  }
+  args.name = (fio_buf_info_s){0};
+  if ((found = fio_io2_tls_env_get FIO_NOOP(tls, args)))
+    return found;
+  FIO_IMAP_EACH(fio___io2_env_map, &tls->env.map, i) {
+    if (tls->env.map.ary[i].type == args.type && tls->env.map.ary[i].udata)
+      return tls->env.map.ary[i].udata;
+  }
+  return NULL;
+}
+
+SFUNC int fio_io2_tls_cert(const fio_io2_tls_s *tls,
+                           size_t index,
+                           fio_io2_tls_cert_s *out) {
+  if (!out)
+    return -1;
+  *out = (fio_io2_tls_cert_s){0};
+  if (!tls || index >= tls->cert.count)
+    return -1;
+  fio___io2_tls_cert_s *entry = tls->cert.ary + index;
+  *out = (fio_io2_tls_cert_s){
+      .server_name = fio_keystr_buf(&entry->nm).buf,
+      .public_cert_file = fio_keystr_buf(&entry->public_cert_file).buf,
+      .private_key_file = fio_keystr_buf(&entry->private_key_file).buf,
+      .pk_password = fio_keystr_buf(&entry->pk_password).buf};
+  return 0;
+}
+
+SFUNC size_t fio_io2_tls_cert_find(const fio_io2_tls_s *tls,
+                                   const char *server_name,
+                                   size_t name_len) {
+  if (!tls || !tls->cert.count)
+    return SIZE_MAX;
+  char buf[257];
+  size_t len = fio___io2_tls_sni_normalize(buf + 1, server_name, name_len, 0);
+  /* IMAP lookup is read-only, but its older signature takes a mutable map. */
+  fio___io2_tls_cert_map_s *map = (fio___io2_tls_cert_map_s *)&tls->cert;
+  fio___io2_tls_cert_s *found;
+  fio___io2_tls_cert_s key = {0};
+  if (len) {
+    key.nm = fio_keystr_tmp(buf + 1, (uint32_t)len);
+    if ((found = fio___io2_tls_cert_map_get(map, key)))
+      return (size_t)(found - map->ary);
+    fio_buf_info_s wildcard = fio___io2_tls_sni_wildcard(buf, len);
+    if (wildcard.len) {
+      key.nm = fio_keystr_tmp(wildcard.buf, (uint32_t)wildcard.len);
+      if ((found = fio___io2_tls_cert_map_get(map, key)))
+        return (size_t)(found - map->ary);
+    }
+  }
+  key.nm = fio_keystr_tmp(NULL, 0);
+  found = fio___io2_tls_cert_map_get(map, key);
+  return found ? (size_t)(found - map->ary) : 0;
+}
+
+#endif /* H___FIO_IO2_STATE___H */
+/* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_POLL               /* Development inclusion - ignore line */
@@ -40680,862 +44961,6 @@ Cleanup
 #define H___FIO_POLL___H
 #undef FIO_POLL
 #endif /* FIO_POLL */
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_QUEUE              /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                                Task / Timer Queues
-                                (Event Loop Engine)
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(FIO_QUEUE) && !defined(H___FIO_QUEUE___H)
-#define H___FIO_QUEUE___H
-
-/* *****************************************************************************
-Queue Type(s)
-***************************************************************************** */
-
-/* Note: FIO_QUEUE_TASKS_PER_ALLOC can't be more than 65535 */
-#ifndef FIO_QUEUE_TASKS_PER_ALLOC
-#if UINTPTR_MAX <= 0xFFFFFFFF
-/* a task ring chunk (12 + 338 * 12 = 4068 bytes) fits a 4 KiB page */
-#define FIO_QUEUE_TASKS_PER_ALLOC 338
-#else
-/* a task ring chunk (16 + 168 * 24 = 4048 bytes) fits a 4 KiB page */
-#define FIO_QUEUE_TASKS_PER_ALLOC 168
-#endif
-#endif
-
-/** Task information */
-typedef struct {
-  /** The function to call */
-  void (*fn)(void *, void *);
-  /** User opaque data */
-  void *udata1;
-  /** User opaque data */
-  void *udata2;
-} fio_queue_task_s;
-
-/* internal use */
-typedef struct fio___task_ring_s {
-  uint16_t r;   /* reader position */
-  uint16_t w;   /* writer position */
-  uint16_t dir; /* direction */
-  struct fio___task_ring_s *next;
-  fio_queue_task_s buf[FIO_QUEUE_TASKS_PER_ALLOC];
-} fio___task_ring_s;
-
-/** The queue object - should be considered opaque (or, at least, read only). */
-typedef struct {
-  /** task read pointer. */
-  fio___task_ring_s *r;
-  /** task write pointer. */
-  fio___task_ring_s *w;
-  /** the number of tasks waiting to be performed. */
-  uint32_t count;
-  /** global queue lock. */
-  FIO___LOCK_TYPE lock;
-  /** linked lists of consumer threads. */
-  FIO_LIST_NODE consumers;
-  /** main ring buffer associated with the queue. */
-  fio___task_ring_s mem;
-} fio_queue_s;
-
-typedef struct {
-  FIO_LIST_NODE node;
-  fio_queue_s *queue;
-  fio_thread_t thread;
-  fio_thread_mutex_t mutex;
-  fio_thread_cond_t cond;
-  size_t workers;
-  /** number of workers waiting (or about to wait) on `cond`. */
-  size_t sleeping;
-  volatile unsigned stop;
-} fio___thread_group_s;
-
-/* *****************************************************************************
-Queue API
-***************************************************************************** */
-
-#if FIO_USE_THREAD_MUTEX_TMP
-/** May be used to initialize global, static memory, queues. */
-#define FIO_QUEUE_STATIC_INIT(queue)                                           \
-  {                                                                            \
-    .r = &(queue).mem, .w = &(queue).mem,                                      \
-    .lock = (fio_thread_mutex_t)FIO_THREAD_MUTEX_INIT,                         \
-    .consumers = FIO_LIST_INIT((queue).consumers),                             \
-  }
-#else
-/** May be used to initialize global, static memory, queues. */
-#define FIO_QUEUE_STATIC_INIT(queue)                                           \
-  {                                                                            \
-    .r = &(queue).mem, .w = &(queue).mem, .lock = FIO_LOCK_INIT,               \
-    .consumers = FIO_LIST_INIT((queue).consumers),                             \
-  }
-#endif
-
-/** Initializes a fio_queue_s object. */
-FIO_IFUNC void fio_queue_init(fio_queue_s *q);
-
-/** Destroys a queue and re-initializes it, after freeing any used resources. */
-SFUNC void fio_queue_destroy(fio_queue_s *q);
-
-/** Creates a new queue object (allocated on the heap). */
-SFUNC fio_queue_s *fio_queue_new(void);
-
-/** Frees a queue object after calling fio_queue_destroy. */
-SFUNC void fio_queue_free(fio_queue_s *q);
-
-/** Pushes a task to the queue. Returns -1 on error. */
-SFUNC int fio_queue_push(fio_queue_s *q, fio_queue_task_s task);
-
-/**
- * Pushes a task to the queue, offering named arguments for the task.
- * Returns -1 on error.
- */
-#define fio_queue_push(q, ...)                                                 \
-  fio_queue_push((q), (fio_queue_task_s){__VA_ARGS__})
-
-/** Pushes a task to the head of the queue. Returns -1 on error (no memory). */
-SFUNC int fio_queue_push_urgent(fio_queue_s *q, fio_queue_task_s task);
-
-/**
- * Pushes a task to the queue, offering named arguments for the task.
- * Returns -1 on error.
- */
-#define fio_queue_push_urgent(q, ...)                                          \
-  fio_queue_push_urgent((q), (fio_queue_task_s){__VA_ARGS__})
-
-/** Pops a task from the queue (FIFO). Returns a NULL task on error. */
-SFUNC fio_queue_task_s fio_queue_pop(fio_queue_s *q);
-
-/** Performs a task from the queue. Returns -1 on error (queue empty). */
-SFUNC int fio_queue_perform(fio_queue_s *q);
-
-/** Performs all tasks in the queue. */
-SFUNC void fio_queue_perform_all(fio_queue_s *q);
-
-/** returns the number of tasks in the queue. */
-FIO_IFUNC uint32_t fio_queue_count(fio_queue_s *q);
-
-/** Adds worker / consumer threads to perform the jobs in the queue. */
-SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t count);
-
-/**
- * Signals all worker threads to stop performing tasks and terminate.
- *
- * Returns the number of worker groups signaled. Does NOT wait and does NOT
- * promise that pending tasks are performed.
- */
-SFUNC size_t fio_queue_workers_stop(fio_queue_s *q);
-
-/**
- * Signals all worker threads to stop, waiting for them to complete.
- *
- * If the queue had workers, pending tasks are performed before returning.
- */
-SFUNC void fio_queue_workers_join(fio_queue_s *q);
-
-/** Signals all worker threads to go back to work (new tasks added). */
-SFUNC void fio_queue_workers_wake(fio_queue_s *q);
-
-/* *****************************************************************************
-Timer Queue Types and API
-***************************************************************************** */
-
-typedef struct fio___timer_event_s fio___timer_event_s;
-
-typedef struct {
-  fio___timer_event_s *next;
-  FIO___LOCK_TYPE lock;
-} fio_timer_queue_s;
-
-#if FIO_USE_THREAD_MUTEX_TMP
-#define FIO_TIMER_QUEUE_INIT                                                   \
-  { .lock = ((fio_thread_mutex_t)FIO_THREAD_MUTEX_INIT) }
-#else
-#define FIO_TIMER_QUEUE_INIT                                                   \
-  { .lock = FIO_LOCK_INIT }
-#endif
-
-typedef struct {
-  /** The timer function. If it returns a non-zero value, the timer stops. */
-  int (*fn)(void *, void *);
-  /** Opaque user data. */
-  void *udata1;
-  /** Opaque user data. */
-  void *udata2;
-  /** Called when the timer is done (finished). */
-  void (*on_finish)(void *, void *);
-  /** Timer interval, in milliseconds. */
-  uint32_t every;
-  /** The number of times the timer should be performed. -1 == infinity. */
-  int32_t repetitions;
-  /** Millisecond at which to start. If missing, filled automatically. */
-  int64_t start_at;
-} fio_timer_schedule_args_s;
-
-/** Adds a time-bound event to the timer queue. */
-SFUNC void fio_timer_schedule(fio_timer_queue_s *timer_queue,
-                              fio_timer_schedule_args_s args);
-
-/** A MACRO allowing named arguments to be used. See fio_timer_schedule_args_s.
- */
-#define fio_timer_schedule(timer_queue, ...)                                   \
-  fio_timer_schedule((timer_queue), (fio_timer_schedule_args_s){__VA_ARGS__})
-
-/** Pushes due events from the timer queue to an event queue. */
-SFUNC size_t fio_timer_push2queue(fio_queue_s *queue,
-                                  fio_timer_queue_s *timer_queue,
-                                  int64_t now_in_milliseconds);
-
-/*
- * Returns the millisecond at which the next event should occur.
- *
- * If no timer is due (list is empty), returns the maximum possible value.
- *
- * NOTE: unless manually specified, millisecond timers are relative to
- * `fio_time_milli()`.
- */
-FIO_IFUNC int64_t fio_timer_next_at(fio_timer_queue_s *timer_queue);
-
-/**
- * Clears any waiting timer bound tasks.
- *
- * NOTE:
- *
- * The timer queue must NEVER be freed when there's a chance that timer tasks
- * are waiting to be performed in a `fio_queue_s`.
- *
- * This is due to the fact that the tasks may try to reschedule themselves (if
- * they repeat).
- */
-SFUNC void fio_timer_destroy(fio_timer_queue_s *timer_queue);
-
-/* *****************************************************************************
-Queue Inline Helpers
-***************************************************************************** */
-
-/** returns the number of tasks in the queue. */
-FIO_IFUNC FIO___TSAN_AVOID uint32_t fio_queue_count(fio_queue_s *q) {
-  return q->count;
-}
-
-/** Initializes a fio_queue_s object. */
-FIO_IFUNC void fio_queue_init(fio_queue_s *q) {
-  /* do this manually, we don't want to reset a whole page */
-  q->r = &q->mem;
-  q->w = &q->mem;
-  q->count = 0;
-  q->consumers = FIO_LIST_INIT(q->consumers);
-  q->lock = FIO___LOCK_INIT;
-  q->mem.next = NULL;
-  q->mem.r = q->mem.w = q->mem.dir = 0;
-}
-
-/* *****************************************************************************
-Timer Queue Inline Helpers
-***************************************************************************** */
-
-struct fio___timer_event_s {
-  int (*fn)(void *, void *);
-  void *udata1;
-  void *udata2;
-  void (*on_finish)(void *udata1, void *udata2);
-  int64_t due;
-  uint32_t every;
-  int32_t repetitions;
-  struct fio___timer_event_s *next;
-};
-
-/*
- * Returns the millisecond at which the next event should occur.
- *
- * If no timer is due (list is empty), returns the maximum possible value.
- *
- * NOTE: unless manually specified, millisecond timers are relative to
- * `fio_time_milli()`.
- */
-FIO_IFUNC int64_t fio_timer_next_at(fio_timer_queue_s *tq) {
-  int64_t v = (int64_t)((~(uint64_t)0) >> 1);
-  if (!tq)
-    goto missing_tq;
-  if (!tq || !tq->next)
-    return v;
-  FIO___LOCK_LOCK(tq->lock);
-  if (tq->next)
-    v = tq->next->due;
-  FIO___LOCK_UNLOCK(tq->lock);
-  return v;
-
-missing_tq:
-  FIO_LOG_ERROR("`fio_timer_next_at` called with a NULL timer queue!");
-  return v;
-}
-
-/* *****************************************************************************
-Queue Implementation
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-/* task queue leak detection */
-FIO_LEAK_COUNTER_DEF(fio_queue)
-FIO_LEAK_COUNTER_DEF(fio_queue_task_rings)
-/** Destroys a queue and re-initializes it, after freeing any used resources. */
-SFUNC void fio_queue_destroy(fio_queue_s *q) {
-  fio_queue_workers_join(q);
-  FIO___LOCK_LOCK(q->lock);
-  while (q->r) {
-    fio___task_ring_s *tmp = q->r;
-    q->r = q->r->next;
-    if (tmp == &q->mem)
-      continue;
-    FIO_LEAK_COUNTER_ON_FREE(fio_queue_task_rings);
-    FIO_MEM_FREE_(tmp, sizeof(*tmp));
-  }
-  FIO___LOCK_UNLOCK(q->lock);
-  FIO___LOCK_DESTROY(q->lock);
-  fio_queue_init(q);
-}
-
-/** Creates a new queue object (allocated on the heap). */
-SFUNC fio_queue_s *fio_queue_new(void) {
-  fio_queue_s *q = (fio_queue_s *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*q), 0);
-  if (!q)
-    return NULL;
-  fio_queue_init(q);
-  FIO_LEAK_COUNTER_ON_ALLOC(fio_queue);
-  return q;
-}
-
-/** Frees a queue object after calling fio_queue_destroy. */
-SFUNC void fio_queue_free(fio_queue_s *q) {
-  fio_queue_destroy(q);
-  if (q) {
-    FIO_LEAK_COUNTER_ON_FREE(fio_queue);
-    FIO_MEM_FREE_(q, sizeof(*q));
-  }
-}
-
-FIO_IFUNC int fio___task_ring_push(fio___task_ring_s *r,
-                                   fio_queue_task_s task) {
-  if (r->dir && r->r == r->w)
-    return -1;
-  r->buf[r->w] = task;
-  ++(r->w);
-  if (r->w == FIO_QUEUE_TASKS_PER_ALLOC) {
-    r->w = 0;
-    r->dir = ~r->dir;
-  }
-  return 0;
-}
-
-FIO_IFUNC int fio___task_ring_unpop(fio___task_ring_s *r,
-                                    fio_queue_task_s task) {
-  if (r->dir && r->r == r->w)
-    return -1;
-  if (!r->r) {
-    r->r = FIO_QUEUE_TASKS_PER_ALLOC;
-    r->dir = ~r->dir;
-  }
-  --r->r;
-  r->buf[r->r] = task;
-  return 0;
-}
-
-FIO_IFUNC fio_queue_task_s fio___task_ring_pop(fio___task_ring_s *r) {
-  fio_queue_task_s t = {.fn = NULL};
-  if (!r->dir && r->r == r->w) {
-    return t;
-  }
-  t = r->buf[r->r];
-  r->buf[r->r] = (fio_queue_task_s){.fn = NULL};
-  ++r->r;
-  if (r->r == FIO_QUEUE_TASKS_PER_ALLOC) {
-    r->r = 0;
-    r->dir = ~r->dir;
-  }
-  return t;
-}
-
-/* Wakes one idle worker per active worker group. Call with `q->lock` held,
- * after `q->count` was incremented.
- *
- * Lost wakeup protection: a worker increments `sleeping` and then reads
- * `q->count`, both while holding the group mutex, and keeps holding the mutex
- * until `cond_wait` releases it. A pusher increments `q->count` and then reads
- * `sleeping`. All are sequentially consistent atomics, so either the worker
- * sees the task (and doesn't wait) or the pusher sees the sleeper (and signals
- * under the mutex, which it can only acquire once the worker is waiting).
- * Groups without sleepers are skipped, avoiding the mutex on busy queues. */
-FIO_SFUNC void fio___queue_workers_signal(fio_queue_s *q) {
-  if (!q->consumers.next || FIO_LIST_IS_EMPTY(&q->consumers))
-    return;
-  FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-    size_t sleeping;
-    /* Pair with the worker's admission before its final count check. */
-    fio_atomic_load(sleeping, &pos->sleeping);
-    if (pos->stop || !sleeping)
-      continue;
-    fio_thread_mutex_lock(&pos->mutex);
-    fio_thread_cond_signal(&pos->cond);
-    fio_thread_mutex_unlock(&pos->mutex);
-  }
-}
-
-int fio_queue_push___(void); /* sublime text marker */
-/** Pushes a task to the queue. Returns -1 on error. */
-SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
-  if (!task.fn)
-    return 0;
-  FIO___LOCK_LOCK(q->lock);
-  if (fio___task_ring_push(q->w, task)) {
-    if (q->w != &q->mem && q->mem.next == NULL) {
-      q->w->next = &q->mem;
-      q->mem.w = q->mem.r = q->mem.dir = 0;
-    } else {
-      void *tmp = (fio___task_ring_s *)
-          FIO_MEM_REALLOC_(NULL, 0, sizeof(*q->w->next), 0);
-      if (!tmp)
-        goto no_mem;
-      FIO_LEAK_COUNTER_ON_ALLOC(fio_queue_task_rings);
-      q->w->next = (fio___task_ring_s *)tmp;
-      if (!FIO_MEM_REALLOC_IS_SAFE_) {
-        q->w->next->r = q->w->next->w = q->w->next->dir = 0;
-
-        q->w->next->next = NULL;
-      }
-    }
-    q->w = q->w->next;
-    fio___task_ring_push(q->w, task);
-  }
-  fio_atomic_add(&q->count, 1);
-  fio___queue_workers_signal(q);
-  FIO___LOCK_UNLOCK(q->lock);
-  return 0;
-no_mem:
-  FIO___LOCK_UNLOCK(q->lock);
-  FIO_LOG_ERROR("No memory for Queue %p to increase task ring buffer.",
-                (void *)q);
-  return -1;
-}
-
-int fio_queue_push_urgent___(void); /* IDE marker */
-/** Pushes a task to the head of the queue. Returns -1 on error (no memory). */
-SFUNC int fio_queue_push_urgent FIO_NOOP(fio_queue_s *q,
-                                         fio_queue_task_s task) {
-  if (!task.fn)
-    return 0;
-  FIO___LOCK_LOCK(q->lock);
-  if (fio___task_ring_unpop(q->r, task)) {
-    /* such a shame... but we must allocate a while task block for one task */
-    fio___task_ring_s *tmp =
-        (fio___task_ring_s *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*q->w->next), 0);
-    if (!tmp)
-      goto no_mem;
-    FIO_LEAK_COUNTER_ON_ALLOC(fio_queue_task_rings);
-    tmp->next = q->r;
-    q->r = tmp;
-    tmp->w = 1;
-    tmp->dir = tmp->r = 0;
-    tmp->buf[0] = task;
-  }
-  fio_atomic_add(&q->count, 1);
-  fio___queue_workers_signal(q);
-  FIO___LOCK_UNLOCK(q->lock);
-  return 0;
-no_mem:
-  FIO___LOCK_UNLOCK(q->lock);
-  FIO_LOG_ERROR("No memory for Queue %p to increase task ring buffer.",
-                (void *)q);
-  return -1;
-}
-
-/** Pops a task from the queue (FIFO). Returns a NULL task on error. */
-SFUNC fio_queue_task_s fio_queue_pop(fio_queue_s *q) {
-  fio_queue_task_s t = {.fn = NULL};
-  fio___task_ring_s *to_free = NULL;
-  fio___task_ring_s *to_free_tst = NULL;
-  if (!fio_queue_count(q))
-    return t;
-  FIO___LOCK_LOCK(q->lock);
-  if (!q->count)
-    goto finish;
-  if (!(t = fio___task_ring_pop(q->r)).fn) {
-    to_free = q->r;
-    q->r = to_free->next;
-    to_free->next = NULL;
-    t = fio___task_ring_pop(q->r);
-  }
-  if (t.fn && !(fio_atomic_sub_fetch(&q->count, 1)) && q->r != &q->mem) {
-    if (to_free && to_free != &q->mem) { // edge case
-      FIO_LEAK_COUNTER_ON_FREE(fio_queue_task_rings);
-      FIO_MEM_FREE_(to_free, sizeof(*to_free));
-    }
-    to_free = q->r;
-    q->r = q->w = &q->mem;
-    q->mem.w = q->mem.r = q->mem.dir = 0;
-  }
-  to_free_tst = &q->mem;
-finish:
-  FIO___LOCK_UNLOCK(q->lock);
-  if (to_free && to_free != to_free_tst) {
-    FIO_LEAK_COUNTER_ON_FREE(fio_queue_task_rings);
-    FIO_MEM_FREE_(to_free, sizeof(*to_free));
-  }
-  return t;
-}
-
-/** Performs a task from the queue. Returns -1 on error (queue empty). */
-SFUNC int fio_queue_perform(fio_queue_s *q) {
-  fio_queue_task_s t = fio_queue_pop(q);
-  if (!t.fn)
-    return -1;
-  t.fn(t.udata1, t.udata2);
-  return 0;
-}
-
-/** Performs all tasks in the queue. */
-SFUNC void fio_queue_perform_all(fio_queue_s *q) {
-  fio_queue_task_s t;
-  while ((t = fio_queue_pop(q)).fn)
-    t.fn(t.udata1, t.udata2);
-}
-
-/* *****************************************************************************
-Queue Consumer Threads
-***************************************************************************** */
-
-FIO_LEAK_COUNTER_DEF(fio___queue_worker_manager)
-FIO_LEAK_COUNTER_DEF(fio___queue_worker)
-
-FIO_SFUNC void *fio___queue_worker_task(void *g_) {
-  fio___thread_group_s *grp = (fio___thread_group_s *)g_;
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker);
-  fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_START);
-  while (!grp->stop) {
-    fio_queue_perform_all(grp->queue);
-    fio_thread_mutex_lock(&grp->mutex);
-    /* announce, then re-check - see `fio___queue_workers_signal` */
-    fio_atomic_add(&grp->sleeping, 1);
-    uint32_t count;
-    /* Order this check with the pusher's count/sleeper handshake. */
-    fio_atomic_load(count, &grp->queue->count);
-    if (!grp->stop && !count)
-      fio_thread_cond_wait(&grp->cond, &grp->mutex);
-    fio_atomic_sub(&grp->sleeping, 1);
-    fio_thread_mutex_unlock(&grp->mutex);
-    fio_queue_perform_all(grp->queue);
-  }
-  fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_END);
-  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker);
-  return NULL;
-}
-FIO_SFUNC void *fio___queue_worker_manager(void *g_) {
-  fio_thread_t threads_buf[256] = {0};
-  const fio_thread_t not_a_thread = {0};
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker_manager);
-  fio___thread_group_s grp = *(fio___thread_group_s *)g_;
-  grp.thread = fio_thread_current();
-  FIO_LIST_PUSH(&grp.queue->consumers, &grp.node);
-  grp.stop = 0;
-  fio_thread_t *threads =
-      grp.workers > 256
-          ? ((fio_thread_t *)
-                 FIO_MEM_REALLOC_(NULL, 0, sizeof(*threads) * grp.workers, 0))
-          : threads_buf;
-  fio_thread_mutex_init(&grp.mutex);
-  fio_thread_cond_init(&grp.cond);
-  for (size_t i = 0; i < grp.workers; ++i) {
-    if (fio_thread_create(threads + i, fio___queue_worker_task, (void *)&grp)) {
-      FIO_LOG_ERROR("(%d) Failed to spawn thread", fio_getpid());
-      threads[i] = not_a_thread;
-      --grp.workers;
-      --i;
-    }
-  }
-  fio_atomic_and(&((fio___thread_group_s *)g_)->stop, 0);
-  /* from this point on, g_ is invalid! */
-  for (size_t i = 0; i < grp.workers; ++i) {
-    if (!FIO_MEMCMP(threads + i, &not_a_thread, sizeof(not_a_thread)))
-      continue;
-    fio_thread_join(threads + i);
-  }
-  if (threads != threads_buf)
-    FIO_MEM_FREE_(threads, sizeof(*threads) * grp.workers);
-  fio_queue_perform_all(grp.queue);
-  FIO___LOCK_LOCK(grp.queue->lock);
-  FIO_LIST_REMOVE(&grp.node);
-  if (!(grp.stop & 2)) {
-    FIO___LOCK_UNLOCK(grp.queue->lock);
-    fio_thread_cond_destroy(&grp.cond);
-    fio_thread_mutex_destroy(&grp.mutex);
-    fio_thread_detach(&grp.thread);
-  } else {
-    fio_atomic_or(&grp.stop, 1);
-    fio_atomic_and(&grp.stop, 1);
-    FIO___LOCK_UNLOCK(grp.queue->lock);
-    unsigned stop;
-    do {
-      /* The joiner releases this stack frame by clearing the handshake. */
-      fio_atomic_load(stop, &grp.stop);
-      if (stop & 1)
-        FIO_THREAD_RESCHEDULE();
-    } while (stop & 1);
-  }
-  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker_manager);
-  return NULL;
-}
-
-SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
-  if (!q)
-    return -1;
-  while (workers > 255) {
-    if (fio_queue_workers_add(q, 128))
-      return -1;
-    if (fio_queue_workers_add(q, 128))
-      return -1;
-    workers -= 256;
-  }
-  if (!workers)
-    return 0;
-  FIO___LOCK_LOCK(q->lock);
-  if (!q->consumers.next || !q->consumers.prev) {
-    q->consumers = FIO_LIST_INIT(q->consumers);
-  }
-  fio___thread_group_s grp = {.queue = q, .workers = workers, .stop = 1};
-  if (fio_thread_create(&grp.thread, fio___queue_worker_manager, &grp)) {
-    FIO___LOCK_UNLOCK(q->lock);
-    return -1;
-  }
-  unsigned stop;
-  do {
-    /* Acquire the manager's copy before releasing this stack argument. */
-    fio_atomic_load(stop, &grp.stop);
-    if (stop)
-      FIO_THREAD_RESCHEDULE();
-  } while (stop);
-  FIO___LOCK_UNLOCK(q->lock);
-  return 0;
-}
-
-SFUNC size_t fio_queue_workers_stop(fio_queue_s *q) {
-  if (!q)
-    return 0;
-  size_t count = 0;
-  FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
-  FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-    pos->stop |= 1;
-    fio_thread_mutex_lock(&pos->mutex);
-    fio_thread_cond_broadcast(&pos->cond);
-    fio_thread_mutex_unlock(&pos->mutex);
-    ++count;
-  }
-  FIO___LOCK_UNLOCK(q->lock);
-  return count;
-}
-
-/** Signals all worker threads to go back to work (new tasks added). */
-SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
-  if (!q)
-    return;
-  FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
-  fio___queue_workers_signal(q);
-  FIO___LOCK_UNLOCK(q->lock);
-}
-
-/** Signals all worker threads to stop, waiting for them to complete. */
-SFUNC void fio_queue_workers_join(fio_queue_s *q) {
-  if (!q)
-    return;
-  uint8_t had_workers = !!fio_queue_workers_stop(q);
-  FIO___LOCK_LOCK(q->lock);
-  while (q->consumers.next && q->consumers.next != &q->consumers) {
-    fio___thread_group_s *pos =
-        FIO_PTR_FROM_FIELD(fio___thread_group_s, node, q->consumers.next);
-    fio_atomic_or(&pos->stop, 3);
-    FIO___LOCK_UNLOCK(q->lock);
-    had_workers = 1;
-    unsigned stop;
-    do {
-      /* Acquire the manager's retirement before destroying its wait state. */
-      fio_atomic_load(stop, &pos->stop);
-      if (stop & 2)
-        FIO_THREAD_RESCHEDULE();
-    } while (stop & 2);
-    fio_thread_cond_destroy(&pos->cond);
-    fio_thread_mutex_destroy(&pos->mutex);
-    fio_thread_t thr = pos->thread;
-    fio_atomic_and(&pos->stop, 0); /* releases manager: pos is invalid now */
-    fio_thread_join(&thr);
-    FIO___LOCK_LOCK(q->lock);
-  }
-  FIO___LOCK_UNLOCK(q->lock);
-  if (had_workers) /* a queue with worker threads is emptied on `join` */
-    fio_queue_perform_all(q);
-}
-
-/* *****************************************************************************
-Timer Queue Implementation
-***************************************************************************** */
-FIO_LEAK_COUNTER_DEF(fio___timer_event_s)
-
-FIO_IFUNC void fio___timer_insert(fio___timer_event_s **pos,
-                                  fio___timer_event_s *e) {
-  while (*pos && e->due >= (*pos)->due)
-    pos = &((*pos)->next);
-  e->next = *pos;
-  *pos = e;
-}
-
-FIO_IFUNC fio___timer_event_s *fio___timer_pop(fio___timer_event_s **pos,
-                                               int64_t due) {
-  if (!*pos || (*pos)->due > due)
-    return NULL;
-  fio___timer_event_s *t = *pos;
-  *pos = t->next;
-  return t;
-}
-
-FIO_IFUNC fio___timer_event_s *fio___timer_event_new(
-    fio_timer_schedule_args_s args) {
-  fio___timer_event_s *t = NULL;
-  t = (fio___timer_event_s *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*t), 0);
-  if (!t)
-    goto init_error;
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___timer_event_s);
-  args.repetitions += !args.repetitions;
-  *t = (fio___timer_event_s){
-      .fn = args.fn,
-      .udata1 = args.udata1,
-      .udata2 = args.udata2,
-      .on_finish = args.on_finish,
-      .due = args.start_at + args.every,
-      .every = args.every,
-      .repetitions = args.repetitions,
-  };
-  return t;
-init_error:
-  if (args.on_finish)
-    args.on_finish(args.udata1, args.udata2);
-  return NULL;
-}
-
-FIO_IFUNC void fio___timer_event_free(fio_timer_queue_s *tq,
-                                      fio___timer_event_s *t) {
-  if (!t)
-    return;
-  if (tq && (t->repetitions < 0 || fio_atomic_sub_fetch(&t->repetitions, 1))) {
-    FIO___LOCK_LOCK(tq->lock);
-    fio___timer_insert(&tq->next, t);
-    FIO___LOCK_UNLOCK(tq->lock);
-    return;
-  }
-  if (t->on_finish)
-    t->on_finish(t->udata1, t->udata2);
-  FIO_LEAK_COUNTER_ON_FREE(fio___timer_event_s);
-  FIO_MEM_FREE_(t, sizeof(*t));
-}
-
-FIO_SFUNC void fio___timer_perform(void *timer_, void *t_) {
-  fio_timer_queue_s *tq = (fio_timer_queue_s *)timer_;
-  fio___timer_event_s *t = (fio___timer_event_s *)t_;
-  if (t->fn(t->udata1, t->udata2))
-    tq = NULL;
-  t->due += t->every;
-  fio___timer_event_free(tq, t);
-}
-
-/** Pushes due events from the timer queue to an event queue. */
-SFUNC size_t fio_timer_push2queue(fio_queue_s *queue,
-                                  fio_timer_queue_s *timer,
-                                  int64_t start_at) {
-  size_t r = 0;
-  if (!start_at)
-    start_at = fio_time_milli();
-  if (FIO___LOCK_TRYLOCK(timer->lock))
-    return 0;
-  fio___timer_event_s *t;
-  while ((t = fio___timer_pop(&timer->next, start_at))) {
-    if (FIO_UNLIKELY(fio_queue_push(queue,
-                                    .fn = fio___timer_perform,
-                                    .udata1 = timer,
-                                    .udata2 = t))) {
-      /* No memory to queue it: keep the (still due) event scheduled and
-       * retry on the next call - never drop it (or its on_finish). */
-      fio___timer_insert(&timer->next, t);
-      break;
-    }
-    ++r;
-  }
-  FIO___LOCK_UNLOCK(timer->lock);
-  return r;
-}
-
-void fio_timer_schedule___(void); /* IDE marker */
-/** Adds a time-bound event to the timer queue. */
-SFUNC void fio_timer_schedule FIO_NOOP(fio_timer_queue_s *timer,
-                                       fio_timer_schedule_args_s args) {
-  fio___timer_event_s *t = NULL;
-  if (!timer || !args.fn || !args.every)
-    goto no_timer_queue;
-  if (!args.start_at)
-    args.start_at = fio_time_milli();
-  t = fio___timer_event_new(args);
-  if (!t)
-    return;
-  FIO___LOCK_LOCK(timer->lock);
-  fio___timer_insert(&timer->next, t);
-  FIO___LOCK_UNLOCK(timer->lock);
-  return;
-no_timer_queue:
-  if (args.on_finish)
-    args.on_finish(args.udata1, args.udata2);
-  FIO_LOG_ERROR("fio_timer_schedule called with illegal arguments.");
-}
-
-/**
- * Clears any waiting timer bound tasks.
- *
- * NOTE:
- *
- * The timer queue must NEVER be freed when there's a chance that timer tasks
- * are waiting to be performed in a `fio_queue_s`.
- *
- * This is due to the fact that the tasks may try to reschedule themselves (if
- * they repeat).
- */
-SFUNC void fio_timer_destroy(fio_timer_queue_s *tq) {
-  if (!tq)
-    return;
-  fio___timer_event_s *next = NULL;
-  FIO___LOCK_LOCK(tq->lock);
-  next = tq->next;
-  tq->next = NULL;
-  FIO___LOCK_UNLOCK(tq->lock);
-  FIO___LOCK_DESTROY(tq->lock);
-  while (next) {
-    fio___timer_event_s *tmp = next;
-    next = next->next;
-    fio___timer_event_free(NULL, tmp);
-  }
-}
-/* *****************************************************************************
-Queue/Timer Cleanup
-***************************************************************************** */
-#endif /* FIO_EXTERN_COMPLETE */
-#undef FIO_QUEUE
-#endif /* FIO_QUEUE */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -62229,7 +65654,7 @@ attacker-controlled and RFC 5280 requires exact match.
 /** Build OID value from element. Build ONCE per element, then test
     against any number of constants. Invalid/oversized -> all 0xFF (never
     matches a valid value: byte 15 would be 0xFF, not <= 15). */
-FIO_IFUNC fio_u128 fio___der_oid_value(const fio_der_element_s *elem) {
+FIO_IFUNC fio_u128 fio_der_oid_value(const fio_der_element_s *elem) {
   fio_u128 r;
   if (!elem || elem->len > 15) {
     r.u64[0] = r.u64[1] = ~(uint64_t)0;
@@ -62244,7 +65669,7 @@ FIO_IFUNC fio_u128 fio___der_oid_value(const fio_der_element_s *elem) {
 
 /** Exact compare: two u64 lane ==. No len field, no memcmp, no call.
     Endianness-agnostic (both sides built from identical byte layouts). */
-FIO_IFUNC int fio___der_oid_eq(fio_u128 a, fio_u128 b) {
+FIO_IFUNC int fio_der_oid_eq(fio_u128 a, fio_u128 b) {
   return a.u64[0] == b.u64[0] && a.u64[1] == b.u64[1];
 }
 
@@ -62775,16 +66200,16 @@ SFUNC size_t fio_der_encode_integer(uint8_t *buf,
 SFUNC size_t fio_der_encode_integer_small(uint8_t *buf, uint64_t value);
 
 /**
- * Encode an ASN.1 OID TLV from an OID value (internal).
+ * Encode an ASN.1 OID TLV from an OID value.
  *
  * The OID value holds the DER content bytes in bytes 0-14 and the content
- * length in byte 15 (see fio___der_oid_value). No dot-string parsing.
+ * length in byte 15 (see fio_der_oid_value). No dot-string parsing.
  *
  * @param buf Output buffer (can be NULL to calculate length only)
  * @param oid OID value (fio_u128, length folded into byte 15)
  * @return Number of bytes written/needed, or 0 on error
  */
-SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid);
+SFUNC size_t fio_der_encode_oid(uint8_t *buf, fio_u128 oid);
 
 /**
  * Encode an ASN.1 UTF8String.
@@ -62994,7 +66419,7 @@ SFUNC size_t fio_der_encode_integer_small(uint8_t *buf, uint64_t value) {
 }
 
 /** Encode ASN.1 OID TLV from an OID value (internal) */
-SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid) {
+SFUNC size_t fio_der_encode_oid(uint8_t *buf, fio_u128 oid) {
   size_t content_len = oid.u8[15];
   if (content_len > 15)
     return 0; /* invalid OID value (e.g., the all-0xFF never-match value) */
@@ -66686,8 +70111,8 @@ X.509 OID Constants (fio_u128 byte-15 design)
 
 An OID value is a plain fio_u128 where bytes 0-14 hold the DER content bytes
 (zero-padded) and byte 15 holds the content length. Compare parsed OID
-elements against these constants with fio___der_oid_eq (two u64 lane ==,
-no memcmp, no call) after building the value once with fio___der_oid_value.
+elements against these constants with fio_der_oid_eq (two u64 lane ==,
+no memcmp, no call) after building the value once with fio_der_oid_value.
 Generated by `bun ./ai-tools/oid-table.js c` - do not edit by hand.
 ***************************************************************************** */
 
@@ -67147,12 +70572,12 @@ FIO_SFUNC size_t fio___x509_hash_algo_len(const fio_der_element_s *alg) {
       (fio_der_iterator_next(&it, &params) || !FIO___X509_TAG(&params, 0x05) ||
        params.len || !FIO___X509_DONE(&it)))
     return 0;
-  fio_u128 v = fio___der_oid_value(&oid);
-  if (fio___der_oid_eq(v, FIO_X509_OID_SHA256))
+  fio_u128 v = fio_der_oid_value(&oid);
+  if (fio_der_oid_eq(v, FIO_X509_OID_SHA256))
     return 32;
-  if (fio___der_oid_eq(v, FIO_X509_OID_SHA384))
+  if (fio_der_oid_eq(v, FIO_X509_OID_SHA384))
     return 48;
-  if (fio___der_oid_eq(v, FIO_X509_OID_SHA512))
+  if (fio_der_oid_eq(v, FIO_X509_OID_SHA512))
     return 64;
   return 0;
 }
@@ -67194,7 +70619,7 @@ fio___x509_parse_pss_params(fio_der_iterator_s *alg_it) {
     fio_der_iterator_init(&mgf_it, &inner);
     if (fio_der_iterator_next(&mgf_it, &mgf_oid) ||
         !FIO___X509_TAG(&mgf_oid, 0x06) ||
-        !fio___der_oid_eq(fio___der_oid_value(&mgf_oid), FIO_X509_OID_MGF1) ||
+        !fio_der_oid_eq(fio_der_oid_value(&mgf_oid), FIO_X509_OID_MGF1) ||
         fio_der_iterator_next(&mgf_it, &mgf_hash) || !FIO___X509_DONE(&mgf_it))
       return FIO_X509_SIGNATURE_UNKNOWN;
     mgf_hash_len = fio___x509_hash_algo_len(&mgf_hash);
@@ -67237,8 +70662,8 @@ fio___x509_parse_signature_algo(const fio_der_element_s *alg_id) {
     return FIO_X509_SIGNATURE_UNKNOWN;
 
   /* Check against known OIDs (build value once, then test constants) */
-  fio_u128 oid_val = fio___der_oid_value(&oid);
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_PSS))
+  fio_u128 oid_val = fio_der_oid_value(&oid);
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_RSA_PSS))
     return fio___x509_parse_pss_params(&it);
 
   /* Other algorithms: parameters absent or NULL (RFC 4055 / 5758 / 8410) */
@@ -67247,17 +70672,17 @@ fio___x509_parse_signature_algo(const fio_der_element_s *alg_id) {
        params.len || !FIO___X509_DONE(&it)))
     return FIO_X509_SIGNATURE_UNKNOWN;
 
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA256_WITH_RSA))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_SHA256_WITH_RSA))
     return FIO_X509_SIGNATURE_RSA_PKCS1_SHA256;
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA384_WITH_RSA))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_SHA384_WITH_RSA))
     return FIO_X509_SIGNATURE_RSA_PKCS1_SHA384;
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA512_WITH_RSA))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_SHA512_WITH_RSA))
     return FIO_X509_SIGNATURE_RSA_PKCS1_SHA512;
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA256))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA256))
     return FIO_X509_SIGNATURE_ECDSA_SHA256;
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA384))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA384))
     return FIO_X509_SIGNATURE_ECDSA_SHA384;
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519))
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_ED25519))
     return FIO_X509_SIGNATURE_ED25519;
 
   return FIO_X509_SIGNATURE_UNKNOWN;
@@ -67307,8 +70732,8 @@ FIO_SFUNC int fio___x509_parse_pubkey(fio_x509_cert_s *cert,
                      !FIO___X509_DONE(&alg_it)))
     return -1;
 
-  fio_u128 oid_val = fio___der_oid_value(&oid);
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
+  fio_u128 oid_val = fio_der_oid_value(&oid);
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
     /* RSA public key - bits contains SEQUENCE { n INTEGER, e INTEGER } */
     if (has_params && (!FIO___X509_TAG(&params, 0x05) || params.len))
       return -1;
@@ -67340,15 +70765,15 @@ FIO_SFUNC int fio___x509_parse_pubkey(fio_x509_cert_s *cert,
         (cert->pubkey.rsa.e.len == 1 && cert->pubkey.rsa.e.buf[0] < 3))
       return -1;
 
-  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
+  } else if (fio_der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
     /* ECDSA - the named curve parameter is required */
     if (!has_params || !FIO___X509_TAG(&params, 0x06))
       return -1;
 
-    fio_u128 curve_val = fio___der_oid_value(&params);
-    if (fio___der_oid_eq(curve_val, FIO_X509_OID_SECP256R1)) {
+    fio_u128 curve_val = fio_der_oid_value(&params);
+    if (fio_der_oid_eq(curve_val, FIO_X509_OID_SECP256R1)) {
       cert->key_algo = FIO_X509_KEY_ECDSA_P256;
-    } else if (fio___der_oid_eq(curve_val, FIO_X509_OID_SECP384R1)) {
+    } else if (fio_der_oid_eq(curve_val, FIO_X509_OID_SECP384R1)) {
       cert->key_algo = FIO_X509_KEY_ECDSA_P384;
     } else {
       return -1; /* Unsupported curve */
@@ -67359,7 +70784,7 @@ FIO_SFUNC int fio___x509_parse_pubkey(fio_x509_cert_s *cert,
      * The point is decoded and validated (on-curve) when it is used. */
     cert->pubkey.ecdsa.point = FIO_UBUF_INFO2((uint8_t *)bits, bit_len);
 
-  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
+  } else if (fio_der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
     /* Ed25519 - no parameters, 32 byte key directly in BIT STRING (RFC 8410) */
     if (has_params || bit_len != 32)
       return -1;
@@ -67413,7 +70838,7 @@ FIO_SFUNC void fio___x509_extract_cn(fio_x509_cert_s *cert,
         continue;
 
       /* Check if this is Common Name */
-      if (fio___der_oid_eq(fio___der_oid_value(&type_oid),
+      if (fio_der_oid_eq(fio_der_oid_value(&type_oid),
                            FIO_X509_OID_COMMON_NAME)) {
         size_t len;
         const char *cn = fio_der_parse_string(&value, &len);
@@ -67478,24 +70903,24 @@ FIO_SFUNC int fio___x509_parse_extensions(fio_x509_cert_s *cert,
       return -1;
 
     /* Classify (build OID value once per extension) */
-    fio_u128 ext_oid = fio___der_oid_value(&oid);
-    if (fio___der_oid_eq(ext_oid, FIO_X509_OID_BASIC_CONSTRAINTS))
+    fio_u128 ext_oid = fio_der_oid_value(&oid);
+    if (fio_der_oid_eq(ext_oid, FIO_X509_OID_BASIC_CONSTRAINTS))
       kind = FIO___X509_SEEN_BC;
-    else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_KEY_USAGE))
+    else if (fio_der_oid_eq(ext_oid, FIO_X509_OID_KEY_USAGE))
       kind = FIO___X509_SEEN_KU;
-    else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_SUBJECT_ALT_NAME))
+    else if (fio_der_oid_eq(ext_oid, FIO_X509_OID_SUBJECT_ALT_NAME))
       kind = FIO___X509_SEEN_SAN;
-    else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_EXT_KEY_USAGE))
+    else if (fio_der_oid_eq(ext_oid, FIO_X509_OID_EXT_KEY_USAGE))
       kind = FIO___X509_SEEN_EKU;
-    else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_NAME_CONSTRAINTS))
+    else if (fio_der_oid_eq(ext_oid, FIO_X509_OID_NAME_CONSTRAINTS))
       kind = FIO___X509_SEEN_NC;
     else {
       /* Informational extensions need no processing even when critical
        * (certificate policies: any policy is acceptable to this validator) */
-      if (critical && !fio___der_oid_eq(ext_oid, FIO_X509_OID_SUBJECT_KEY_ID) &&
-          !fio___der_oid_eq(ext_oid, FIO_X509_OID_AUTH_KEY_ID) &&
-          !fio___der_oid_eq(ext_oid, FIO_X509_OID_CRL_DIST_POINTS) &&
-          !fio___der_oid_eq(ext_oid, FIO_X509_OID_CERT_POLICIES))
+      if (critical && !fio_der_oid_eq(ext_oid, FIO_X509_OID_SUBJECT_KEY_ID) &&
+          !fio_der_oid_eq(ext_oid, FIO_X509_OID_AUTH_KEY_ID) &&
+          !fio_der_oid_eq(ext_oid, FIO_X509_OID_CRL_DIST_POINTS) &&
+          !fio_der_oid_eq(ext_oid, FIO_X509_OID_CERT_POLICIES))
         cert->ext_flags |= FIO_X509_EXT_UNKNOWN_CRITICAL;
       continue;
     }
@@ -67561,12 +70986,12 @@ FIO_SFUNC int fio___x509_parse_extensions(fio_x509_cert_s *cert,
       while (fio_der_iterator_next(&it, &e) == 0) {
         if (!FIO___X509_TAG(&e, 0x06))
           return -1;
-        fio_u128 p = fio___der_oid_value(&e);
-        if (fio___der_oid_eq(p, FIO_X509_OID_EKU_SERVER_AUTH))
+        fio_u128 p = fio_der_oid_value(&e);
+        if (fio_der_oid_eq(p, FIO_X509_OID_EKU_SERVER_AUTH))
           cert->ext_flags |= FIO_X509_EXT_EKU_SERVER;
-        else if (fio___der_oid_eq(p, FIO_X509_OID_EKU_CLIENT_AUTH))
+        else if (fio_der_oid_eq(p, FIO_X509_OID_EKU_CLIENT_AUTH))
           cert->ext_flags |= FIO_X509_EXT_EKU_CLIENT;
-        else if (fio___der_oid_eq(p, FIO_X509_OID_EKU_ANY))
+        else if (fio_der_oid_eq(p, FIO_X509_OID_EKU_ANY))
           cert->ext_flags |= FIO_X509_EXT_EKU_ANY;
       }
       if (!FIO___X509_DONE(&it))
@@ -68733,7 +72158,7 @@ FIO_SFUNC size_t fio___x509_encode_rdn(uint8_t *buf,
     return 0;
 
   /* AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY } */
-  size_t oid_len = fio___der_encode_oid(NULL, oid);
+  size_t oid_len = fio_der_encode_oid(NULL, oid);
   size_t str_len = fio_der_encode_utf8_string(NULL, value.buf, value.len);
   size_t atv_content = oid_len + str_len;
   size_t atv_len =
@@ -68746,7 +72171,7 @@ FIO_SFUNC size_t fio___x509_encode_rdn(uint8_t *buf,
     size_t offset = 0;
     offset += fio_der_encode_set_header(buf + offset, atv_len);
     offset += fio_der_encode_sequence_header(buf + offset, atv_content);
-    offset += fio___der_encode_oid(buf + offset, oid);
+    offset += fio_der_encode_oid(buf + offset, oid);
     offset += fio_der_encode_utf8_string(buf + offset, value.buf, value.len);
     (void)offset;
   }
@@ -68843,7 +72268,7 @@ FIO_SFUNC size_t fio___x509_encode_validity(uint8_t *buf,
 FIO_SFUNC size_t fio___x509_encode_spki_ed25519(uint8_t *buf,
                                                 const uint8_t pubkey[32]) {
   /* AlgorithmIdentifier for Ed25519: SEQUENCE { OID } (no params) */
-  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_ED25519);
+  size_t oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_ED25519);
   size_t alg_content = oid_len;
   size_t alg_len =
       fio_der_encode_sequence_header(NULL, alg_content) + alg_content;
@@ -68859,7 +72284,7 @@ FIO_SFUNC size_t fio___x509_encode_spki_ed25519(uint8_t *buf,
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, content_len);
     offset += fio_der_encode_sequence_header(buf + offset, alg_content);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_ED25519);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_ED25519);
     offset += fio_der_encode_bit_string(buf + offset, pubkey, 32, 0);
     (void)offset;
   }
@@ -68871,8 +72296,8 @@ FIO_SFUNC size_t fio___x509_encode_spki_ed25519(uint8_t *buf,
 FIO_SFUNC size_t fio___x509_encode_spki_p256(uint8_t *buf,
                                              const uint8_t pubkey[65]) {
   /* AlgorithmIdentifier: SEQUENCE { ecPublicKey OID, secp256r1 OID } */
-  size_t ec_oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_EC_PUBLIC_KEY);
-  size_t curve_oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_SECP256R1);
+  size_t ec_oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_EC_PUBLIC_KEY);
+  size_t curve_oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_SECP256R1);
   size_t alg_content = ec_oid_len + curve_oid_len;
   size_t alg_len =
       fio_der_encode_sequence_header(NULL, alg_content) + alg_content;
@@ -68888,8 +72313,8 @@ FIO_SFUNC size_t fio___x509_encode_spki_p256(uint8_t *buf,
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, content_len);
     offset += fio_der_encode_sequence_header(buf + offset, alg_content);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_EC_PUBLIC_KEY);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_SECP256R1);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_EC_PUBLIC_KEY);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_SECP256R1);
     offset += fio_der_encode_bit_string(buf + offset, pubkey, 65, 0);
     (void)offset;
   }
@@ -68908,7 +72333,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_basic_constraints(uint8_t *buf,
   size_t octet_len = fio_der_encode_octet_string(NULL, NULL, bc_len);
 
   /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
-  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_BASIC_CONSTRAINTS);
+  size_t oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_BASIC_CONSTRAINTS);
   size_t crit_len = fio_der_encode_boolean(NULL, 1); /* critical = TRUE */
   size_t ext_content = oid_len + crit_len + octet_len;
   size_t total =
@@ -68918,7 +72343,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_basic_constraints(uint8_t *buf,
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, ext_content);
     offset +=
-        fio___der_encode_oid(buf + offset, FIO_X509_OID_BASIC_CONSTRAINTS);
+        fio_der_encode_oid(buf + offset, FIO_X509_OID_BASIC_CONSTRAINTS);
     offset += fio_der_encode_boolean(buf + offset, 1); /* critical */
 
     /* OCTET STRING containing BasicConstraints */
@@ -68972,7 +72397,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_key_usage(uint8_t *buf,
   size_t octet_len = fio_der_encode_octet_string(NULL, NULL, bits_len);
 
   /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
-  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_KEY_USAGE);
+  size_t oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_KEY_USAGE);
   size_t crit_len = fio_der_encode_boolean(NULL, 1); /* critical = TRUE */
   size_t ext_content = oid_len + crit_len + octet_len;
   size_t total =
@@ -68981,7 +72406,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_key_usage(uint8_t *buf,
   if (buf) {
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, ext_content);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_KEY_USAGE);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_KEY_USAGE);
     offset += fio_der_encode_boolean(buf + offset, 1); /* critical */
 
     /* OCTET STRING containing KeyUsage BIT STRING */
@@ -69024,7 +72449,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_san(uint8_t *buf,
   size_t octet_len = fio_der_encode_octet_string(NULL, NULL, san_len);
 
   /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
-  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_SUBJECT_ALT_NAME);
+  size_t oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_SUBJECT_ALT_NAME);
   size_t ext_content = oid_len + octet_len;
   size_t total =
       fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
@@ -69032,7 +72457,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_san(uint8_t *buf,
   if (buf) {
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, ext_content);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_SUBJECT_ALT_NAME);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_SUBJECT_ALT_NAME);
 
     /* OCTET STRING containing SAN */
     size_t octet_hdr = fio_der_encode_octet_string(buf + offset, NULL, san_len);
@@ -69073,8 +72498,8 @@ FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
    * mutual-TLS clients alike.
    */
   size_t eku_content =
-      fio___der_encode_oid(NULL, FIO_X509_OID_EKU_SERVER_AUTH) +
-      fio___der_encode_oid(NULL, FIO_X509_OID_EKU_CLIENT_AUTH);
+      fio_der_encode_oid(NULL, FIO_X509_OID_EKU_SERVER_AUTH) +
+      fio_der_encode_oid(NULL, FIO_X509_OID_EKU_CLIENT_AUTH);
   size_t eku_len =
       fio_der_encode_sequence_header(NULL, eku_content) + eku_content;
 
@@ -69082,7 +72507,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
   size_t octet_len = fio_der_encode_octet_string(NULL, NULL, eku_len);
 
   /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
-  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_EXT_KEY_USAGE);
+  size_t oid_len = fio_der_encode_oid(NULL, FIO_X509_OID_EXT_KEY_USAGE);
   size_t ext_content = oid_len + octet_len;
   size_t total =
       fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
@@ -69090,7 +72515,7 @@ FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
   if (buf) {
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, ext_content);
-    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_EXT_KEY_USAGE);
+    offset += fio_der_encode_oid(buf + offset, FIO_X509_OID_EXT_KEY_USAGE);
 
     /* OCTET STRING containing EKU SEQUENCE */
     size_t octet_hdr = fio_der_encode_octet_string(buf + offset, NULL, eku_len);
@@ -69098,9 +72523,9 @@ FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
     size_t eku_off = 0;
     eku_off += fio_der_encode_sequence_header(eku_buf + eku_off, eku_content);
     eku_off +=
-        fio___der_encode_oid(eku_buf + eku_off, FIO_X509_OID_EKU_SERVER_AUTH);
+        fio_der_encode_oid(eku_buf + eku_off, FIO_X509_OID_EKU_SERVER_AUTH);
     eku_off +=
-        fio___der_encode_oid(eku_buf + eku_off, FIO_X509_OID_EKU_CLIENT_AUTH);
+        fio_der_encode_oid(eku_buf + eku_off, FIO_X509_OID_EKU_CLIENT_AUTH);
     (void)eku_off;
     offset += octet_hdr;
     (void)offset;
@@ -69190,7 +72615,7 @@ fio___x509_encode_signature_algo(uint8_t *buf, fio_x509_keypair_type_e type) {
   default: return 0;
   }
 
-  size_t oid_len = fio___der_encode_oid(NULL, oid);
+  size_t oid_len = fio_der_encode_oid(NULL, oid);
   size_t content_len = oid_len;
   if (has_params)
     content_len += fio_der_encode_null(NULL);
@@ -69201,7 +72626,7 @@ fio___x509_encode_signature_algo(uint8_t *buf, fio_x509_keypair_type_e type) {
   if (buf) {
     size_t offset = 0;
     offset += fio_der_encode_sequence_header(buf + offset, content_len);
-    offset += fio___der_encode_oid(buf + offset, oid);
+    offset += fio_der_encode_oid(buf + offset, oid);
     if (has_params)
       offset += fio_der_encode_null(buf + offset);
     (void)offset;
@@ -70135,10 +73560,10 @@ FIO_SFUNC int fio___pem_parse_ec_private_key(fio_pem_private_key_s *key,
     if (fio_der_iterator_next(&it, &e) ||
         fio___pem_der_whole(&inner, e.data, e.len, 0x06))
       return -1;
-    oid_val = fio___der_oid_value(&inner);
-    if (fio___der_oid_eq(oid_val, FIO_X509_OID_SECP256R1))
+    oid_val = fio_der_oid_value(&inner);
+    if (fio_der_oid_eq(oid_val, FIO_X509_OID_SECP256R1))
       named = FIO_PEM_KEY_ECDSA_P256;
-    else if (fio___der_oid_eq(oid_val, FIO_X509_OID_SECP384R1))
+    else if (fio_der_oid_eq(oid_val, FIO_X509_OID_SECP384R1))
       named = FIO_PEM_KEY_ECDSA_P384;
     else
       return -1;
@@ -70253,28 +73678,28 @@ FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
   if (!fio___pem_der_done(&it))
     return -1;
 
-  fio_u128 oid_val = fio___der_oid_value(&oid);
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
+  fio_u128 oid_val = fio_der_oid_value(&oid);
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
     /* parameters: NULL (RFC 8017), tolerate absence */
     if (has_params && (params.tag != 0x05 || params.len))
       return -1;
     return fio___pem_parse_rsa_private_key(key, priv.data, priv.len);
   }
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
     /* parameters: namedCurve, secp256r1 or secp384r1 (RFC 5480) */
     fio_pem_key_type_e curve = FIO_PEM_KEY_UNKNOWN;
     if (!has_params || params.tag != 0x06)
       return -1;
-    if (fio___der_oid_eq(fio___der_oid_value(&params), FIO_X509_OID_SECP256R1))
+    if (fio_der_oid_eq(fio_der_oid_value(&params), FIO_X509_OID_SECP256R1))
       curve = FIO_PEM_KEY_ECDSA_P256;
-    else if (fio___der_oid_eq(fio___der_oid_value(&params),
+    else if (fio_der_oid_eq(fio_der_oid_value(&params),
                               FIO_X509_OID_SECP384R1))
       curve = FIO_PEM_KEY_ECDSA_P384;
     else
       return -1;
     return fio___pem_parse_ec_private_key(key, priv.data, priv.len, curve);
   }
-  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
+  if (fio_der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
     /* parameters MUST be absent; CurvePrivateKey ::= OCTET STRING (RFC 8410).
      * An optional v2 publicKey is not imported (callers derive it). */
     fio_der_element_s seed;
@@ -85323,7 +88748,7 @@ typedef struct {
 static fio___brotli_dict_entry_s
     fio___brotli_dict_ht[FIO___BROTLI_DICT_HASH_SIZE * 2];
 static int fio___brotli_dict_ht_ready = 0;
-static fio_lock_i fio___brotli_dict_ht_lock = FIO_LOCK_INIT;
+static fio_lock_line_s fio___brotli_dict_ht_lock = {FIO_LOCK_INIT};
 
 FIO_IFUNC uint32_t fio___brotli_dict_hash4(const uint8_t *p) {
   uint32_t h = fio_buf2u32_le(p);
@@ -85337,9 +88762,9 @@ FIO_SFUNC void fio___brotli_dict_ht_build(void) {
   fio_atomic_load(ready, &fio___brotli_dict_ht_ready);
   if (ready)
     return;
-  fio_lock(&fio___brotli_dict_ht_lock);
+  fio_lock(&fio___brotli_dict_ht_lock.lock);
   if (fio___brotli_dict_ht_ready) {
-    fio_unlock(&fio___brotli_dict_ht_lock);
+    fio_unlock(&fio___brotli_dict_ht_lock.lock);
     return;
   }
   FIO_MEMSET(fio___brotli_dict_ht, 0, sizeof(fio___brotli_dict_ht));
@@ -85367,7 +88792,7 @@ FIO_SFUNC void fio___brotli_dict_ht_build(void) {
     }
   }
   fio_atomic_or(&fio___brotli_dict_ht_ready, 1);
-  fio_unlock(&fio___brotli_dict_ht_lock);
+  fio_unlock(&fio___brotli_dict_ht_lock.lock);
 }
 
 /**
@@ -110280,10 +113705,12 @@ typedef struct {
 } fio___io_pid_s;
 
 static struct FIO___IO_S {
+  FIO_ALIGN(64) fio_queue_s queue;
+  /* internal: performed before each `queue` task (touch, worker spawning) */
+  FIO_ALIGN(64) fio_queue_s urgent;
   fio_poll_s poll;
   int64_t tick;
   int64_t time_ms;
-  fio_queue_s queue;
   uint32_t flags;
   uint16_t workers;
   uint8_t is_worker;
@@ -110335,6 +113762,21 @@ FIO_IFUNC void fio___io_assert_io_thread(void) {
 #else
 #define FIO___IO_ASSERT_IO_THREAD() ((void)0)
 #endif
+
+/* Performs the urgent queue before each regular task, until both are empty.
+ */
+FIO_SFUNC void fio___io_queue_perform_all(void) {
+  do {
+    if (!fio_queue_is_empty(&FIO___IO.urgent))
+      fio_queue_perform_all(&FIO___IO.urgent);
+  } while (!fio_queue_perform(&FIO___IO.queue));
+}
+
+/* Returns true if both reactor queues appear empty. */
+FIO_IFUNC bool fio___io_queue_is_empty(void) {
+  return fio_queue_is_empty(&FIO___IO.urgent) &&
+         fio_queue_is_empty(&FIO___IO.queue);
+}
 
 FIO_IFUNC void fio___io_defer_no_wakeup(void (*task)(void *, void *),
                                         void *udata1,
@@ -110775,10 +114217,7 @@ FIO_SFUNC void fio___io_touch(void *io_, void *ignr_) {
 /* Resets a socket's timeout counter. */
 SFUNC void fio_io_touch(fio_io_s *io) {
   if (!(fio_atomic_or(&io->flags, FIO___IO_FLAG_TOUCH) & FIO___IO_FLAG_TOUCH))
-    fio_queue_push_urgent(&FIO___IO.queue,
-                          fio___io_touch,
-                          fio___io_dup2(io),
-                          NULL);
+    fio_queue_push(&FIO___IO.urgent, fio___io_touch, fio___io_dup2(io), NULL);
 }
 
 /**
@@ -112161,13 +115600,13 @@ Managing data after a fork / at exit
 FIO_SFUNC void fio___io_drain_all(void) {
   uint32_t pending;
   do {
-    fio_queue_perform_all(&FIO___IO.queue);
+    fio___io_queue_perform_all();
     FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, a) {
       fio_queue_perform_all(&a->queue);
     }
-    pending = fio_queue_count(&FIO___IO.queue);
+    pending = !fio___io_queue_is_empty();
     FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, a) {
-      pending |= fio_queue_count(&a->queue);
+      pending |= !fio_queue_is_empty(&a->queue);
     }
   } while (pending);
 }
@@ -112178,7 +115617,7 @@ FIO_SFUNC void fio___io_after_fork(void *ignr_) {
   FIO___IO.io_thread = 0; /* forked child has a new reactor thread */
   fio___io_last_tick_update(NULL, NULL);
   FIO___IO.lock = FIO___LOCK_INIT; /* better leak the lock, avoid UB */
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   FIO_LIST_EACH(fio_io_protocol_s,
                 reserved.protocols,
                 &FIO___IO.protocols,
@@ -112187,7 +115626,8 @@ FIO_SFUNC void fio___io_after_fork(void *ignr_) {
       fio_io_close_now(io);
     }
   }
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
+  fio_queue_destroy(&FIO___IO.urgent);
   fio_queue_destroy(&FIO___IO.queue);
   FIO___IO.pids = FIO_LIST_INIT(FIO___IO.pids);
 }
@@ -112199,14 +115639,21 @@ FIO_SFUNC void fio___io_after_fork(void *ignr_) {
  * state (no consumers; routed to the IO queue). Pending inherited async tasks
  * are kept: they run on the child's reactor start (`fio___io_async_start`) or
  * by the drain at exit. Idempotent while single threaded. */
+FIO_SFUNC void fio___io_queue_reset_in_child(fio_queue_s *q) {
+  fio_unlock(q->head.lock);
+  fio_unlock(q->tail.lock);
+  fio_unlock(q->lock);
+}
+
 FIO_SFUNC void fio___io_reset_in_child(void) {
   FIO___IO.lock = FIO___LOCK_INIT;
-  FIO___IO.queue.lock = FIO___LOCK_INIT;
+  fio___io_queue_reset_in_child(&FIO___IO.queue);
+  fio___io_queue_reset_in_child(&FIO___IO.urgent);
   FIO___IO.timer.lock = FIO___LOCK_INIT;
   FIO___IO.env.lock = (fio_thread_mutex_t)FIO_THREAD_MUTEX_INIT;
   FIO___IO_FLAG_UNSET(&FIO___IO, FIO___IO_FLAG_ASYNC);
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, a) {
-    a->queue.lock = FIO___LOCK_INIT;
+    fio___io_queue_reset_in_child(&a->queue);
     a->queue.consumers = FIO_LIST_INIT(a->queue.consumers);
     a->timers.lock = FIO___LOCK_INIT;
     a->q = &FIO___IO.queue;
@@ -112236,7 +115683,7 @@ FIO_SFUNC void fio___io_cleanup_at_exit(void *ignr_) {
   fio___io_after_fork(ignr_);
   fio_poll_destroy(&FIO___IO.poll);
   fio___io_last_tick_update(NULL, NULL);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   fio_timer_destroy(&FIO___IO.timer);
   /* final teardown: every pending task runs (none is dropped). Callbacks may
    * push more tasks to any queue, so each step drains until all are empty. */
@@ -112256,6 +115703,8 @@ FIO_SFUNC void fio___io_cleanup_at_exit(void *ignr_) {
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, a) {
     fio_queue_destroy(&a->queue);
   }
+  fio_queue_destroy(&FIO___IO.urgent);
+  fio_queue_destroy(&FIO___IO.queue); /* re-used since `after_fork` above */
 }
 
 /* *****************************************************************************
@@ -112263,6 +115712,7 @@ Initializing IO Reactor State
 ***************************************************************************** */
 FIO_CONSTRUCTOR(fio___io) {
   fio_queue_init(&FIO___IO.queue);
+  fio_queue_init(&FIO___IO.urgent);
   FIO___IO.protocols = FIO_LIST_INIT(FIO___IO.protocols);
   fio___io_last_tick_update(NULL, NULL);
   FIO___IO.root_pid = FIO___IO.pid = fio_thread_getpid();
@@ -112357,7 +115807,7 @@ FIO_SFUNC void fio___io_tick(int max_timeout) {
   static size_t performed_idle = 0;
   FIO___IO_ASSERT_IO_THREAD();
   int timeout = fio___io_queue_timers();
-  if (fio_queue_count(&FIO___IO.queue))
+  if (!fio___io_queue_is_empty())
     timeout = 0;
   if (timeout > max_timeout)
     timeout = max_timeout;
@@ -112378,10 +115828,8 @@ FIO_SFUNC void fio___io_run_async_as_sync(void *ignr_1, void *ignr_2) {
   (void)ignr_1, (void)ignr_2;
   unsigned repeat = 0;
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, pos) {
-    fio_queue_task_s t = fio_queue_pop(&pos->queue);
-    if (!t.fn)
+    if (fio_queue_perform(&pos->queue))
       continue;
-    t.fn(t.udata1, t.udata2);
     repeat = 1;
   }
   if (repeat)
@@ -112425,7 +115873,7 @@ FIO_SFUNC void fio___io_shutdown(void) {
                  fio___io_shutdown_task,
                  (void *)(intptr_t)shutdown_start,
                  NULL);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   /* in case of timeout, force close remaining connections. */
   connected = 0;
   FIO_LIST_EACH(fio_io_protocol_s,
@@ -112442,7 +115890,7 @@ FIO_SFUNC void fio___io_shutdown(void) {
                  connected);
   (void)connected; /* if no logger */
   /* perform remaining tasks. */
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
 }
 
 FIO_SFUNC FIO___TSAN_AVOID void fio___io_work_task(void *ignr_1, void *ignr_2) {
@@ -112465,7 +115913,7 @@ FIO_SFUNC void fio___io_work(int is_worker) {
   if (fio_io_is_master())
     fio_state_callback_force(FIO_CALL_PRE_START);
   /* Performing the queued tasks will spawn any workers waiting to be spawned */
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   if (is_worker) {
     fio_state_callback_force(FIO_CALL_ON_START);
   }
@@ -112476,7 +115924,7 @@ FIO_SFUNC void fio___io_work(int is_worker) {
 
   fio_queue_push(&FIO___IO.queue, fio___io_work_task, NULL, NULL);
   FIO___IO_FLAG_SET(&FIO___IO, FIO___IO_FLAG_CYCLING);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   FIO___IO_FLAG_UNSET(&FIO___IO, FIO___IO_FLAG_CYCLING);
 
   fio___io_shutdown();
@@ -112494,9 +115942,9 @@ FIO_SFUNC void fio___io_work(int is_worker) {
   }
   FIO___LOCK_UNLOCK(FIO___IO.lock);
 
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   fio_state_callback_force(FIO_CALL_ON_STOP);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   FIO___IO.workers = 0;
 }
 
@@ -112571,10 +116019,7 @@ static void *fio___io_worker_sentinel(void *pid_data) {
                     FIO___IO.pid,
                     sentinal.pid);
     fio_atomic_add(&FIO___IO.to_spawn, (uint32_t)1);
-    fio_queue_push_urgent(fio_io_queue(),
-                          fio___io_spawn_workers_task,
-                          NULL,
-                          NULL);
+    fio_queue_push(&FIO___IO.urgent, fio___io_spawn_workers_task, NULL, NULL);
   }
 #else /* Non POSIX? no `fork`? no fio_thread_waitpid? */
   FIO_ASSERT(
@@ -112630,7 +116075,7 @@ is_worker_process:
       fio_io_close_now(io);
     }
   }
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   /* TODO: keep? */
 
   FIO_LOG_INFO("(%d) worker starting up.", fio_io_pid());
@@ -112638,9 +116083,9 @@ is_worker_process:
   if (FIO___IO.stop)
     goto skip_work;
   fio_state_callback_force(FIO_CALL_IN_CHILD);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   fio_state_callback_force(FIO_CALL_AFTER_FORK);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   fio___io_work(1);
   FIO_LOG_INFO("(%d) worker exiting.", fio_io_pid());
   exit(0);
@@ -112668,7 +116113,7 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2) {
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
     fio___io_async_stop(q);
   }
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
 
   /* perform forking procedure with the stop flag reset. */
   fio_atomic_and_fetch(&FIO___IO.stop, 1);
@@ -112706,10 +116151,7 @@ SFUNC void fio_io_add_workers(int workers) {
   if (!workers || !fio_io_is_master())
     return;
   fio_atomic_add(&FIO___IO.to_spawn, (uint32_t)fio_io_workers(workers));
-  fio_queue_push_urgent(&FIO___IO.queue,
-                        fio___io_spawn_workers_task,
-                        NULL,
-                        NULL);
+  fio_queue_push(&FIO___IO.urgent, fio___io_spawn_workers_task, NULL, NULL);
 }
 
 /** Starts the IO reactor, using optional `workers` processes. Will BLOCK! */
@@ -112756,7 +116198,7 @@ SFUNC void fio_io_start(int workers) {
     FIO_LOG_ERROR("couldn't stop monitoring SIGTERM");
   if (FIO___IO.restart_signal && fio_signal_forget(FIO___IO.restart_signal))
     FIO_LOG_ERROR("couldn't stop monitoring restart signal");
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
 }
 
 /** Returns the number or workers the IO reactor will actually run. */
@@ -112799,10 +116241,7 @@ FIO_SFUNC void fio___io_restart(void *workers_, void *ignr_) {
         workers);
     fio_atomic_add(&FIO___IO.to_spawn, (uint32_t)workers);
     /* schedule workers to spawn - won't run until we return from function. */
-    fio_queue_push_urgent(fio_io_queue(),
-                          fio___io_spawn_workers_task,
-                          NULL,
-                          NULL);
+    fio_queue_push(&FIO___IO.urgent, fio___io_spawn_workers_task, NULL, NULL);
   } else {
     FIO_LOG_INFO(
         "(%d) shutting down existing workers and switching to single mode.",
@@ -112901,7 +116340,7 @@ static void fio___io_listen_free(void *l_) {
                  fio_thread_getpid(),
                  (int)l->url_len,
                  l->url);
-  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_queue_perform_all();
   FIO_LEAK_COUNTER_ON_FREE(fio_io_listen);
   FIO_MEM_FREE_(l, sizeof(*l) + l->url_len + 1);
 }
@@ -115749,8 +119188,8 @@ static void fio___openssl_clear_root_key(void *key) {
  * - Better performance for TLS handshakes
  */
 static void fio___openssl_make_root_key(void) {
-  static fio_lock_i lock = FIO_LOCK_INIT;
-  fio_lock(&lock);
+  static fio_lock_line_s lock = {FIO_LOCK_INIT};
+  fio_lock(&lock.lock);
   if (!fio___openssl_pkey) {
     FIO_LOG_DEBUG2("generating ECDSA P-256 private key for TLS...");
 
@@ -115772,7 +119211,7 @@ static void fio___openssl_make_root_key(void) {
                            fio___openssl_pkey);
     FIO_LOG_DEBUG2("ECDSA P-256 private key generated successfully.");
   }
-  fio_unlock(&lock);
+  fio_unlock(&lock.lock);
 }
 
 /*
@@ -116647,8 +120086,8 @@ static BIO_METHOD *fio___openssl_wbio_method = NULL;
 /** Initialize custom BIO methods. Thread-safe via lock. Call from constructor.
  */
 FIO_SFUNC void fio___openssl_init_bio_methods(void) {
-  static fio_lock_i lock = FIO_LOCK_INIT;
-  fio_lock(&lock);
+  static fio_lock_line_s lock = {FIO_LOCK_INIT};
+  fio_lock(&lock.lock);
   if (!fio___openssl_rbio_method || !fio___openssl_wbio_method) {
     /* Build locally; publish both only once fully initialized. */
     BIO_METHOD *r =
@@ -116669,7 +120108,7 @@ FIO_SFUNC void fio___openssl_init_bio_methods(void) {
         BIO_meth_free(w);
     }
   }
-  fio_unlock(&lock);
+  fio_unlock(&lock.lock);
 }
 
 /** Cleanup callback to free BIO methods at exit. */
@@ -117636,12 +121075,12 @@ typedef struct {
 } fio___tls13_sys_trust_s;
 
 static fio___tls13_sys_trust_s fio___tls13_sys_trust;
-static fio_lock_i fio___tls13_sys_trust_lock = FIO_LOCK_INIT;
+static fio_lock_line_s fio___tls13_sys_trust_lock = {FIO_LOCK_INIT};
 
 /** AT_EXIT callback: free the global system trust store.
  * Registered once at startup via FIO_CONSTRUCTOR below. */
 FIO_SFUNC void fio___tls13_sys_trust_free(void *ignr_) {
-  fio_lock(&fio___tls13_sys_trust_lock);
+  fio_lock(&fio___tls13_sys_trust_lock.lock);
   for (size_t i = 0; i < fio___tls13_sys_trust.count; ++i) {
     FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(fio___tls13_sys_trust.bufs[i], fio___tls13_sys_trust.lens[i]);
@@ -117653,7 +121092,7 @@ FIO_SFUNC void fio___tls13_sys_trust_free(void *ignr_) {
     FIO_MEM_FREE(fio___tls13_sys_trust.lens,
                  fio___tls13_sys_trust.count * sizeof(size_t));
   fio___tls13_sys_trust = (fio___tls13_sys_trust_s){0};
-  fio_unlock(&fio___tls13_sys_trust_lock);
+  fio_unlock(&fio___tls13_sys_trust_lock.lock);
   (void)ignr_;
 }
 
@@ -118579,10 +122018,10 @@ FIO_SFUNC int fio___tls13_load_pem_bundle(fio___tls13_context_s *ctx,
  * Thread safety: protected by fio___tls13_sys_trust_lock.
  * Returns the number of CA certs loaded (>= 1) on success, 0 if not found. */
 FIO_SFUNC int fio___tls13_get_system_trust(void) {
-  fio_lock(&fio___tls13_sys_trust_lock);
+  fio_lock(&fio___tls13_sys_trust_lock.lock);
   if (fio___tls13_sys_trust.loaded) {
     int n = (int)fio___tls13_sys_trust.count;
-    fio_unlock(&fio___tls13_sys_trust_lock);
+    fio_unlock(&fio___tls13_sys_trust_lock.lock);
     return n;
   }
 
@@ -118593,7 +122032,7 @@ FIO_SFUNC int fio___tls13_get_system_trust(void) {
   HCERTSTORE hStore = CertOpenSystemStoreA(0, "ROOT");
   if (!hStore) {
     FIO_LOG_ERROR("TLS 1.3: failed to open Windows ROOT certificate store");
-    fio_unlock(&fio___tls13_sys_trust_lock);
+    fio_unlock(&fio___tls13_sys_trust_lock.lock);
     return 0;
   }
   PCCERT_CONTEXT pCert = NULL;
@@ -118664,7 +122103,7 @@ FIO_SFUNC int fio___tls13_get_system_trust(void) {
     /* Cleanup is registered once at startup via FIO_CONSTRUCTOR — not here. */
   }
 
-  fio_unlock(&fio___tls13_sys_trust_lock);
+  fio_unlock(&fio___tls13_sys_trust_lock.lock);
   return loaded;
 }
 
@@ -136436,6 +139875,9 @@ Recursive inclusion / cleanup
 #ifdef FIO_STR
 #include "011 string core.h"
 #endif
+#ifdef FIO_QUEUE
+#include "011 queue.h"
+#endif
 
 #ifdef FIO_DATA
 #include "012 data.h"
@@ -136459,9 +139901,6 @@ Recursive inclusion / cleanup
 
 #ifdef FIO_STREAM
 #include "102 stream.h"
-#endif
-#ifdef FIO_QUEUE
-#include "102 queue.h"
 #endif
 
 #ifdef FIO_MD2HTML
